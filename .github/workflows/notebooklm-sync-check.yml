@@ -51,6 +51,32 @@ jobs:
         run: |
           echo "::warning::NOTEBOOKLM_MCP_AUTH_TGZ_B64 is not configured. The MCP connection will only work on runners that already have NotebookLM auth."
 
+      - name: Export NotebookLM cookies
+        if: env.NOTEBOOKLM_MCP_AUTH_TGZ_B64 != ''
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          auth_path = Path.home() / ".notebooklm-mcp-cli" / "auth.json"
+          data = json.loads(auth_path.read_text(encoding="utf-8"))
+          cookies = data.get("cookies")
+          if not isinstance(cookies, list) or not cookies:
+              raise SystemExit(f"No cookies found in {auth_path}")
+
+          cookie_header = "; ".join(
+              f"{cookie['name']}={cookie['value']}"
+              for cookie in cookies
+              if cookie.get("name") and cookie.get("value")
+          )
+          print(f"::add-mask::{cookie_header}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write("NOTEBOOKLM_COOKIES<<EOF\n")
+              env_file.write(cookie_header)
+              env_file.write("\nEOF\n")
+          PY
+
       - name: Start NotebookLM MCP server
         run: |
           notebooklm-mcp --transport http --host 127.0.0.1 --port 8765 --path /mcp > /tmp/notebooklm-mcp.log 2>&1 &
