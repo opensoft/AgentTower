@@ -1,0 +1,81 @@
+name: NotebookLM Markdown sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  notebooklm-markdown-sync:
+    runs-on: ubuntu-latest
+    env:
+      GIT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+      GIT_HEAD_SHA: ${{ github.sha }}
+      NOTEBOOKLM_MCP_COMMAND: ${{ vars.NOTEBOOKLM_MCP_COMMAND || 'notebooklm-mcp' }}
+      NOTEBOOKLM_MCP_INSTALL: ${{ vars.NOTEBOOKLM_MCP_INSTALL || 'python -m pip install notebooklm-mcp-server' }}
+      NOTEBOOKLM_MCP_AUTH_TGZ_B64: ${{ secrets.NOTEBOOKLM_MCP_AUTH_TGZ_B64 }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MCP client and NotebookLM MCP server
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "mcp>=1.0.0"
+          if [ -n "$NOTEBOOKLM_MCP_INSTALL" ]; then
+            eval "$NOTEBOOKLM_MCP_INSTALL"
+          fi
+
+      - name: Restore NotebookLM MCP auth
+        if: env.NOTEBOOKLM_MCP_AUTH_TGZ_B64 != ''
+        run: |
+          echo "$NOTEBOOKLM_MCP_AUTH_TGZ_B64" | base64 -d | tar -xz -C "$HOME"
+
+      - name: Warn when NotebookLM auth is not configured
+        if: env.NOTEBOOKLM_MCP_AUTH_TGZ_B64 == ''
+        run: |
+          echo "::warning::NOTEBOOKLM_MCP_AUTH_TGZ_B64 is not configured. The MCP connection will only work on runners that already have NotebookLM auth."
+
+      - name: Refresh changed Markdown sources
+        run: |
+          python scripts/check_notebooklm_sync.py \
+            --mode refresh \
+            --config .notebooklm/sources.json \
+            --base "$GIT_BASE_SHA" \
+            --head "$GIT_HEAD_SHA" \
+            --github-summary
+
+      - name: Verify NotebookLM source sync
+        run: |
+          python scripts/check_notebooklm_sync.py \
+            --mode check \
+            --all \
+            --config .notebooklm/sources.json \
+            --github-summary
+
+      - name: Commit NotebookLM sync metadata
+        run: |
+          if git diff --quiet -- .notebooklm/sources.json; then
+            echo "NotebookLM sync metadata is already current."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .notebooklm/sources.json
+          git commit -m "chore: update NotebookLM source sync metadata"
+          git push
