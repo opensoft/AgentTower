@@ -15,8 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import anyio
-
 
 ZERO_SHA = "0000000000000000000000000000000000000000"
 
@@ -181,8 +179,9 @@ def extract_source_id(payload: dict[str, Any]) -> str | None:
 
 
 class NotebookMcpClient:
-    def __init__(self, command: str) -> None:
+    def __init__(self, command: str, url: str | None = None) -> None:
         self.command = command
+        self.url = url
         self.session: Any = None
         self._stdio_context: Any = None
         self._session_context: Any = None
@@ -191,24 +190,29 @@ class NotebookMcpClient:
     async def __aenter__(self) -> "NotebookMcpClient":
         try:
             from mcp import ClientSession, StdioServerParameters
+            from mcp.client.streamable_http import streamablehttp_client
             from mcp.client.stdio import stdio_client
         except ImportError as exc:
             raise RuntimeError(
                 "Missing Python package 'mcp'. Install it with: python -m pip install mcp"
             ) from exc
 
-        parts = shlex.split(self.command)
-        if not parts:
-            raise RuntimeError("NOTEBOOKLM_MCP_COMMAND is empty.")
-
-        server = StdioServerParameters(
-            command=parts[0],
-            args=parts[1:],
-            env=dict(os.environ),
-        )
         try:
-            self._stdio_context = stdio_client(server)
-            read_stream, write_stream = await self._stdio_context.__aenter__()
+            if self.url:
+                self._stdio_context = streamablehttp_client(self.url)
+                read_stream, write_stream, _ = await self._stdio_context.__aenter__()
+            else:
+                parts = shlex.split(self.command)
+                if not parts:
+                    raise RuntimeError("NOTEBOOKLM_MCP_COMMAND is empty.")
+
+                server = StdioServerParameters(
+                    command=parts[0],
+                    args=parts[1:],
+                    env=dict(os.environ),
+                )
+                self._stdio_context = stdio_client(server)
+                read_stream, write_stream = await self._stdio_context.__aenter__()
             self._session_context = ClientSession(read_stream, write_stream)
             self.session = await self._session_context.__aenter__()
             await self.session.initialize()
@@ -410,6 +414,8 @@ async def wait_for_source(
     mapping: SourceMapping,
     timeout_seconds: int,
 ) -> NotebookSource:
+    import anyio
+
     deadline = time.monotonic() + timeout_seconds
     last_matches: list[NotebookSource] = []
     while time.monotonic() < deadline:
@@ -435,6 +441,7 @@ async def refresh_sources(
     mappings: list[SourceMapping],
     checked: list[str],
     command: str,
+    url: str | None,
     verify_timeout: int,
 ) -> RefreshResult:
     by_path = {mapping.path: mapping for mapping in mappings}
@@ -461,7 +468,7 @@ async def refresh_sources(
     skipped: list[SourceMapping] = []
     verified: list[SourceMapping] = []
 
-    async with NotebookMcpClient(command) as client:
+    async with NotebookMcpClient(command, url) as client:
         rows = await client.notebook_sources(notebook_id)
         targets: list[SourceMapping] = []
         for mapping in mappings:
@@ -650,6 +657,11 @@ def parse_args() -> argparse.Namespace:
         help="Command used to start the NotebookLM MCP server.",
     )
     parser.add_argument(
+        "--mcp-url",
+        default=os.getenv("NOTEBOOKLM_MCP_URL"),
+        help="HTTP URL for an already-running NotebookLM MCP server.",
+    )
+    parser.add_argument(
         "--verify-timeout",
         type=int,
         default=120,
@@ -685,6 +697,7 @@ async def main() -> int:
             mappings,
             checked,
             args.mcp_command,
+            args.mcp_url,
             args.verify_timeout,
         )
         summary = render_refresh_summary(refresh_result)
@@ -695,7 +708,7 @@ async def main() -> int:
             return 0
         return 1
 
-    async with NotebookMcpClient(args.mcp_command) as client:
+    async with NotebookMcpClient(args.mcp_command, args.mcp_url) as client:
         rows = await client.notebook_sources(notebook_id)
     check_result = evaluate(root, notebook_id, notebook_title, mappings, checked, rows)
     summary = render_check_summary(check_result)
@@ -709,6 +722,12 @@ async def main() -> int:
 
 if __name__ == "__main__":
     try:
+        try:
+            import anyio
+        except ImportError:
+            import asyncio
+
+            raise SystemExit(asyncio.run(main()))
         raise SystemExit(anyio.run(main))
     except Exception as exc:
         print(f"NotebookLM sync failed: {exc}", file=sys.stderr)

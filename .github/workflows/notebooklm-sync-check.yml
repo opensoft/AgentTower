@@ -19,6 +19,7 @@ jobs:
       GIT_HEAD_SHA: ${{ github.sha }}
       NOTEBOOKLM_MCP_COMMAND: ${{ vars.NOTEBOOKLM_MCP_COMMAND || 'notebooklm-mcp' }}
       NOTEBOOKLM_MCP_INSTALL: ${{ vars.NOTEBOOKLM_MCP_INSTALL || 'python -m pip install notebooklm-mcp-server' }}
+      NOTEBOOKLM_MCP_URL: http://127.0.0.1:8765/mcp
       NOTEBOOKLM_MCP_AUTH_TGZ_B64: ${{ secrets.NOTEBOOKLM_MCP_AUTH_TGZ_B64 }}
 
     steps:
@@ -50,6 +51,16 @@ jobs:
         run: |
           echo "::warning::NOTEBOOKLM_MCP_AUTH_TGZ_B64 is not configured. The MCP connection will only work on runners that already have NotebookLM auth."
 
+      - name: Start NotebookLM MCP server
+        run: |
+          notebooklm-mcp --transport http --host 127.0.0.1 --port 8765 --path /mcp > /tmp/notebooklm-mcp.log 2>&1 &
+          echo "$!" > /tmp/notebooklm-mcp.pid
+          sleep 3
+          if ! kill -0 "$(cat /tmp/notebooklm-mcp.pid)" 2>/dev/null; then
+            cat /tmp/notebooklm-mcp.log
+            exit 1
+          fi
+
       - name: Refresh changed Markdown sources
         run: |
           python scripts/check_notebooklm_sync.py \
@@ -57,6 +68,7 @@ jobs:
             --config .notebooklm/sources.json \
             --base "$GIT_BASE_SHA" \
             --head "$GIT_HEAD_SHA" \
+            --mcp-url "$NOTEBOOKLM_MCP_URL" \
             --github-summary
 
       - name: Verify NotebookLM source sync
@@ -65,6 +77,7 @@ jobs:
             --mode check \
             --all \
             --config .notebooklm/sources.json \
+            --mcp-url "$NOTEBOOKLM_MCP_URL" \
             --github-summary
 
       - name: Commit NotebookLM sync metadata
@@ -79,3 +92,8 @@ jobs:
           git add .notebooklm/sources.json
           git commit -m "chore: update NotebookLM source sync metadata"
           git push
+
+      - name: Show NotebookLM MCP server log on failure
+        if: failure()
+        run: |
+          cat /tmp/notebooklm-mcp.log || true
