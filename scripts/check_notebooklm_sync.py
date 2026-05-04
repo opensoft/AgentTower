@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import hashlib
 import json
 import os
@@ -15,6 +14,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import anyio
 
 
 ZERO_SHA = "0000000000000000000000000000000000000000"
@@ -416,7 +417,7 @@ async def wait_for_source(
         last_matches = sources_matching(mapping, rows)
         if len(last_matches) == 1:
             return last_matches[0]
-        await asyncio.sleep(5)
+        await anyio.sleep(5)
     if not last_matches:
         raise RuntimeError(f"Could not verify refreshed source for {mapping.path}.")
     raise RuntimeError(
@@ -708,7 +709,7 @@ async def main() -> int:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(asyncio.run(main()))
+        raise SystemExit(anyio.run(main))
     except Exception as exc:
         print(f"NotebookLM sync failed: {exc}", file=sys.stderr)
         raise SystemExit(2)
