@@ -205,14 +205,39 @@ class NotebookMcpClient:
             args=parts[1:],
             env=dict(os.environ),
         )
-        self._stdio_context = stdio_client(server)
-        read_stream, write_stream = await self._stdio_context.__aenter__()
-        self._session_context = ClientSession(read_stream, write_stream)
-        self.session = await self._session_context.__aenter__()
-        await self.session.initialize()
-        tools = await self.session.list_tools()
-        self.tool_names = {tool.name for tool in tools.tools}
-        return self
+        try:
+            self._stdio_context = stdio_client(server)
+            read_stream, write_stream = await self._stdio_context.__aenter__()
+            self._session_context = ClientSession(read_stream, write_stream)
+            self.session = await self._session_context.__aenter__()
+            await self.session.initialize()
+            tools = await self.session.list_tools()
+            self.tool_names = {tool.name for tool in tools.tools}
+            return self
+        except BaseException:
+            await self._close_after_failed_enter(*sys.exc_info())
+            raise
+
+    async def _close_after_failed_enter(
+        self, exc_type: Any, exc: Any, tb: Any
+    ) -> None:
+        close_errors: list[BaseException] = []
+        if self._session_context is not None:
+            try:
+                await self._session_context.__aexit__(exc_type, exc, tb)
+            except BaseException as close_exc:
+                close_errors.append(close_exc)
+        if self._stdio_context is not None:
+            try:
+                await self._stdio_context.__aexit__(exc_type, exc, tb)
+            except BaseException as close_exc:
+                close_errors.append(close_exc)
+        if close_errors:
+            print(
+                "NotebookLM MCP cleanup after initialization failure also failed: "
+                + "; ".join(str(error) for error in close_errors),
+                file=sys.stderr,
+            )
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._session_context is not None:
