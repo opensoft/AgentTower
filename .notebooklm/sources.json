@@ -1,0 +1,20 @@
+{
+  "notebook_id": "e7736c88-dede-49cf-851e-8b0d4cc9b615",
+  "notebook_title": "AgentTower",
+  "sources": [
+    {
+      "path": "README.md",
+      "source_id": "c61ad570-424e-43a8-88c4-57f918c52633",
+      "title": "AgentTower Product Summary"
+    },
+    {
+      "path": "docs/product-requirements.md",
+      "source_id": "61d239e0-426d-4d30-8142-6fb9634a2da8",
+      "title": "AgentTower Product Requirements Document"
+    },
+    {
+      "path": "docs/architecture.md",
+      "title": "AgentTower Architecture"
+    }
+  ]
+}
