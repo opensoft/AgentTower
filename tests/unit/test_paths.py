@@ -82,10 +82,10 @@ def test_socket_falls_back_to_state_dir_even_when_xdg_runtime_dir_set(tmp_path: 
     assert paths.socket == tmp_path / ".local/state/opensoft/agenttower/agenttowerd.sock"
 
 
-def test_paths_instance_is_frozen(isolated_env: dict[str, str]) -> None:
+def test_paths_instance_is_frozen(isolated_env: dict[str, str], tmp_path: Path) -> None:
     paths = resolve_paths()
     with pytest.raises(Exception):
-        paths.config_file = Path("/tmp/other")  # type: ignore[misc]
+        paths.config_file = tmp_path / "other"  # type: ignore[misc]
 
 
 def test_resolve_paths_accepts_explicit_env(tmp_path: Path) -> None:
