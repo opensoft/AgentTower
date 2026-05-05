@@ -59,7 +59,8 @@ prompts and events.
   to worktree, clarify, plan, checklist, tasks, analyze, implement.
 - Decide explicitly whether `/speckit.checklist <topic>` is needed before
   generating tasks; run it for known quality gates and repeat by topic when
-  useful.
+  useful. Use your own judgment after each checklist to decide whether a second
+  topic-specific checklist is warranted before tasks are generated.
 - If tasks are deferred to a later feature, run `/speckit.taskstoissues` before
   implementation and capture the issue links or IDs.
 - Keep each feature independently testable from the CLI.
