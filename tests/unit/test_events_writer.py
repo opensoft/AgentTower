@@ -54,7 +54,7 @@ def test_file_created_with_mode_0600(tmp_path: Path) -> None:
 
 def test_file_mode_0600_under_permissive_umask(tmp_path: Path) -> None:
     events_file = tmp_path / "opensoft/agenttower/events.jsonl"
-    old = os.umask(0o022)
+    old = os.umask(0o022)  # NOSONAR - intentionally broad umask fixture.
     try:
         append_event(events_file, {"k": 1})
     finally:
@@ -104,7 +104,7 @@ def test_pre_existing_file_with_broader_mode_raises_oserror(tmp_path: Path) -> N
     events_file.parent.mkdir(parents=True, mode=0o700)
     os.chmod(events_file.parent, 0o700)
     events_file.write_text("# pre-existing\n")
-    os.chmod(events_file, 0o644)
+    os.chmod(events_file, 0o644)  # NOSONAR - intentionally unsafe mode fixture.
     original = events_file.read_bytes()
 
     with pytest.raises(OSError):

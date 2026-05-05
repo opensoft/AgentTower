@@ -123,10 +123,7 @@ def test_modes_correct_under_permissive_umask(tmp_path: Path) -> None:
     env = _isolated_env(tmp_path)
     paths = _resolved_paths(tmp_path)
 
-    extra = {"UMASK": "022"}
-    wrapper = (
-        f"umask 022 && agenttower config init"
-    )
+    wrapper = "umask 022 && agenttower config init"
     proc = subprocess.run(
         ["bash", "-c", wrapper],
         env=env,
@@ -166,7 +163,7 @@ def test_pre_existing_config_with_broader_mode_causes_exit_1(tmp_path: Path) -> 
     os.chmod(paths["config_dir"].parent, 0o700)
     user_content = b"# user-edited\n"
     paths["config_file"].write_bytes(user_content)
-    os.chmod(paths["config_file"], 0o644)
+    os.chmod(paths["config_file"], 0o644)  # NOSONAR - intentionally unsafe mode fixture.
 
     proc = _run_init(env)
     assert proc.returncode == 1

@@ -78,7 +78,7 @@ def test_open_registry_refuses_pre_existing_state_db_with_broader_mode(tmp_path:
     os.chmod(state_dir, 0o700)
     state_db = state_dir / "agenttower.sqlite3"
     state_db.touch()
-    os.chmod(state_db, 0o644)
+    os.chmod(state_db, 0o644)  # NOSONAR - intentionally unsafe mode fixture.
     original_bytes = state_db.read_bytes()
 
     with pytest.raises(OSError):
@@ -90,8 +90,8 @@ def test_open_registry_refuses_pre_existing_state_db_with_broader_mode(tmp_path:
 
 def test_open_registry_refuses_pre_existing_parent_dir_with_broader_mode(tmp_path: Path) -> None:
     state_dir = tmp_path / "opensoft/agenttower"
-    state_dir.mkdir(parents=True, mode=0o755)
-    os.chmod(state_dir, 0o755)
+    state_dir.mkdir(parents=True, mode=0o755)  # NOSONAR - intentionally unsafe mode fixture.
+    os.chmod(state_dir, 0o755)  # NOSONAR - intentionally unsafe mode fixture.
     state_db = state_dir / "agenttower.sqlite3"
 
     with pytest.raises(OSError):

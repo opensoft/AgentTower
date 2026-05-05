@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -23,59 +22,73 @@ def _namespace_root(any_member: Path) -> Path:
     raise ValueError(f"path {any_member} is not under an opensoft/agenttower namespace")
 
 
-def _config_init(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+def _companion_presence(paths: Paths) -> dict[Path, bool]:
+    return {p: p.exists() for p in companion_paths_for(paths.state_db)}
 
+
+def _ensure_init_directories(paths: Paths) -> tuple[Path, Path]:
     config_namespace = _namespace_root(paths.config_file)
     state_namespace = _namespace_root(paths.state_db)
-    cache_namespace = paths.cache_dir
+    _ensure_dir_chain(paths.config_file.parent, namespace_root=config_namespace)
+    _ensure_dir_chain(paths.logs_dir, namespace_root=state_namespace)
+    _ensure_dir_chain(paths.cache_dir, namespace_root=paths.cache_dir)
+    return config_namespace, state_namespace
 
-    state_db_pre_existed_companions = {
-        p: p.exists() for p in companion_paths_for(paths.state_db)
-    }
-    state_db_pre_existed = paths.state_db.exists()
 
+def _cleanup_created_registry(
+    paths: Paths,
+    *,
+    state_db_pre_existed: bool,
+    companion_pre_existed: dict[Path, bool],
+) -> None:
+    if not state_db_pre_existed and paths.state_db.exists():
+        _unlink_ignoring_errors(paths.state_db)
+    for companion, was_present in companion_pre_existed.items():
+        if not was_present and companion.exists():
+            _unlink_ignoring_errors(companion)
+
+
+def _unlink_ignoring_errors(path: Path) -> None:
     try:
-        _ensure_dir_chain(paths.config_file.parent, namespace_root=config_namespace)
-        _ensure_dir_chain(paths.logs_dir, namespace_root=state_namespace)
-        _ensure_dir_chain(paths.cache_dir, namespace_root=cache_namespace)
+        path.unlink()
+    except OSError:
+        pass
 
-        config_status = write_default_config(
-            paths.config_file, namespace_root=config_namespace
-        )
-        conn, registry_status = open_registry(
-            paths.state_db, namespace_root=state_namespace
-        )
-        conn.close()
-    except (OSError, sqlite3.Error) as exc:
-        if isinstance(exc, OSError):
-            verb = "initialize"
-            path = exc.filename or "<unknown>"
-            reason = exc.strerror or str(exc)
-        else:
-            verb = "open registry"
-            path = str(paths.state_db)
-            reason = str(exc)
 
-        if not state_db_pre_existed and paths.state_db.exists():
-            try:
-                paths.state_db.unlink()
-            except OSError:
-                pass
-        for companion, was_present in state_db_pre_existed_companions.items():
-            if not was_present and companion.exists():
-                try:
-                    companion.unlink()
-                except OSError:
-                    pass
+def _error_details(exc: OSError | sqlite3.Error, state_db: Path) -> tuple[str, str, str]:
+    if isinstance(exc, OSError):
+        return "initialize", exc.filename or "<unknown>", exc.strerror or str(exc)
+    return "open registry", str(state_db), str(exc)
 
-        print(f"error: {verb}: {path}: {reason}", file=sys.stderr)
-        return 1
 
+def _print_init_result(paths: Paths, config_status: str, registry_status: str) -> None:
     config_prefix = "created config" if config_status == "created" else "already initialized"
     registry_prefix = "created registry" if registry_status == "created" else "already initialized"
     print(f"{config_prefix}: {paths.config_file}")
     print(f"{registry_prefix}: {paths.state_db}")
+
+
+def _config_init(args: argparse.Namespace) -> int:
+    paths: Paths = resolve_paths()
+    state_db_pre_existed = paths.state_db.exists()
+    companion_pre_existed = _companion_presence(paths)
+
+    try:
+        config_namespace, state_namespace = _ensure_init_directories(paths)
+        config_status = write_default_config(paths.config_file, namespace_root=config_namespace)
+        conn, registry_status = open_registry(paths.state_db, namespace_root=state_namespace)
+        conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        _cleanup_created_registry(
+            paths,
+            state_db_pre_existed=state_db_pre_existed,
+            companion_pre_existed=companion_pre_existed,
+        )
+        verb, path, reason = _error_details(exc, paths.state_db)
+        print(f"error: {verb}: {path}: {reason}", file=sys.stderr)
+        return 1
+
+    _print_init_result(paths, config_status, registry_status)
     return 0
 
 
