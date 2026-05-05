@@ -1,0 +1,7 @@
+interface:
+  display_name: "/speckit.git.validate"
+  short_description: "Validate branch naming rules"
+  default_prompt: "Use $speckit-git-validate to validate the current branch naming."
+policy:
+  allow_implicit_invocation: false
+

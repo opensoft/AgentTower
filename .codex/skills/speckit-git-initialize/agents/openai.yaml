@@ -1,0 +1,7 @@
+interface:
+  display_name: "/speckit.git.initialize"
+  short_description: "Initialize git for Speckit"
+  default_prompt: "Use $speckit-git-initialize to initialize git for this project."
+policy:
+  allow_implicit_invocation: false
+

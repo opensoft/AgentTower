@@ -1,0 +1,6 @@
+interface:
+  display_name: "/speckit.git.commit"
+  short_description: "Auto-commit current work"
+  default_prompt: "Use $speckit-git-commit to create the configured Speckit commit."
+policy:
+  allow_implicit_invocation: false

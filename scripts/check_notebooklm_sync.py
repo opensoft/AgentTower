@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -91,10 +92,17 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_config(path: Path) -> tuple[dict[str, Any], str, str | None, list[SourceMapping]]:
+def load_config(
+    path: Path,
+) -> tuple[dict[str, Any], str, str | None, list[SourceMapping], list[str]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     notebook_id = data["notebook_id"]
     notebook_title = data.get("notebook_title")
+    ignored_markdown = data.get("ignored_markdown", [])
+    if not isinstance(ignored_markdown, list) or not all(
+        isinstance(item, str) for item in ignored_markdown
+    ):
+        raise RuntimeError("ignored_markdown must be a list of glob strings.")
     sources = [
         SourceMapping(
             path=item["path"],
@@ -104,7 +112,7 @@ def load_config(path: Path) -> tuple[dict[str, Any], str, str | None, list[Sourc
         )
         for item in data.get("sources", [])
     ]
-    return data, notebook_id, notebook_title, sources
+    return data, notebook_id, notebook_title, sources, ignored_markdown
 
 
 def write_config(
@@ -125,14 +133,34 @@ def write_config(
 
 
 def changed_markdown_files(
-    root: Path, base: str | None, head: str | None, include_all: bool
+    root: Path,
+    base: str | None,
+    head: str | None,
+    include_all: bool,
+    ignored_markdown: list[str],
 ) -> list[str]:
     if include_all or not (base and head) or base == ZERO_SHA or head == ZERO_SHA:
         output = run_git(["ls-files", "*.md"], root)
-        return sorted(line for line in output.splitlines() if line.endswith(".md"))
+        return filter_ignored_markdown(
+            (line for line in output.splitlines() if line.endswith(".md")),
+            ignored_markdown,
+        )
 
     output = run_git(["diff", "--name-only", base, head, "--", "*.md"], root)
-    return sorted(line for line in output.splitlines() if line.endswith(".md"))
+    return filter_ignored_markdown(
+        (line for line in output.splitlines() if line.endswith(".md")),
+        ignored_markdown,
+    )
+
+
+def filter_ignored_markdown(paths: Any, ignored_markdown: list[str]) -> list[str]:
+    return sorted(
+        path for path in paths if not is_ignored_markdown(path, ignored_markdown)
+    )
+
+
+def is_ignored_markdown(path: str, ignored_markdown: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in ignored_markdown)
 
 
 def parse_tool_text(result: Any) -> str:
@@ -737,8 +765,12 @@ async def main() -> int:
     args = parse_args()
     root = repo_root()
     config_path = (root / args.config).resolve()
-    data, notebook_id, notebook_title, mappings = load_config(config_path)
-    checked = changed_markdown_files(root, args.base, args.head, args.all)
+    data, notebook_id, notebook_title, mappings, ignored_markdown = load_config(
+        config_path
+    )
+    checked = changed_markdown_files(
+        root, args.base, args.head, args.all, ignored_markdown
+    )
 
     if args.mode == "refresh":
         refresh_result = await refresh_sources(

@@ -1,0 +1,7 @@
+interface:
+  display_name: "/speckit.git.remote"
+  short_description: "Detect the Git remote URL"
+  default_prompt: "Use $speckit-git-remote to detect the configured git remote URL."
+policy:
+  allow_implicit_invocation: false
+

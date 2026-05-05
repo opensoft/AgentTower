@@ -1,0 +1,37 @@
+schema: spec-driven
+
+context: |
+  AgentTower is an Opensoft local control plane for autonomous terminal agents
+  running in tmux inside devBench containers. The MVP deploys as a host Python
+  daemon (`agenttowerd`) with a thin container-local CLI (`agenttower`) that
+  talks to the daemon over a mounted Unix socket.
+
+  Primary docs:
+  - `docs/product-requirements.md`
+  - `docs/architecture.md`
+  - `docs/mvp-feature-sequence.md`
+
+  MVP constraints:
+  - Host daemon owns SQLite state, JSONL audit history, logs, queues, and safe
+    input delivery.
+  - Bench containers are discovered from Docker by name; default match is
+    `bench`.
+  - tmux panes are discovered inside running bench containers with
+    `docker exec -u "$USER"`.
+  - Humans decide which panes are masters and slaves.
+  - AgentTower routes prompts and events; it does not execute project workflow
+    logic itself.
+  - No network listener, TUI, web UI, in-container relay, Python-thread backend,
+    or Antigravity support in MVP unless a change explicitly expands scope.
+
+  Build features in the order listed in `docs/mvp-feature-sequence.md`.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
