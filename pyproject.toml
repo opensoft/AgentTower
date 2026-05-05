@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agenttower"
+version = "0.1.0"
+description = "Local-first Python CLI and daemon for coordinating tmux-based AI agents inside Opensoft bench containers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Opensoft" },
+]
+
+[project.scripts]
+agenttower = "agenttower.cli:main"
+agenttowerd = "agenttower.daemon:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agenttower"]
