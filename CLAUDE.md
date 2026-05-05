@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/001-package-state-foundation/plan.md`.
+`specs/002-host-daemon-socket-api/plan.md`.
 <!-- SPECKIT END -->
 
 # AgentTower Agent Context
