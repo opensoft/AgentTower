@@ -80,7 +80,6 @@ def reconcile(
     - counters per FR-041 / FR-026
     """
     summary_status_by_id = {s.container_id: s.status for s in matching_summaries}
-    matching_ids = {s.container_id for s in matching_summaries}
 
     upserts: list[ContainerUpsert] = []
     for cid, inspect in successful_inspects.items():
@@ -97,7 +96,7 @@ def reconcile(
     inactivate = sorted(prior_active_ids - candidates_present)
 
     # FR-041: matched_count counts matching docker ps rows including failed inspects.
-    matched_count = len(matching_ids)
+    matched_count = len(matching_summaries)
     inactive_reconciled_count = len(inactivate)
 
     return ReconcileWriteSet(

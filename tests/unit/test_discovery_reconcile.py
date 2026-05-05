@@ -110,3 +110,16 @@ def test_fr041_sum_invariant_for_healthy_scan() -> None:
         prior_known_ids=set(),
     )
     assert ws.matched_count + ignored_count == parseable_total
+
+
+def test_matched_count_counts_alias_expanded_rows() -> None:
+    summaries = [_summary("a", "py-bench"), _summary("a", "py-bench-alias")]
+    ws = reconcile(
+        matching_summaries=summaries,
+        successful_inspects={"a": _inspect("a")},
+        failed_inspect_ids=[],
+        prior_active_ids=set(),
+        prior_known_ids=set(),
+    )
+    assert ws.matched_count == 2
+    assert [u.container_id for u in ws.upserts] == ["a"]

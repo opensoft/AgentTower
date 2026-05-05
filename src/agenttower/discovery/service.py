@@ -27,6 +27,10 @@ from .reconcile import ReconcileWriteSet, reconcile
 _MAX_TEXT = 2048
 
 
+class PostCommitSideEffectError(RuntimeError):
+    """Raised after SQLite commit when a required audit write fails."""
+
+
 def _bound(text: str | None) -> str:
     if text is None:
         return ""
@@ -74,7 +78,11 @@ def _error_details_payload(
     if not error_details:
         return None
     return [
-        {"container_id": e.container_id, "code": e.code, "message": _bound(e.message)}
+        {
+            "container_id": e.container_id,
+            "error_code": e.code,
+            "error_message": _bound(e.message),
+        }
         for e in error_details
     ]
 
@@ -93,12 +101,14 @@ class DiscoveryService:
         connection: sqlite3.Connection,
         adapter: DockerAdapter,
         rule_provider: Callable[[], MatchingRule] | None = None,
+        list_connection_factory: Callable[[], sqlite3.Connection] | None = None,
         events_file: Path | None = None,
         lifecycle_logger: Any = None,
     ) -> None:
         self._conn = connection
         self._adapter = adapter
         self._rule_provider = rule_provider or default_rule
+        self._list_connection_factory = list_connection_factory
         self._events_file = events_file
         self._lifecycle_logger = lifecycle_logger
         self._scan_mutex = threading.Lock()
@@ -109,7 +119,13 @@ class DiscoveryService:
 
     def list_containers(self, *, active_only: bool = False) -> list[state_containers.ContainerRow]:
         """Return persisted container rows without acquiring the scan mutex."""
-        return state_containers.select_containers(self._conn, active_only=active_only)
+        if self._list_connection_factory is None:
+            return state_containers.select_containers(self._conn, active_only=active_only)
+        conn = self._list_connection_factory()
+        try:
+            return state_containers.select_containers(conn, active_only=active_only)
+        finally:
+            conn.close()
 
     # -- Public API -----------------------------------------------------------
 
@@ -440,8 +456,8 @@ class DiscoveryService:
                         "error_details": [
                             {
                                 "container_id": e.container_id,
-                                "code": e.code,
-                                "message": _bound(e.message),
+                                "error_code": e.code,
+                                "error_message": _bound(e.message),
                             }
                             for e in error_details
                         ],
@@ -450,6 +466,9 @@ class DiscoveryService:
             )
         except OSError:
             self._emit_lifecycle("scan_jsonl_failed", scan_id=scan_id)
+            raise PostCommitSideEffectError(
+                "container scan degraded event append failed"
+            ) from None
 
     def _emit_lifecycle(self, event: str, **kwargs: Any) -> None:
         if self._lifecycle_logger is None:

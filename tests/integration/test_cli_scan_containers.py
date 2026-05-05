@@ -6,14 +6,9 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from ._daemon_helpers import (
     ensure_daemon,
-    isolated_env,
     resolved_paths,
-    run_config_init,
-    stop_daemon_if_alive,
 )
 
 
@@ -26,28 +21,6 @@ def _scan_containers(env, *, json_mode: bool = False, timeout: float = 15.0):
     if json_mode:
         cmd.append("--json")
     return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
-
-
-@pytest.fixture()
-def env_with_fake(tmp_path: Path):
-    home = tmp_path / "home"
-    home.mkdir()
-    fake_path = tmp_path / "docker-fake.json"
-    # Default to an empty-but-valid fake script so the daemon starts cleanly
-    # even when a test does not write a custom fixture.
-    fake_path.write_text(
-        json.dumps(
-            {"list_running": {"action": "ok", "containers": []}, "inspect": {"action": "ok", "results": []}}
-        ),
-        encoding="utf-8",
-    )
-    env = isolated_env(home)
-    env["AGENTTOWER_TEST_DOCKER_FAKE"] = str(fake_path)
-    run_config_init(env)
-    try:
-        yield env, fake_path, home
-    finally:
-        stop_daemon_if_alive(env)
 
 
 def test_scan_containers_default_summary(env_with_fake) -> None:
@@ -81,8 +54,11 @@ def test_scan_containers_default_summary(env_with_fake) -> None:
     result = _scan_containers(env)
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
-    pairs = (line.split("=", 1) for line in lines if "=" in line)
-    by_key = {key: value for key, value in pairs}
+    by_key: dict[str, str] = {}
+    for line in lines:
+        if "=" in line:
+            key, value = line.split("=", 1)
+            by_key[key] = value
     assert by_key["status"] == "ok"
     assert by_key["matched"] == "1"
     assert by_key["ignored"] == "1"

@@ -10,12 +10,16 @@ that any test invoking `agenttower` or `agenttowerd` inherits a
 
 from __future__ import annotations
 
+import json
 import os
 import site
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
+
+from ._daemon_helpers import isolated_env, run_config_init, stop_daemon_if_alive
 
 _REAL_USER_BASE = site.getuserbase()
 _REAL_USER_BIN = os.path.join(_REAL_USER_BASE, "bin")
@@ -49,3 +53,26 @@ def _preserve_user_base(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", patched_run)
     monkeypatch.setattr(subprocess, "Popen", patched_popen)
+
+
+@pytest.fixture()
+def env_with_fake(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_path = tmp_path / "docker-fake.json"
+    fake_path.write_text(
+        json.dumps(
+            {
+                "list_running": {"action": "ok", "containers": []},
+                "inspect": {"action": "ok", "results": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = isolated_env(home)
+    env["AGENTTOWER_TEST_DOCKER_FAKE"] = str(fake_path)
+    run_config_init(env)
+    try:
+        yield env, fake_path, home
+    finally:
+        stop_daemon_if_alive(env)

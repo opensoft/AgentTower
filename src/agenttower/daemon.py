@@ -124,6 +124,7 @@ def _build_discovery_service(
         connection=conn,
         adapter=adapter,
         rule_provider=lambda: load_containers_block(paths.config_file),
+        list_connection_factory=lambda: sqlite3.connect(str(paths.state_db)),
         events_file=paths.events_file,
         lifecycle_logger=logger,
     )
@@ -196,6 +197,73 @@ def _recover_stale_artifacts(paths: Paths, pid_path, logger: LifecycleLogger) ->
     return True
 
 
+def _bind_control_server(
+    paths: Paths, ctx: DaemonContext, logger: LifecycleLogger
+) -> ControlServer | None:
+    try:
+        return ControlServer(paths.socket, ctx)
+    except OSError as exc:
+        logger.emit(EVENT_ERROR_FATAL, reason=f"bind failed: {exc}", level="fatal")
+        print(f"error: bind socket: {paths.socket}: {exc}", file=sys.stderr)
+        return None
+
+
+def _install_signal_handlers(shutdown_event: threading.Event) -> None:
+    def _signal_initiator(signum: int, _frame) -> None:  # noqa: ANN001
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, _signal_initiator)
+    signal.signal(signal.SIGINT, _signal_initiator)
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+
+
+def _serve_until_shutdown(
+    server: ControlServer, shutdown_event: threading.Event, logger: LifecycleLogger
+) -> threading.Thread:
+    accept_thread = threading.Thread(
+        target=server.serve_forever, name="agenttowerd-accept", daemon=True
+    )
+    accept_thread.start()
+    while not shutdown_event.wait(timeout=1.0):
+        if not accept_thread.is_alive():
+            break
+    logger.emit(EVENT_DAEMON_SHUTDOWN, trigger="api_or_signal")
+    server.shutdown()
+    accept_thread.join(timeout=2.0)
+    return accept_thread
+
+
+def _cleanup_run(
+    *,
+    server: ControlServer | None,
+    paths: Paths,
+    scan_db_conn: sqlite3.Connection | None,
+    pid_path,
+    logger: LifecycleLogger | None,
+    lock_fd: int,
+    exit_code: int,
+) -> None:
+    if server is not None:
+        try:
+            server.server_close()
+        except OSError:
+            pass
+        try:
+            paths.socket.unlink()
+        except FileNotFoundError:
+            pass
+    if scan_db_conn is not None:
+        try:
+            scan_db_conn.close()
+        except Exception:
+            pass
+    lifecycle.remove_pid_file(pid_path)
+    if logger is not None:
+        logger.emit(EVENT_DAEMON_EXITED, exit_code=exit_code)
+        logger.close()
+    lifecycle.release_lock(lock_fd)
+
+
 def _run(args: argparse.Namespace) -> int:
     paths = resolve_paths()
     state_dir = paths.state_db.parent
@@ -221,7 +289,7 @@ def _run(args: argparse.Namespace) -> int:
 
     logger: LifecycleLogger | None = None
     server: ControlServer | None = None
-    accept_thread: threading.Thread | None = None
+    scan_db_conn: sqlite3.Connection | None = None
     exit_code = 0
     try:
         if not _assert_runtime_paths_safe(
@@ -253,62 +321,24 @@ def _run(args: argparse.Namespace) -> int:
             logger=logger,
         )
 
-        try:
-            server = ControlServer(paths.socket, ctx)
-        except OSError as exc:
-            logger.emit(EVENT_ERROR_FATAL, reason=f"bind failed: {exc}", level="fatal")
-            print(f"error: bind socket: {paths.socket}: {exc}", file=sys.stderr)
+        server = _bind_control_server(paths, ctx, logger)
+        if server is None:
             return 1
 
         lifecycle.write_pid_file(pid_path, os.getpid())
         logger.emit(EVENT_DAEMON_READY, socket=str(paths.socket), pid=os.getpid())
-
-        # Install signal handlers + SIGPIPE ignore (R-008).
-        def _signal_initiator(signum: int, _frame) -> None:  # noqa: ANN001
-            shutdown_event.set()
-
-        signal.signal(signal.SIGTERM, _signal_initiator)
-        signal.signal(signal.SIGINT, _signal_initiator)
-        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
-
-        accept_thread = threading.Thread(
-            target=server.serve_forever, name="agenttowerd-accept", daemon=True
-        )
-        accept_thread.start()
-
-        # Wait for either an API-driven shutdown or a signal-driven shutdown.
-        # ``Event.wait`` releases the GIL so signals dispatch promptly.
-        while not shutdown_event.wait(timeout=1.0):
-            if not accept_thread.is_alive():
-                # Server exited unexpectedly (should not happen) — fall through.
-                break
-
-        # Shutdown sequence (R-007): stop accepting → drain handlers → unlink.
-        logger.emit(EVENT_DAEMON_SHUTDOWN, trigger="api_or_signal")
-        # ``server.shutdown()`` must run from a thread other than the accept
-        # thread; we are in the main thread, so call it directly.
-        server.shutdown()
-        accept_thread.join(timeout=2.0)
+        _install_signal_handlers(shutdown_event)
+        _serve_until_shutdown(server, shutdown_event, logger)
     finally:
-        if server is not None:
-            try:
-                server.server_close()
-            except OSError:
-                pass
-            try:
-                paths.socket.unlink()
-            except FileNotFoundError:
-                pass
-        try:
-            if "scan_db_conn" in locals() and scan_db_conn is not None:
-                scan_db_conn.close()
-        except Exception:
-            pass
-        lifecycle.remove_pid_file(pid_path)
-        if logger is not None:
-            logger.emit(EVENT_DAEMON_EXITED, exit_code=exit_code)
-            logger.close()
-        lifecycle.release_lock(lock_fd)
+        _cleanup_run(
+            server=server,
+            paths=paths,
+            scan_db_conn=scan_db_conn,
+            pid_path=pid_path,
+            logger=logger,
+            lock_fd=lock_fd,
+            exit_code=exit_code,
+        )
 
     return exit_code
 

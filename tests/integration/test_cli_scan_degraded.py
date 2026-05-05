@@ -12,11 +12,8 @@ import pytest
 
 from ._daemon_helpers import (
     ensure_daemon,
-    isolated_env,
     resolved_paths,
-    run_config_init,
     status,
-    stop_daemon_if_alive,
 )
 
 
@@ -25,24 +22,6 @@ def _scan(env, *, json_mode: bool = True, timeout: float = 15.0):
     if json_mode:
         cmd.append("--json")
     return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
-
-
-@pytest.fixture()
-def env_with_fake(tmp_path: Path):
-    home = tmp_path / "home"
-    home.mkdir()
-    fake_path = tmp_path / "docker-fake.json"
-    env = isolated_env(home)
-    env["AGENTTOWER_TEST_DOCKER_FAKE"] = str(fake_path)
-    fake_path.write_text(
-        json.dumps({"list_running": {"action": "ok", "containers": []}, "inspect": {"action": "ok"}}),
-        encoding="utf-8",
-    )
-    run_config_init(env)
-    try:
-        yield env, fake_path, home
-    finally:
-        stop_daemon_if_alive(env)
 
 
 def _write(path: Path, payload: dict) -> None:
@@ -134,7 +113,18 @@ def test_partial_inspect_failure_returns_exit_code_5(env_with_fake) -> None:
     assert payload["result"]["status"] == "degraded"
     # FR-044: first per-container error code in docker ps order.
     assert payload["result"]["error_code"] == "docker_timeout"
-    assert len(payload["result"]["error_details"]) == 2
+    assert payload["result"]["error_details"] == [
+        {
+            "container_id": "A",
+            "error_code": "docker_timeout",
+            "error_message": "fake timeout for A",
+        },
+        {
+            "container_id": "B",
+            "error_code": "docker_failed",
+            "error_message": "fake non-zero for B",
+        },
+    ]
 
 
 def test_lifecycle_log_remains_bounded_with_4kib_error(env_with_fake) -> None:

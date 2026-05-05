@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+import agenttower.discovery.service as service_module
 from agenttower.discovery.matching import MatchingRule, default_rule
 from agenttower.discovery.service import DiscoveryService
 from agenttower.docker.adapter import ContainerSummary, InspectResult, Mount
@@ -39,7 +40,9 @@ def _seed_v1(state_db: Path) -> None:
     os.chmod(state_db, 0o600)
 
 
-def _build_ctx(tmp_path: Path, *, fake_script: dict[str, Any]) -> DaemonContext:
+def _build_ctx(
+    tmp_path: Path, *, fake_script: dict[str, Any], events_file: Path | None = None
+) -> DaemonContext:
     state_db = tmp_path / "state" / "agenttower.sqlite3"
     _seed_v1(state_db)
     conn, _ = state_schema.open_registry(state_db, namespace_root=state_db.parent)
@@ -49,7 +52,7 @@ def _build_ctx(tmp_path: Path, *, fake_script: dict[str, Any]) -> DaemonContext:
         connection=conn,
         adapter=adapter,
         rule_provider=default_rule,
-        events_file=None,
+        events_file=events_file,
         lifecycle_logger=None,
     )
     return DaemonContext(
@@ -145,24 +148,22 @@ def test_list_containers_rejects_non_bool_active_only(tmp_path: Path) -> None:
     assert response["error"]["code"] == errors.BAD_REQUEST
 
 
-def test_scan_containers_rejects_params(tmp_path: Path) -> None:
+def test_scan_containers_ignores_unknown_params(tmp_path: Path) -> None:
     ctx = _build_ctx(
         tmp_path,
         fake_script={"list_running": {"action": "ok", "containers": []}, "inspect": {"action": "ok"}},
     )
     response = DISPATCH["scan_containers"](ctx, {"active_only": True})
-    assert response["ok"] is False
-    assert response["error"]["code"] == errors.BAD_REQUEST
+    assert response["ok"] is True
 
 
-def test_list_containers_rejects_unknown_param(tmp_path: Path) -> None:
+def test_list_containers_ignores_unknown_param(tmp_path: Path) -> None:
     ctx = _build_ctx(
         tmp_path,
         fake_script={"list_running": {"action": "ok", "containers": []}, "inspect": {"action": "ok"}},
     )
     response = DISPATCH["list_containers"](ctx, {"limit": 1})
-    assert response["ok"] is False
-    assert response["error"]["code"] == errors.BAD_REQUEST
+    assert response["ok"] is True
 
 
 def test_scan_sqlite_failure_rolls_back_and_releases_mutex(tmp_path: Path, monkeypatch) -> None:
@@ -209,3 +210,38 @@ def test_scan_sqlite_failure_rolls_back_and_releases_mutex(tmp_path: Path, monke
     # No container_scans row was committed for the failed scan.
     rows = service._conn.execute("SELECT scan_id FROM container_scans").fetchall()
     assert rows == []
+
+
+def test_jsonl_failure_after_commit_returns_internal_error_and_keeps_scan_row(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """FR-043: JSONL failure is surfaced after the DB row is committed."""
+    script = {
+        "list_running": {
+            "action": "ok",
+            "containers": [{"container_id": "abc", "name": "py-bench"}],
+        },
+        "inspect": {
+            "action": "ok",
+            "results": [],
+            "per_container_errors": {
+                "abc": {"code": "docker_failed", "message": "fake inspect failed"}
+            },
+        },
+    }
+    ctx = _build_ctx(tmp_path, fake_script=script, events_file=tmp_path / "events.jsonl")
+    service = ctx.discovery_service
+    assert service is not None
+
+    def boom(*_args, **_kwargs):  # noqa: ANN202
+        raise OSError("disk full")
+
+    monkeypatch.setattr(service_module.events_writer, "append_event", boom)
+    response = DISPATCH["scan_containers"](ctx, {})
+    assert response["ok"] is False
+    assert response["error"]["code"] == errors.INTERNAL_ERROR
+
+    rows = service._conn.execute(
+        "SELECT status, error_code FROM container_scans"
+    ).fetchall()
+    assert rows == [("degraded", "docker_failed")]

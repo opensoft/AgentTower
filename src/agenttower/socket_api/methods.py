@@ -81,8 +81,8 @@ def _scan_result_to_payload(result: Any) -> dict[str, Any]:
         "error_details": [
             {
                 "container_id": e.container_id,
-                "code": e.code,
-                "message": e.message,
+                "error_code": e.code,
+                "error_message": e.message,
             }
             for e in result.error_details
         ],
@@ -90,10 +90,6 @@ def _scan_result_to_payload(result: Any) -> dict[str, Any]:
 
 
 def _scan_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
-    if params:
-        return errors.make_error(
-            errors.BAD_REQUEST, "scan_containers does not accept params"
-        )
     if ctx.discovery_service is None:
         return errors.make_error(
             errors.INTERNAL_ERROR, "discovery service unavailable"
@@ -117,10 +113,6 @@ def _list_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, An
         return errors.make_error(
             errors.INTERNAL_ERROR, "discovery service unavailable"
         )
-    unexpected = set(params) - {"active_only"}
-    if unexpected:
-        first = min(unexpected)
-        return errors.make_error(errors.BAD_REQUEST, f"unknown param: {first}")
     active_only = params.get("active_only", False)
     if not isinstance(active_only, bool):
         return errors.make_error(

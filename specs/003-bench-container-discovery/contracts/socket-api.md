@@ -114,8 +114,8 @@ machine-checkable signal.
     "error_details": [
       {
         "container_id": "abc123...",
-        "code": "docker_failed",
-        "message": "docker inspect exited 1: Error: No such object: abc123"
+        "error_code": "docker_failed",
+        "error_message": "docker inspect exited 1: Error: No such object: abc123"
       }
     ]
   }

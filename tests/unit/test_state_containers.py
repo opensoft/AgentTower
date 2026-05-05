@@ -103,14 +103,7 @@ def test_migration_failure_rolls_back(tmp_path: Path, monkeypatch) -> None:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='containers'"
         ).fetchall()
-        # The IF NOT EXISTS ran outside the BEGIN IMMEDIATE wrapper so it may
-        # remain — but it must not be the *full* containers table from v2.
-        # We accept either no table or a stub table; what matters is schema_version.
-        if rows:
-            cols = {
-                r[1] for r in conn.execute("PRAGMA table_info(containers)").fetchall()
-            }
-            assert "active" not in cols, "v2 schema leaked despite rollback"
+        assert rows == []
     finally:
         conn.close()
 
@@ -215,7 +208,13 @@ def test_insert_container_scan_round_trip(tmp_path: Path) -> None:
             ignored_count=2,
             error_code="docker_failed",
             error_message="oops",
-            error_details=[{"container_id": "a", "code": "docker_failed", "message": "stderr"}],
+            error_details=[
+                {
+                    "container_id": "a",
+                    "error_code": "docker_failed",
+                    "error_message": "stderr",
+                }
+            ],
         )
         row = conn.execute("SELECT scan_id, status, error_code FROM container_scans").fetchone()
         assert row == ("scan-1", "degraded", "docker_failed")
