@@ -5,6 +5,16 @@
 **Status**: Draft
 **Input**: User description: "FEAT-002: Host Daemon Lifecycle and Unix Socket API. Create the next MVP feature spec from docs/mvp-feature-sequence.md. Run this from the root checkout on main only; first verify branch is main and working tree is clean, then create only the specification and requirements checklist. The feature goal is to run agenttowerd as the host source of truth and expose a local control API. A developer can use agenttower ensure-daemon to start exactly one long-running host daemon, re-run it idempotently, call agenttower status over the configured local Unix socket, call ping/status/shutdown over a newline-delimited JSON request/response protocol, and recover cleanly after daemon death, stale pid, stale lock, or stale socket state. The daemon must use the Opensoft config/state/socket paths from FEAT-001; refuse to start until config/state are initialized; enforce host-user-only socket permissions; avoid any TCP/UDP/network listener; and produce scriptable stdout/stderr and exit codes. Include lock file and pid file management, stale pid recovery, local socket lifecycle, safe shutdown, liveness checks, error cases for existing live daemon, stale socket, unwritable state path, invalid permissions, malformed JSON request, unavailable socket, and SIGTERM/ctrl-c cleanup. Out of scope for FEAT-002: container socket mounting, Docker discovery, tmux discovery, background discovery loops, registration, logs, events/classification, prompt routing, input delivery, swarms, multi-master arbitration, TUI, Antigravity, and in-container relay. Stop after specify; do not run clarify, plan, tasks, analyze, implement, or commit."
 
+## Clarifications
+
+### Session 2026-05-05
+
+- Q: Which CLI command triggers daemon shutdown over the local socket API? → A: `agenttower stop-daemon` (mirrors the `agenttower ensure-daemon` verb pattern).
+- Q: How does the daemon handle multiple request lines on a single socket connection? → A: One request per connection — the daemon reads one newline-delimited JSON request, writes one response, then closes the connection; any bytes after the first newline are ignored.
+- Q: What daemon log file output is in scope for FEAT-002? → A: A minimal lifecycle log file under the FEAT-001 log directory recording start, ready, shutdown, stale-artifact recovery, and fatal errors only; no event/agent/pane logging in FEAT-002.
+- Q: How are in-flight requests handled when shutdown is requested or a normal termination signal is received? → A: Finish in-flight, refuse new — the daemon stops accepting new connections immediately, completes responses for already-accepted connections, then closes the listener and exits.
+- Q: How do concurrent `ensure-daemon` invocations against an empty state (no pid, lock, or socket) avoid starting two daemons? → A: Lock-first startup — each `ensure-daemon` acquires an exclusive lock on the FEAT-001 lock file before any pid or socket work; concurrent losers block briefly, observe the now-live daemon, and exit successfully via the FR-007 path.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Start One Host Daemon (Priority: P1)
@@ -108,8 +118,10 @@ longer accepts requests.
 - A socket path exists as a regular file, directory, symlink, or stale socket.
 - Another AgentTower daemon is already live for the same resolved state
   directory.
-- The daemon receives malformed JSON, an unknown method, an incomplete request,
-  or more than one request line on a connection.
+- The daemon receives malformed JSON, an unknown method, or an incomplete
+  request.
+- A client writes additional bytes after the first request line on the same
+  connection.
 - The client connects to a socket that closes before a full response.
 - The daemon receives SIGTERM or keyboard interruption while handling a request.
 - The system clock changes while uptime or start time is reported.
@@ -134,8 +146,8 @@ longer accepts requests.
 - **FR-014**: Every local control API response MUST include an explicit success or error outcome that a client can parse without inspecting human-oriented text.
 - **FR-015**: `ping` MUST confirm the daemon is alive without mutating durable state.
 - **FR-016**: `status` MUST report at least daemon liveness, process identity, start time or uptime, socket path, state path, and served schema version when those values are available.
-- **FR-017**: `shutdown` MUST stop the daemon cleanly, close the local socket, and remove owned lifecycle artifacts that should not survive a normal shutdown.
-- **FR-018**: The CLI MUST provide `agenttower status` as a client of the daemon's local socket API.
+- **FR-017**: `shutdown` MUST stop the daemon cleanly, close the local socket, and remove owned lifecycle artifacts that should not survive a normal shutdown. On shutdown (whether triggered by the `shutdown` API method or a normal termination signal), the daemon MUST stop accepting new local socket connections immediately, complete the response for any request already accepted on an existing connection, then close the listener and exit.
+- **FR-018**: The CLI MUST provide `agenttower status` and `agenttower stop-daemon` as clients of the daemon's local socket API; `agenttower stop-daemon` MUST issue the API `shutdown` method, exit successfully when the daemon confirms shutdown, and exit with a non-success status and actionable output when no reachable daemon is found.
 - **FR-019**: CLI commands in this feature MUST produce stable exit codes and clear stdout/stderr separation suitable for shell scripts.
 - **FR-020**: If the local socket is unavailable, unreachable, or returns an invalid response, CLI clients MUST fail with actionable output and MUST NOT attempt Docker, tmux, registration, routing, or terminal input fallback behavior.
 - **FR-021**: The daemon MUST handle malformed JSON, unknown methods, and unsupported request shapes by returning structured errors without crashing.
@@ -143,6 +155,9 @@ longer accepts requests.
 - **FR-023**: The daemon MUST NOT perform container discovery, tmux discovery, log attachment, event classification, agent registration, prompt routing, input delivery, swarm tracking, multi-master arbitration, TUI behavior, Antigravity integration, or in-container relay behavior in FEAT-002.
 - **FR-024**: The daemon MUST NOT write terminal input or execute commands inside user tmux panes in this feature.
 - **FR-025**: The daemon lifecycle MUST be observable through CLI output and API responses even when no containers, tmux panes, or agents exist.
+- **FR-026**: The daemon MUST treat each accepted local socket connection as serving exactly one request: it reads one newline-delimited JSON request, writes one newline-delimited JSON response, then closes the connection. Any bytes received after the first newline on the same connection MUST be ignored without affecting the already-sent response or daemon liveness.
+- **FR-027**: The daemon MUST write a minimal lifecycle log file under the FEAT-001 log directory that records, at minimum, daemon start, ready-to-serve, normal shutdown, recovery of stale lifecycle artifacts, and fatal startup or runtime errors. The lifecycle log MUST NOT contain event, agent, pane, container, or per-request audit entries in FEAT-002; those are reserved for later features.
+- **FR-028**: `agenttower ensure-daemon` MUST serialize startup through an exclusive lock on the FEAT-001 lock file before performing pid file or socket work. Concurrent invocations against an empty state MUST result in exactly one daemon being started; the invocation that loses the lock race MUST wait for the lock holder to either bring a daemon to a ready state or fail, then proceed via the existing live-daemon path (FR-007) or surface the same startup error.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -177,6 +192,7 @@ longer accepts requests.
 - **SC-006**: A normal shutdown request leaves no reachable daemon socket and allows a subsequent `agenttower ensure-daemon` to start a fresh daemon without manual cleanup.
 - **SC-007**: Automated verification can confirm that FEAT-002 opens no network listener and invokes no Docker or tmux command.
 - **SC-008**: Unsafe permissions or ownership on required daemon paths cause startup to fail before a socket is bound, with a path-specific error message.
+- **SC-009**: Running 5 `agenttower ensure-daemon` invocations concurrently against an empty state directory results in exactly one live daemon and all 5 invocations exiting successfully.
 
 ## Assumptions
 
