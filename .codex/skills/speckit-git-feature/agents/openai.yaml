@@ -1,0 +1,7 @@
+interface:
+  display_name: "/speckit.git.feature"
+  short_description: "Create a Speckit feature branch"
+  default_prompt: "Use $speckit-git-feature to create a Speckit feature branch."
+policy:
+  allow_implicit_invocation: false
+

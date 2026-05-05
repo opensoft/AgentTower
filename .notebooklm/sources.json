@@ -1,6 +1,44 @@
 {
   "notebook_id": "e7736c88-dede-49cf-851e-8b0d4cc9b615",
   "notebook_title": "AgentTower",
+  "ignored_markdown": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    ".agent/**/*.md",
+    ".agents/**/*.md",
+    ".amazonq/**/*.md",
+    ".augment/**/*.md",
+    ".bob/**/*.md",
+    ".claude/**/*.md",
+    ".cline/**/*.md",
+    ".clinerules/**/*.md",
+    ".codebuddy/**/*.md",
+    ".codex/**/*.md",
+    ".continue/**/*.md",
+    ".cospec/**/*.md",
+    ".crush/**/*.md",
+    ".cursor/**/*.md",
+    ".factory/**/*.md",
+    ".forge/**/*.md",
+    ".gemini/**/*.md",
+    ".github/prompts/**/*.md",
+    ".github/skills/**/*.md",
+    ".iflow/**/*.md",
+    ".junie/**/*.md",
+    ".kilocode/**/*.md",
+    ".kiro/**/*.md",
+    ".lingma/**/*.md",
+    ".opencode/**/*.md",
+    ".pi/**/*.md",
+    ".qoder/**/*.md",
+    ".qwen/**/*.md",
+    ".roo/**/*.md",
+    ".specify/**/*.md",
+    ".trae/**/*.md",
+    ".windsurf/**/*.md",
+    "openspec/**/*.md"
+  ],
   "sources": [
     {
       "path": "README.md",
@@ -22,6 +60,10 @@
       "source_id": "498efe17-9fee-4a77-bb0f-c98c5104f587",
       "content_sha256": "929a5d7047c3b30f7a7304699c351a2fa89f20311de552d1deaeff36b493ad6d",
       "synced_at": "2026-05-05T02:19:50Z"
+    },
+    {
+      "path": "docs/mvp-feature-sequence.md",
+      "title": "AgentTower MVP Feature Sequence"
     }
   ]
 }
