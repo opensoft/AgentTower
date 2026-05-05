@@ -158,6 +158,7 @@ longer accepts requests.
 - **FR-026**: The daemon MUST treat each accepted local socket connection as serving exactly one request: it reads one newline-delimited JSON request, writes one newline-delimited JSON response, then closes the connection. Any bytes received after the first newline on the same connection MUST be ignored without affecting the already-sent response or daemon liveness.
 - **FR-027**: The daemon MUST write a minimal lifecycle log file under the FEAT-001 log directory that records, at minimum, daemon start, ready-to-serve, normal shutdown, recovery of stale lifecycle artifacts, and fatal startup or runtime errors. The lifecycle log MUST NOT contain event, agent, pane, container, or per-request audit entries in FEAT-002; those are reserved for later features.
 - **FR-028**: `agenttower ensure-daemon` MUST serialize startup through an exclusive lock on the FEAT-001 lock file before performing pid file or socket work. Concurrent invocations against an empty state MUST result in exactly one daemon being started; the invocation that loses the lock race MUST wait for the lock holder to either bring a daemon to a ready state or fail, then proceed via the existing live-daemon path (FR-007) or surface the same startup error.
+- **FR-029**: The daemon MUST bound the maximum size of a single newline-delimited JSON request line to 64 KiB (65536 bytes including the trailing newline). A connection that writes more than 64 KiB before the first newline MUST receive a `request_too_large` structured error response and have its connection closed without affecting daemon liveness.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -211,3 +212,26 @@ longer accepts requests.
 - FEAT-002 lifecycle observability is limited to CLI output and local API
   responses. User-facing event ingestion, event classification, and follow-mode
   event streams are owned by later features.
+- FEAT-002 introduces no third-party Python runtime dependencies of its own,
+  independent of FEAT-001. Implementation uses the Python standard library only.
+  Adding a runtime dependency requires a spec amendment.
+- The threat model for FEAT-002 is a single-user developer host: the host user
+  is trusted, the local filesystem under the resolved AgentTower namespace is
+  trusted, and there is no remote attacker. A malicious local process running
+  at the same uid as the AgentTower user is explicitly out of scope; the
+  host-user-only socket and file permissions defend against other-uid local
+  processes only.
+- Connection-level denial-of-service controls are out of scope for FEAT-002:
+  there is no concurrent-connection cap, no slow-client read timeout, and no
+  request-rate limiting beyond the per-request 64 KiB size limit (FR-029).
+  Justification: under the single-host-user threat model, the only client of
+  the local socket is the AgentTower CLI itself; rate-limiting requirements
+  may be revisited if FEAT-002 is later exposed to untrusted local clients.
+- FEAT-002 daemonization detaches the daemon from its controlling terminal via
+  `setsid()` (a new session is created when the daemon is spawned by
+  `ensure-daemon`). This means the daemon shares no controlling terminal with
+  other host processes and cannot be SIGHUP-ed by terminal close. SIGHUP is
+  unhandled in FEAT-002; the daemon receives the OS default action. This is
+  acceptable for MVP because the daemon offers no config-reload behavior in
+  this feature; later features that introduce reload semantics can add a
+  SIGHUP handler.
