@@ -178,6 +178,65 @@ def extract_source_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def nested_source_id(value: Any) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, list) and value:
+        return nested_source_id(value[0])
+    return None
+
+
+def parse_notebook_source(source: Any) -> NotebookSource | None:
+    if isinstance(source, dict):
+        source_id = source.get("id") or source.get("source_id")
+        title = source.get("title") or source.get("name")
+        if isinstance(source_id, str) and isinstance(title, str):
+            return NotebookSource(source_id=source_id, title=title)
+        return None
+
+    # notebooklm-mcp-server currently returns NotebookLM's raw array payload:
+    # [[source_id], title, ...]. Keep this parser isolated so the rest of the
+    # sync code can work with stable objects.
+    if isinstance(source, list) and len(source) >= 2:
+        source_id = nested_source_id(source[0])
+        title = source[1]
+        if source_id and isinstance(title, str):
+            return NotebookSource(source_id=source_id, title=title)
+    return None
+
+
+def extract_notebook_sources(payload: dict[str, Any]) -> list[NotebookSource]:
+    source_groups: list[Any] = []
+    if isinstance(payload.get("sources"), list):
+        source_groups.append(payload["sources"])
+
+    notebook = payload.get("notebook")
+    if isinstance(notebook, dict) and isinstance(notebook.get("sources"), list):
+        source_groups.append(notebook["sources"])
+    elif isinstance(notebook, list):
+        for notebook_row in notebook:
+            if isinstance(notebook_row, dict) and isinstance(notebook_row.get("sources"), list):
+                source_groups.append(notebook_row["sources"])
+            elif (
+                isinstance(notebook_row, list)
+                and len(notebook_row) > 1
+                and isinstance(notebook_row[1], list)
+            ):
+                source_groups.append(notebook_row[1])
+
+    sources: list[NotebookSource] = []
+    seen: set[str] = set()
+    for group in source_groups:
+        if not isinstance(group, list):
+            continue
+        for raw_source in group:
+            source = parse_notebook_source(raw_source)
+            if source and source.source_id not in seen:
+                sources.append(source)
+                seen.add(source.source_id)
+    return sources
+
+
 class NotebookMcpClient:
     def __init__(self, command: str, url: str | None = None) -> None:
         self.command = command
@@ -271,13 +330,7 @@ class NotebookMcpClient:
                 f"Available tools: {available}"
             )
         payload = await self.call_tool("notebook_get", {"notebook_id": notebook_id})
-        sources: list[NotebookSource] = []
-        for source in payload.get("sources", []):
-            source_id = source.get("id") or source.get("source_id")
-            title = source.get("title") or source.get("name")
-            if source_id and title:
-                sources.append(NotebookSource(source_id=source_id, title=title))
-        return sources
+        return extract_notebook_sources(payload)
 
     async def delete_source(self, source_id: str) -> None:
         if "source_delete" in self.tool_names:

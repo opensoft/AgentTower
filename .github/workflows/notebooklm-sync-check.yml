@@ -65,10 +65,19 @@ jobs:
           if not isinstance(cookies, list) or not cookies:
               raise SystemExit(f"No cookies found in {auth_path}")
 
+          valid_domains = {".google.com", "notebooklm.google.com"}
+          filtered_cookies = [
+              cookie for cookie in cookies
+              if cookie.get("domain") in valid_domains
+              and cookie.get("name")
+              and cookie.get("value")
+          ]
+          if not filtered_cookies:
+              raise SystemExit(f"No NotebookLM cookies found in {auth_path}")
+
           cookie_header = "; ".join(
               f"{cookie['name']}={cookie['value']}"
-              for cookie in cookies
-              if cookie.get("name") and cookie.get("value")
+              for cookie in filtered_cookies
           )
           print(f"::add-mask::{cookie_header}")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
