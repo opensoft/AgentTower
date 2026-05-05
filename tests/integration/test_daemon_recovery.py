@@ -14,8 +14,10 @@ import pytest
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
+    process_exists,
     resolved_paths,
     run_config_init,
+    send_test_signal,
     stop_daemon_if_alive,
 )
 
@@ -32,9 +34,7 @@ def _wait_for_pid_to_exit(pid: int, *, timeout: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
     stat_path = Path(f"/proc/{pid}/stat")
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not process_exists(pid):
             return
         # /proc/<pid>/stat field 3 is the state code; 'Z' means zombie.
         try:
@@ -69,7 +69,7 @@ def test_kill_dash_nine_then_ensure_daemon_recovers_within_three_seconds(
     first = ensure_daemon(env, json_mode=True)
     assert first.returncode == 0, first.stderr
     pid = json.loads(first.stdout)["pid"]
-    os.kill(pid, signal.SIGKILL)
+    send_test_signal(pid, signal.SIGKILL)
     _wait_for_pid_to_exit(pid)
 
     paths = resolved_paths(Path(env["HOME"]))
@@ -104,7 +104,7 @@ def test_existing_live_daemon_is_not_disturbed(env: dict[str, str]) -> None:
     first_pid = json.loads(first.stdout)["pid"]
 
     # Sanity check: the daemon is still running.
-    os.kill(first_pid, 0)
+    assert process_exists(first_pid)
 
     second = ensure_daemon(env, json_mode=True)
     assert second.returncode == 0, second.stderr
@@ -113,7 +113,7 @@ def test_existing_live_daemon_is_not_disturbed(env: dict[str, str]) -> None:
     assert payload["pid"] == first_pid
 
     # Same daemon still alive.
-    os.kill(first_pid, 0)
+    assert process_exists(first_pid)
 
 
 def test_refuses_when_socket_path_is_regular_file(env: dict[str, str]) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import signal
 import time
 from pathlib import Path
@@ -13,8 +12,10 @@ import pytest
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
+    process_exists,
     resolved_paths,
     run_config_init,
+    send_test_signal,
     stop_daemon_if_alive,
 )
 
@@ -30,9 +31,7 @@ def _wait_for_pid_zombie_or_gone(pid: int, *, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     stat_path = Path(f"/proc/{pid}/stat")
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not process_exists(pid):
             return
         try:
             data = stat_path.read_text(encoding="utf-8", errors="replace")
@@ -54,7 +53,7 @@ def test_signal_triggers_clean_shutdown_then_re_ensure_succeeds(
     assert first.returncode == 0, first.stderr
     pid = json.loads(first.stdout)["pid"]
 
-    os.kill(pid, sig)
+    send_test_signal(pid, sig)
     _wait_for_pid_zombie_or_gone(pid)
 
     paths = resolved_paths(Path(env["HOME"]))

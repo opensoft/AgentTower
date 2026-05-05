@@ -106,8 +106,8 @@ def _make_handler(line: bytes) -> tuple[server_module._RequestHandler, _FakeWFil
         DaemonContext(
             pid=4242,
             start_time_utc=datetime.now(timezone.utc),
-            socket_path=Path("/tmp/agenttowerd.sock"),
-            state_path=Path("/tmp"),
+            socket_path=Path("agenttowerd.sock"),
+            state_path=Path("."),
             daemon_version="0.0.0+test",
             schema_version=1,
         )

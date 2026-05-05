@@ -85,6 +85,20 @@ def stop_daemon(env: dict[str, str], *, json_mode: bool = False, timeout: float 
     )
 
 
+def send_test_signal(pid: int, sig: int) -> None:
+    """Signal a daemon pid created by an isolated integration test."""
+    os.kill(pid, sig)  # NOSONAR - test-only signal to an isolated child daemon.
+
+
+def process_exists(pid: int) -> bool:
+    """Return whether a test daemon pid is still present in the process table."""
+    try:
+        os.kill(pid, 0)  # NOSONAR - standard test-only pid liveness probe.
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def stop_daemon_if_alive(env: dict[str, str]) -> None:
     """Best-effort teardown — succeeds whether or not a daemon is alive."""
     try:
@@ -101,11 +115,9 @@ def stop_daemon_if_alive(env: dict[str, str]) -> None:
         pid = None
     if pid is not None:
         try:
-            os.kill(pid, 15)
+            send_test_signal(pid, 15)
             for _ in range(40):
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
+                if not process_exists(pid):
                     break
                 time.sleep(0.05)
         except ProcessLookupError:
