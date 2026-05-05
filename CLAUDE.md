@@ -47,7 +47,9 @@ the wrong checkout, stop and repair the git/spec artifacts before continuing.
 
 Do not go from plan to tasks without explicitly deciding whether a checklist is
 needed. Run `/speckit.checklist <topic>` for any known quality gate or risk area
-and repeat it for multiple topics when useful.
+and repeat it for multiple topics when useful. Use your own judgment after each
+checklist to decide whether a second topic-specific checklist is warranted
+before tasks are generated.
 
 When tasks are deferred to a later feature, run `/speckit.taskstoissues` before
 implementation and record the resulting issue links or IDs in the handoff.
