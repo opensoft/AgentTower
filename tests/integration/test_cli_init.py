@@ -116,7 +116,8 @@ def test_idempotent_reruns_leave_bytes_and_rows_unchanged(tmp_path: Path) -> Non
             ((count,),) = list(conn.execute("SELECT COUNT(*) FROM schema_version"))
             ((version,),) = list(conn.execute("SELECT version FROM schema_version"))
         assert count == 1
-        assert version == 1
+        # FEAT-003 bumps the schema to v2 (data-model.md §7).
+        assert version == 2
 
 
 def test_modes_correct_under_permissive_umask(tmp_path: Path) -> None:

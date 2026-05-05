@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+import tomllib
 from pathlib import Path
 
 DEFAULT_CONFIG_TOML = """\
@@ -19,6 +20,14 @@ scan_interval_seconds = 5
 
 _FILE_MODE = 0o600
 _DIR_MODE = 0o700
+
+
+class ConfigInvalidError(Exception):
+    """Raised when the on-disk config violates FEAT-003 validation rules."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 def _render_default_config() -> str:
@@ -74,6 +83,96 @@ def _verify_file_mode(path: Path, required: int) -> None:
             f"file mode {oct(actual)} broader than required {oct(required)}",
             str(path),
         )
+
+
+_MAX_NAME_CONTAINS_ENTRIES = 32
+_MAX_NAME_CONTAINS_LENGTH = 128
+_MAX_ERROR_MSG = 2048
+
+
+def _bound(text: str) -> str:
+    cleaned = "".join(ch for ch in text if ch == "\t" or ch == "\n" or ord(ch) >= 32)
+    return cleaned[:_MAX_ERROR_MSG]
+
+
+def load_containers_block(config_path: Path):
+    """Load and validate `[containers] name_contains` from *config_path*.
+
+    Returns a `MatchingRule`. Raises :class:`ConfigInvalidError` per
+    FR-006 / FR-030 when the block is malformed. A missing block (or a
+    missing `name_contains` key) yields the default rule (FR-005).
+    """
+    # Local import keeps `agenttower.config` importable without the
+    # `agenttower.discovery` subpackage being available at import time.
+    from .discovery.matching import MatchingRule, default_rule
+
+    if not config_path.exists():
+        return default_rule()
+
+    try:
+        with open(config_path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigInvalidError(_bound(f"failed to parse {config_path}: {exc}")) from exc
+
+    block = data.get("containers")
+    if block is None:
+        return default_rule()
+    if not isinstance(block, dict):
+        raise ConfigInvalidError(
+            _bound(f"[containers] must be a TOML table; got {type(block).__name__}")
+        )
+
+    if "name_contains" not in block:
+        return default_rule()
+
+    raw = block["name_contains"]
+    if not isinstance(raw, list):
+        raise ConfigInvalidError(
+            _bound(
+                f"[containers] name_contains must be a list of strings; got "
+                f"{raw!r} ({type(raw).__name__})"
+            )
+        )
+    if len(raw) == 0:
+        raise ConfigInvalidError(
+            "[containers] name_contains must be a non-empty list of non-empty strings; got []"
+        )
+    if len(raw) > _MAX_NAME_CONTAINS_ENTRIES:
+        raise ConfigInvalidError(
+            _bound(
+                f"[containers] name_contains has {len(raw)} entries; max is "
+                f"{_MAX_NAME_CONTAINS_ENTRIES}"
+            )
+        )
+
+    cleaned: list[str] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, str):
+            raise ConfigInvalidError(
+                _bound(
+                    f"[containers] name_contains[{index}] must be a string; "
+                    f"got {entry!r} ({type(entry).__name__})"
+                )
+            )
+        if len(entry) > _MAX_NAME_CONTAINS_LENGTH:
+            raise ConfigInvalidError(
+                _bound(
+                    f"[containers] name_contains[{index}] is {len(entry)} chars; "
+                    f"max is {_MAX_NAME_CONTAINS_LENGTH}; value={entry!r}"
+                )
+            )
+        stripped = entry.strip()
+        if not stripped:
+            raise ConfigInvalidError(
+                _bound(
+                    f"[containers] name_contains[{index}] is blank after strip(); "
+                    f"originally {entry!r}"
+                )
+            )
+        cleaned.append(stripped)
+
+    return MatchingRule(name_contains=tuple(cleaned))
 
 
 def write_default_config(config_file: Path, *, namespace_root: Path | None = None) -> str:

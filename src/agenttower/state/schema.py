@@ -7,6 +7,7 @@ import os
 import sqlite3
 import stat
 from pathlib import Path
+from typing import Callable
 
 from ..config import (
     _DIR_MODE,
@@ -15,13 +16,100 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
 
 def _companion_paths(state_db: Path) -> list[Path]:
     return [state_db.with_name(state_db.name + suffix) for suffix in _COMPANION_SUFFIXES]
+
+
+def _apply_migration_v2(conn: sqlite3.Connection) -> None:
+    """Create FEAT-003 tables. Idempotent because of IF NOT EXISTS guards."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS containers (
+            container_id      TEXT PRIMARY KEY,
+            name              TEXT NOT NULL,
+            image             TEXT NOT NULL,
+            status            TEXT NOT NULL,
+            labels_json       TEXT NOT NULL DEFAULT '{}',
+            mounts_json       TEXT NOT NULL DEFAULT '[]',
+            inspect_json      TEXT NOT NULL DEFAULT '{}',
+            config_user       TEXT,
+            working_dir       TEXT,
+            active            INTEGER NOT NULL CHECK(active IN (0, 1)),
+            first_seen_at     TEXT NOT NULL,
+            last_scanned_at   TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS containers_active_lastscan
+            ON containers(active DESC, last_scanned_at DESC, container_id ASC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS container_scans (
+            scan_id                    TEXT PRIMARY KEY,
+            started_at                 TEXT NOT NULL,
+            completed_at               TEXT NOT NULL,
+            status                     TEXT NOT NULL CHECK(status IN ('ok', 'degraded')),
+            matched_count              INTEGER NOT NULL,
+            inactive_reconciled_count  INTEGER NOT NULL,
+            ignored_count              INTEGER NOT NULL,
+            error_code                 TEXT,
+            error_message              TEXT,
+            error_details_json         TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS container_scans_started
+            ON container_scans(started_at DESC)
+        """
+    )
+
+
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    2: _apply_migration_v2,
+}
+
+
+def _apply_pending_migrations(conn: sqlite3.Connection, current: int) -> int:
+    """Apply every migration from `current+1` up to CURRENT_SCHEMA_VERSION.
+
+    Runs under a single transaction. Returns the new schema version.
+    Refuses (raises sqlite3.DatabaseError) if a future version is already on disk.
+    """
+    if current > CURRENT_SCHEMA_VERSION:
+        raise sqlite3.DatabaseError(
+            f"on-disk schema_version={current} is newer than this build supports "
+            f"({CURRENT_SCHEMA_VERSION}); refusing to open"
+        )
+    if current == CURRENT_SCHEMA_VERSION:
+        return current
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        target = current
+        for version in range(current + 1, CURRENT_SCHEMA_VERSION + 1):
+            migration = _MIGRATIONS[version]
+            migration(conn)
+            target = version
+        conn.execute(
+            "UPDATE schema_version SET version = ?",
+            (target,),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return target
 
 
 def open_registry(
@@ -34,7 +122,8 @@ def open_registry(
     Returns ``(connection, status)`` where ``status`` is ``"created"`` when
     this call created the database file, ``"already initialized"`` otherwise.
     Raises ``OSError`` on filesystem errors or pre-existing weak modes on
-    AgentTower-owned artifacts.
+    AgentTower-owned artifacts. Raises ``sqlite3.DatabaseError`` if the
+    on-disk schema version is greater than this build supports.
     """
     if namespace_root is None:
         namespace_root = state_db.parent
@@ -66,6 +155,23 @@ def open_registry(
                 "INSERT INTO schema_version (version) VALUES (?)",
                 (CURRENT_SCHEMA_VERSION,),
             )
+            current_version = CURRENT_SCHEMA_VERSION
+        else:
+            current_version = int(
+                conn.execute("SELECT version FROM schema_version").fetchone()[0]
+            )
+
+        if current_version < CURRENT_SCHEMA_VERSION:
+            _apply_pending_migrations(conn, current_version)
+        elif current_version > CURRENT_SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"on-disk schema_version={current_version} is newer than this "
+                f"build supports ({CURRENT_SCHEMA_VERSION}); refusing to open"
+            )
+        else:
+            # Existing DB at current version: ensure FEAT-003 tables exist
+            # in case the row got there ahead of the tables (defensive).
+            _apply_migration_v2(conn)
 
         for companion in _companion_paths(state_db):
             if not pre_existing_companions[companion] and companion.exists():

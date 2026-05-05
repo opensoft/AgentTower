@@ -14,6 +14,7 @@ Provides:
 from __future__ import annotations
 
 import os
+import site
 import subprocess
 import sys
 import time
@@ -24,7 +25,8 @@ def isolated_env(home: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     bin_dir = os.path.dirname(sys.executable)
-    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    user_bin = str(Path(site.getuserbase()) / "bin")
+    env["PATH"] = os.pathsep.join((bin_dir, user_bin, env.get("PATH", "")))
     for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR"):
         env.pop(var, None)
     return env

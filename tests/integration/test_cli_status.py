@@ -68,7 +68,8 @@ def test_status_json_output_shape(env: dict[str, str]) -> None:
         "daemon_version",
     }
     assert result["alive"] is True
-    assert result["schema_version"] == 1
+    # FEAT-003 bumps the schema to v2 (data-model.md §7).
+    assert result["schema_version"] == 2
 
 
 def test_status_unavailable_returns_exit_2(env: dict[str, str]) -> None:

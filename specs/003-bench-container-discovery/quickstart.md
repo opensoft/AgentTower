@@ -96,12 +96,7 @@ Edit `~/.config/opensoft/agenttower/config.toml` to add a
 name_contains = ["bench", "dev"]
 ```
 
-Restart the daemon so the new config is loaded:
-
-```bash
-$ agenttower stop-daemon
-$ agenttower ensure-daemon
-```
+No restart is required; the daemon reads the matching rule once per scan.
 
 Now both `py-bench` and any container whose name contains `dev`
 will match:
@@ -166,7 +161,7 @@ $ ( agenttower scan --containers --json & agenttower scan --containers --json & 
 ```
 
 The two `started_at` timestamps are non-overlapping; scan B's
-`started_at >= scan A's `completed_at`.
+`started_at` is greater than or equal to scan A's `completed_at`.
 
 ---
 

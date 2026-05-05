@@ -51,7 +51,14 @@ def test_ping_does_not_open_sqlite_connection(tmp_path: Path, monkeypatch) -> No
 
 
 def test_dispatch_table_keys_are_closed_set() -> None:
-    assert set(DISPATCH.keys()) == {"ping", "status", "shutdown"}
+    # FEAT-002 keys + FEAT-003 additions (FR-022 backward-compat).
+    assert set(DISPATCH.keys()) == {
+        "ping",
+        "status",
+        "shutdown",
+        "scan_containers",
+        "list_containers",
+    }
 
 
 # ---------------------------------------------------------------------------

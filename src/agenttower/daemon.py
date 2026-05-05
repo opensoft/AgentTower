@@ -11,6 +11,10 @@ import threading
 from datetime import datetime, timezone
 
 from . import __version__
+from .config import load_containers_block
+from .discovery.matching import default_rule
+from .discovery.service import DiscoveryService
+from .docker import FakeDockerAdapter
 from .paths import Paths, resolve_paths
 from .socket_api import lifecycle
 from .socket_api.lifecycle import (
@@ -54,23 +58,45 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _verify_feat001_initialized(paths: Paths) -> None:
-    """Refuse to start if FEAT-001 schema_version row is missing (FR-003)."""
+    """Refuse to start if FEAT-001 schema_version row is missing (FR-003).
+
+    Also runs any pending schema migrations (FEAT-003 v1→v2) so the daemon
+    never serves with stale schema (FR-047).
+    """
     if not paths.state_db.exists():
         raise SystemExit(
             f"error: agenttower is not initialized: state db missing at {paths.state_db}"
         )
     try:
-        conn = sqlite3.connect(str(paths.state_db))
-        try:
-            row = conn.execute("SELECT version FROM schema_version").fetchone()
-        finally:
-            conn.close()
+        from .state.schema import open_registry
+        conn, _ = open_registry(paths.state_db, namespace_root=paths.state_db.parent)
     except sqlite3.Error as exc:
         raise SystemExit(f"error: open registry: {paths.state_db}: {exc}") from exc
+    try:
+        row = conn.execute("SELECT version FROM schema_version").fetchone()
+    finally:
+        conn.close()
     if row is None:
         raise SystemExit(
             f"error: agenttower is not initialized: schema_version row missing in {paths.state_db}"
         )
+
+
+def _resolve_docker_adapter():  # noqa: ANN202 — adapter is a Protocol
+    """Return the Docker adapter for this daemon process.
+
+    `AGENTTOWER_TEST_DOCKER_FAKE` set → load `FakeDockerAdapter` from the
+    pointed-to fixture file. Unset → return the production
+    `SubprocessDockerAdapter` (US3 T037 plugs this in).
+    """
+    fake_path = os.environ.get("AGENTTOWER_TEST_DOCKER_FAKE")
+    if fake_path:
+        return FakeDockerAdapter.from_path(fake_path)
+    try:
+        from .docker.subprocess_adapter import SubprocessDockerAdapter
+    except ImportError:
+        return None
+    return SubprocessDockerAdapter()
 
 
 def _read_schema_version(paths: Paths) -> int | None:
@@ -154,6 +180,25 @@ def _run(args: argparse.Namespace) -> int:
             return 1
 
         shutdown_event = threading.Event()
+
+        # Build the FEAT-003 DiscoveryService. The adapter is the test fake when
+        # `AGENTTOWER_TEST_DOCKER_FAKE` points at a fixture; otherwise a real
+        # SubprocessDockerAdapter is plugged in by US3 (FEAT-003 T037+).
+        scan_db_conn: sqlite3.Connection | None = None
+        discovery_service: DiscoveryService | None = None
+        adapter = _resolve_docker_adapter()
+        if adapter is not None:
+            scan_db_conn = sqlite3.connect(
+                str(paths.state_db), isolation_level=None, check_same_thread=False
+            )
+            discovery_service = DiscoveryService(
+                connection=scan_db_conn,
+                adapter=adapter,
+                rule_provider=lambda: load_containers_block(paths.config_file),
+                events_file=paths.events_file,
+                lifecycle_logger=logger,
+            )
+
         ctx = DaemonContext(
             pid=os.getpid(),
             start_time_utc=datetime.now(timezone.utc),
@@ -162,6 +207,9 @@ def _run(args: argparse.Namespace) -> int:
             daemon_version=__version__,
             schema_version=_read_schema_version(paths),
             shutdown_requested=shutdown_event,
+            discovery_service=discovery_service,
+            events_file=paths.events_file,
+            lifecycle_logger=logger,
         )
 
         try:
@@ -210,6 +258,11 @@ def _run(args: argparse.Namespace) -> int:
                 paths.socket.unlink()
             except FileNotFoundError:
                 pass
+        try:
+            if "scan_db_conn" in locals() and scan_db_conn is not None:
+                scan_db_conn.close()
+        except Exception:
+            pass
         lifecycle.remove_pid_file(pid_path)
         if logger is not None:
             logger.emit(EVENT_DAEMON_EXITED, exit_code=exit_code)
