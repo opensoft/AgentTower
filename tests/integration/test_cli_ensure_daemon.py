@@ -29,6 +29,10 @@ def env(tmp_path: Path) -> dict[str, str]:
     stop_daemon_if_alive(env)
 
 
+def _set_state_dir_mode(paths: dict[str, Path], mode: int) -> None:
+    os.chmod(paths["state_dir"], mode)
+
+
 def test_refuses_when_feat001_not_initialized(env: dict[str, str]) -> None:
     proc = ensure_daemon(env)
     assert proc.returncode == 1
@@ -92,11 +96,11 @@ def test_refuses_when_state_dir_has_unsafe_mode(env: dict[str, str]) -> None:
     """SC-008 — state-dir mode 0755 → refusal."""
     run_config_init(env)
     paths = resolved_paths(Path(env["HOME"]))
-    os.chmod(paths["state_dir"], 0o755)
+    _set_state_dir_mode(paths, 0o755)
     try:
         proc = ensure_daemon(env)
     finally:
-        os.chmod(paths["state_dir"], 0o700)
+        _set_state_dir_mode(paths, 0o700)
     assert proc.returncode == 1
     assert "unsafe permissions" in proc.stderr
 

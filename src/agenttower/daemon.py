@@ -104,7 +104,7 @@ def _run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    except (PermissionError, OSError) as exc:
+    except OSError as exc:
         print(f"error: acquire lock: {lock_path}: {exc}", file=sys.stderr)
         return 1
 
@@ -166,7 +166,7 @@ def _run(args: argparse.Namespace) -> int:
 
         try:
             server = ControlServer(paths.socket, ctx)
-        except (PermissionError, OSError) as exc:
+        except OSError as exc:
             logger.emit(EVENT_ERROR_FATAL, reason=f"bind failed: {exc}", level="fatal")
             print(f"error: bind socket: {paths.socket}: {exc}", file=sys.stderr)
             return 1

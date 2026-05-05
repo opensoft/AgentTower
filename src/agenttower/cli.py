@@ -26,6 +26,7 @@ LOG_FILENAME = "agenttowerd.log"
 
 READY_BUDGET_SECONDS = 2.0
 READY_POLL_INTERVALS = (0.01, 0.05, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2)
+JSON_LINE_HELP = "emit one JSON line on stdout"
 
 
 def _namespace_root(any_member: Path) -> Path:
@@ -129,7 +130,31 @@ def _ensure_daemon(args: argparse.Namespace) -> int:
     lock_path = state_dir / LOCK_FILENAME
     socket_path = paths.socket
 
-    # Pre-flight: FEAT-001 must be initialized (FR-003).
+    preflight = _ensure_daemon_preflight(paths, json_mode=args.json)
+    if preflight is not None:
+        return preflight
+
+    claimed, lock_or_exit = _claim_startup_slot(
+        lock_path, socket_path, state_dir, logs_dir, args.json
+    )
+    if not claimed:
+        return lock_or_exit
+    lifecycle.release_lock(lock_or_exit)
+
+    log_path = logs_dir / LOG_FILENAME
+    proc = _spawn_daemon(log_path)
+    return _wait_for_spawned_daemon(
+        proc,
+        socket_path=socket_path,
+        state_dir=state_dir,
+        log_path=log_path,
+        json_mode=args.json,
+    )
+
+
+def _ensure_daemon_preflight(paths: Paths, *, json_mode: bool) -> int | None:
+    state_dir = paths.state_db.parent
+
     if not paths.state_db.exists():
         print(
             "error: agenttower is not initialized: run `agenttower config init`",
@@ -137,41 +162,49 @@ def _ensure_daemon(args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Probe the socket: if a daemon is already alive, we are done (FR-007).
-    pre_existing = _try_ping(socket_path)
+    pre_existing = _try_ping(paths.socket)
     if pre_existing is not None:
-        return _print_ready(pre_existing, socket_path, state_dir, json_mode=args.json, started=False)
+        return _print_ready(
+            pre_existing, paths.socket, state_dir, json_mode=json_mode, started=False
+        )
 
-    # Refuse early if state/logs dirs have unsafe permissions (FR-011, SC-008).
     try:
-        lifecycle.assert_paths_safe(state_dir=state_dir, logs_dir=logs_dir)
+        lifecycle.assert_paths_safe(state_dir=state_dir, logs_dir=paths.logs_dir)
     except lifecycle.UnsafePathError as exc:
         print(f"error: unsafe permissions on {exc.path}: {exc.reason}", file=sys.stderr)
         return 1
 
-    # Coordinate with another concurrent ensure-daemon via the lock probe.
+    return None
+
+
+def _claim_startup_slot(
+    lock_path: Path,
+    socket_path: Path,
+    state_dir: Path,
+    logs_dir: Path,
+    json_mode: bool,
+) -> tuple[bool, int]:
     try:
-        probe_fd = lifecycle.acquire_exclusive_lock(lock_path)
+        return True, lifecycle.acquire_exclusive_lock(lock_path)
     except lifecycle.LockHeldError:
         # Another startup is in progress; poll for readiness via ping.
         ready = _wait_for_ready(socket_path, READY_BUDGET_SECONDS)
         if ready is not None:
-            return _print_ready(
-                ready, socket_path, state_dir, json_mode=args.json, started=False
+            return False, _print_ready(
+                ready, socket_path, state_dir, json_mode=json_mode, started=False
             )
         print(
             f"error: daemon failed to become ready within {READY_BUDGET_SECONDS:.2f}s: "
             f"see {logs_dir / LOG_FILENAME}",
             file=sys.stderr,
         )
-        return 2
-    except (PermissionError, OSError) as exc:
+        return False, 2
+    except OSError as exc:
         print(f"error: acquire lock: {lock_path}: {exc}", file=sys.stderr)
-        return 1
-    # Release the probe lock; the spawned daemon will re-acquire it.
-    lifecycle.release_lock(probe_fd)
+        return False, 1
 
-    log_path = logs_dir / LOG_FILENAME
+
+def _spawn_daemon(log_path: Path) -> subprocess.Popen[Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC, 0o600)
     try:
@@ -189,7 +222,17 @@ def _ensure_daemon(args: argparse.Namespace) -> int:
         )
     finally:
         os.close(log_fd)
+    return proc
 
+
+def _wait_for_spawned_daemon(
+    proc: subprocess.Popen[Any],
+    *,
+    socket_path: Path,
+    state_dir: Path,
+    log_path: Path,
+    json_mode: bool,
+) -> int:
     deadline = time.monotonic() + READY_BUDGET_SECONDS
     spawned_daemon_active = True
     while time.monotonic() < deadline:
@@ -202,7 +245,7 @@ def _ensure_daemon(args: argparse.Namespace) -> int:
                 ready,
                 socket_path,
                 state_dir,
-                json_mode=args.json,
+                json_mode=json_mode,
                 started=still_alive,
             )
         if proc.poll() is not None:
@@ -440,7 +483,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="ensure the host daemon is running (idempotent, lock-serialized)",
     )
     ensure_daemon.add_argument(
-        "--json", action="store_true", help="emit one JSON line on stdout"
+        "--json", action="store_true", help=JSON_LINE_HELP
     )
     ensure_daemon.set_defaults(_handler=_ensure_daemon)
 
@@ -450,7 +493,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="query the host daemon over the local socket",
     )
     status.add_argument(
-        "--json", action="store_true", help="emit one JSON line on stdout"
+        "--json", action="store_true", help=JSON_LINE_HELP
     )
     status.set_defaults(_handler=_status_command)
 
@@ -460,7 +503,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="ask the host daemon to shut down via the local socket",
     )
     stop_daemon.add_argument(
-        "--json", action="store_true", help="emit one JSON line on stdout"
+        "--json", action="store_true", help=JSON_LINE_HELP
     )
     stop_daemon.set_defaults(_handler=_stop_daemon)
 

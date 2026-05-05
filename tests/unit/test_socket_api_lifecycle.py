@@ -51,9 +51,7 @@ def test_acquire_exclusive_lock_releases_on_fd_close(tmp_path: Path) -> None:
 
 
 def test_acquire_exclusive_lock_refuses_broader_mode(tmp_path: Path) -> None:
-    lock_path = tmp_path / "agenttowerd.lock"
-    lock_path.write_text("")
-    os.chmod(lock_path, 0o644)
+    lock_path = _make_file(tmp_path / "agenttowerd.lock", mode=0o644)
     with pytest.raises(PermissionError):
         lifecycle.acquire_exclusive_lock(lock_path)
 

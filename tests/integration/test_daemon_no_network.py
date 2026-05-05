@@ -58,6 +58,39 @@ def _socket_inodes_for_pid(pid: int) -> set[str]:
     return inodes
 
 
+def _proc_rows(body: str) -> list[tuple[str, list[str]]]:
+    rows: list[tuple[str, list[str]]] = []
+    for line in body.splitlines()[1:]:
+        cols = line.split()
+        if len(cols) >= 10:
+            rows.append((line, cols))
+    return rows
+
+
+def _tcp_listener_violations(
+    proc_net: dict[str, str], inodes: set[str]
+) -> list[tuple[str, str]]:
+    violations: list[tuple[str, str]] = []
+    for fname in ("tcp", "tcp6"):
+        for line, cols in _proc_rows(proc_net[fname]):
+            state = cols[3]
+            inode = cols[9]
+            if state == "0A" and inode in inodes:
+                violations.append((fname, line))
+    return violations
+
+
+def _udp_socket_violations(
+    proc_net: dict[str, str], inodes: set[str]
+) -> list[tuple[str, str]]:
+    violations: list[tuple[str, str]] = []
+    for fname in ("udp", "udp6"):
+        for line, cols in _proc_rows(proc_net[fname]):
+            if cols[9] in inodes:
+                violations.append((fname, line))
+    return violations
+
+
 def test_daemon_opens_no_network_listener(env: dict[str, str]) -> None:
     run_config_init(env)
     proc = ensure_daemon(env, json_mode=True)
@@ -66,31 +99,11 @@ def test_daemon_opens_no_network_listener(env: dict[str, str]) -> None:
 
     proc_net = _read_proc_net(pid)
     inodes = _socket_inodes_for_pid(pid)
+    tcp_violations = _tcp_listener_violations(proc_net, inodes)
+    udp_violations = _udp_socket_violations(proc_net, inodes)
 
-    # Parse listen entries: state '0A' means LISTEN per net/tcp_states.h.
-    for fname in ("tcp", "tcp6"):
-        body = proc_net[fname]
-        if not body:
-            continue
-        for line in body.splitlines()[1:]:
-            cols = line.split()
-            if len(cols) < 10:
-                continue
-            state = cols[3]
-            inode = cols[9]
-            assert not (
-                state == "0A" and inode in inodes
-            ), f"daemon pid {pid} owns LISTEN socket in {fname}: {line!r}"
-
-    for fname in ("udp", "udp6"):
-        body = proc_net[fname]
-        if not body:
-            continue
-        for line in body.splitlines()[1:]:
-            cols = line.split()
-            if len(cols) < 10:
-                continue
-            inode = cols[9]
-            assert inode not in inodes, (
-                f"daemon pid {pid} owns UDP socket in {fname}: {line!r}"
-            )
+    # TCP state '0A' means LISTEN per net/tcp_states.h.
+    assert not tcp_violations, (
+        f"daemon pid {pid} owns LISTEN sockets: {tcp_violations!r}"
+    )
+    assert not udp_violations, f"daemon pid {pid} owns UDP sockets: {udp_violations!r}"

@@ -47,8 +47,8 @@ def resolved_paths(home: Path) -> dict[str, Path]:
     }
 
 
-def run_config_init(env: dict[str, str]) -> None:
-    proc = subprocess.run(
+def run_config_init(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["agenttower", "config", "init"],
         env=env,
         capture_output=True,
@@ -56,7 +56,6 @@ def run_config_init(env: dict[str, str]) -> None:
         timeout=10,
         check=True,
     )
-    return proc  # type: ignore[return-value]
 
 
 def ensure_daemon(env: dict[str, str], *, json_mode: bool = False, timeout: float = 10.0):

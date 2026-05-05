@@ -92,7 +92,7 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         try:
             self.wfile.write((json.dumps(envelope) + "\n").encode("utf-8"))
             self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
+        except OSError:
             # SIGPIPE is ignored daemon-wide; client closed early.
             return
 

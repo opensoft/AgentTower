@@ -89,7 +89,8 @@ class _FakeWFile:
         self.buffer += data
 
     def flush(self) -> None:
-        pass
+        # The fake stores writes immediately, so there is no buffered state to flush.
+        return None
 
 
 class _FakeServer:
