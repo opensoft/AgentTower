@@ -82,10 +82,13 @@ feature. `cli.py`, `daemon.py`, `socket_api/methods.py` are extended;
 **Performance Goals**: SC-004 — degraded states must surface in CLI
 output within 3 seconds when running against a `FakeDockerAdapter`.
 With the per-call 5 s timeout, a real-world worst-case single hung
-`docker inspect` takes 5 s; a worst-case full scan with N hung
-inspects takes ~5*(N+1) s but still returns a degraded result rather
-than hanging the daemon. Healthy scans against ≤20 bench containers
-should complete in well under 1 s on a normally-loaded host.
+`docker inspect` takes 5 s; a worst-case full scan with N matching
+containers whose inspect calls all hang takes approximately
+`5 * (1 + N)` seconds because the daemon first runs `docker ps` and
+then one `docker inspect` per matching candidate. The timed-out child
+MUST be killed and waited before returning the degraded result. Healthy
+scans against ≤20 bench containers should complete in well under 1 s
+on a normally-loaded host.
 
 **Constraints**:
 - No network listener (constitution I; FR-021).
@@ -97,20 +100,48 @@ should complete in well under 1 s on a normally-loaded host.
 - Existing FEAT-001 paths, modes (`0700` dirs, `0600` files), and
   events-file format MUST remain unchanged (FR-022).
 - Subprocess command construction MUST never interpolate raw config
-  values into a shell string (constitution III); container names
-  flow as `subprocess.run` argv items only.
+  values into a shell string (constitution III); every Docker call
+  uses `shell=False` typed argv and is limited to `docker ps
+  --no-trunc --format ...` plus `docker inspect <container-id>`
+  (FR-027). The binary is resolved with `shutil.which("docker")`
+  against the daemon's inherited `PATH` at scan time; shadowed Docker
+  binaries on a trusted host user's `PATH` are out of scope for
+  FEAT-003 (FR-028).
 - Concurrent scans serialized by a daemon-scoped `threading.Lock`
-  (FR-023); the lock MUST NOT be held across the SQLite transaction
-  boundary that publishes results to other readers — readers
-  (`list_containers`) must not block on a long scan.
+  (FR-023); more than two callers block behind the same lock with no
+  FIFO fairness guarantee, and the lock is recreated on daemon restart
+  (FR-035). Readers (`list_containers`) must not acquire the scan
+  mutex or call Docker (FR-034).
+- `[containers] name_contains` is read per scan, not cached; the
+  config list is bounded to 32 stripped strings, each ≤128 characters,
+  and invalid config returns `config_invalid` without widening scope
+  (FR-030).
+- Persisted/error surfaces are allowlisted and bounded: no raw
+  `HostConfig`, no raw non-allowlisted env vars, no raw inspect blob,
+  and no unbounded stderr in SQLite, JSONL, lifecycle logs, or socket
+  responses (FR-032, FR-033). Label values and mount sources remain
+  visible to the trusted host user until FEAT-007 redaction lands.
+- Each scan allocates one UUID4 `scan_id` and commits the
+  `container_scans` row plus all `containers` mutations in one SQLite
+  transaction. Whole-scan failures still create a degraded scan row for
+  audit even when the socket envelope is `ok:false` (FR-038, FR-042).
+- Scan counters are per-scan: `matched_count + ignored_count` equals
+  the parseable `docker ps` row count after a successful parse, and
+  `inactive_reconciled_count` counts only rows transitioned from
+  active to inactive in that scan (FR-041).
+- `list_containers` reads only latest committed SQLite state and uses
+  deterministic ordering `active DESC, last_scanned_at DESC,
+  container_id ASC` (FR-048).
 
 **Scale/Scope**: One host user, one daemon, two new tables, two new
 socket methods, two new CLI verbs (one is a new `--containers` flag
 on a new `scan` subcommand), one new schema migration (v1 → v2),
 one new optional config block (`[containers] name_contains`).
 Expected steady state on a developer workstation: < 20 bench
-containers, < 5 scans per minute, scan response payload measured in
-single-digit kilobytes.
+containers, < 5 scans per minute, scan/list response payloads
+measured in single-digit kilobytes. FEAT-002's 64 KiB limit is a
+request-line cap, not a response cap; FEAT-003 does not introduce a
+new response-size error code (FR-036).
 
 ## Constitution Check
 

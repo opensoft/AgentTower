@@ -15,7 +15,13 @@ the plan summary references.
 `docker inspect <id>` invocations behind a `DockerAdapter` Protocol
 implemented by `SubprocessDockerAdapter` (real) and
 `FakeDockerAdapter` (test). No third-party Docker SDK is added to
-runtime dependencies.
+runtime dependencies. The real adapter resolves `docker` with
+`shutil.which("docker")` against the daemon's inherited process
+`PATH` at scan time and passes the resolved path as argv[0].
+Invocations use `subprocess.run(..., shell=False)` with typed argv
+only. FEAT-003 trusts the host user's daemon environment; a malicious
+or shadowed Docker binary earlier on PATH is documented as out of
+scope rather than partially mitigated.
 
 **Rationale**:
 - Constitution caps runtime deps at the Python standard library
@@ -37,6 +43,9 @@ runtime dependencies.
   third-party dep, but pins to a specific Engine API version and
   adds significant boilerplate (auth, version negotiation, JSON
   schema drift). Rejected for MVP.
+- Pinned absolute Docker path in config: useful hardening later, but
+  adds configuration and support burden before the MVP has container
+  discovery working. Deferred.
 
 ---
 
@@ -123,11 +132,15 @@ JSON array result, and normalize:
 **Decision**: Pass `timeout=5.0` to every `subprocess.run` invocation
 in `SubprocessDockerAdapter` and translate the resulting
 `subprocess.TimeoutExpired` into a `DockerError(code="docker_timeout")`.
+The adapter relies on Python's `subprocess.run` timeout behavior,
+which kills and waits for the child process before raising, and tests
+assert the timeout path is normalized rather than leaked.
 
 **Rationale**: Pinned by spec clarification Q2 (FR-024). Matches the
 architecture doc's `scan_interval_seconds = 5` informally and keeps
-a single hung Docker call from wedging the daemon (the scan mutex
-holds for at most 5 s before the timeout fires).
+a single hung Docker call from wedging the daemon indefinitely. The
+scan mutex can still be held for `5 * (1 + N)` seconds in the worst
+case where `docker ps` plus N per-container inspect calls time out.
 
 **Alternatives considered**: 3 s (too aggressive on cold WSL) or
 10 s (delays degraded recovery). Both rejected during clarification.
@@ -140,7 +153,11 @@ holds for at most 5 s before the timeout fires).
 call to `scan()` acquires the lock with `acquire(blocking=True)`,
 runs the scan, writes the SQLite reconciliation in one
 `BEGIN/COMMIT` transaction, and releases. The new `scan_containers`
-socket method handler is the only caller in production.
+socket method handler is the only caller in production. If more than
+two scan callers wait, they serialize behind the same lock with no
+MVP FIFO fairness guarantee beyond the interpreter/OS lock behavior.
+The lock is in-process only and is recreated after daemon restart; an
+in-flight scan is abandoned if the daemon process exits.
 
 **Rationale**:
 - Pinned by clarification Q1 (FR-023). Serialized scans avoid
@@ -246,14 +263,17 @@ when running the real binary.
 **Decision**: The default config file written by FEAT-001's
 `agenttower config init` does **not** need to ship a `[containers]`
 block in FEAT-003 — the loader treats absence as "use the default
-list `["bench"]`" (FR-004). The config loader validates *only when
-a `[containers]` block is present*: list-of-strings, non-empty,
-each element non-empty after `strip()`. Invalid values produce a
-`config_invalid` socket error with an actionable message (FR-006).
+list `["bench"]`" (FR-004). The config loader validates on every
+scan: list-of-strings, non-empty, each element non-empty after
+`strip()`, at most 32 entries, and each stripped entry no longer than
+128 characters. Invalid values produce a `config_invalid` socket error
+with an actionable message (FR-006).
 
 **Rationale**: Backward-compat with FEAT-001 config files (FR-022).
 Adding a default block would change the byte-for-byte output of
 `agenttower config init`, which is part of FEAT-001's contract.
+Re-reading per scan lets developers adjust bench naming without
+restarting the daemon.
 
 **Alternatives considered**:
 - Ship the default block: rejected (changes FEAT-001 behavior).
@@ -401,7 +421,10 @@ useful set of results). When `docker ps` succeeds and only some
 `docker inspect` calls fail, the scan is still degraded but the
 top-level error code is `docker_failed` with per-container detail
 in `error_details_json`. The matching scan_containers socket
-response carries the same code.
+response carries the same code. For partial inspect failures, the
+representative top-level code is the first per-container failure code
+in Docker ps order; each matching candidate contributes at most one
+per-container detail entry.
 
 **Rationale**: FEAT-002 uses a closed error-code set for the same
 reasons (forward-compatible client parsing, machine-friendly).
@@ -416,7 +439,8 @@ unbroken (FR-022).
 (`<LOGS_DIR>/agenttowerd.log`) gains two new event tokens:
 - `scan_started` — emitted when `DiscoveryService.scan` acquires the
   mutex; columns: `<ts>\tscan_started\tscan_id=<uuid>`.
-- `scan_completed` — emitted right before the SQLite write commits;
+- `scan_completed` — emitted after the SQLite scan transaction commits
+  and after any degraded JSONL append is attempted;
   columns:
   `<ts>\tscan_completed\tscan_id=<uuid>\tstatus=<ok|degraded>\tmatched=<int>\tinactive=<int>\tignored=<int>`.
 
@@ -426,6 +450,17 @@ Degraded scans append one extra column: `error=<code>`.
 source of truth for daemon-visible activity. The existing six
 event tokens (`daemon_starting`, `daemon_ready`, etc.) are not
 modified.
+
+Security boundary: lifecycle rows MUST NOT include raw inspect output,
+raw environment values, label values, mount source paths, or full
+Docker stderr. They carry only scan id, aggregate counts, status, and
+closed error code.
+
+Write order requirement: `scan_started` is emitted after the scan
+mutex is acquired and before config/Docker execution. The SQLite scan
+transaction commits before the degraded JSONL event is appended.
+`scan_completed` is emitted after the SQLite commit and JSONL append
+attempt, immediately before the socket response is returned.
 
 ---
 
@@ -453,3 +488,50 @@ case is tested separately and explicitly).
 **Rationale**: Hard guards on the no-real-Docker constraint protect
 against accidental regressions; an explicit budget keeps the
 non-functional requirement testable.
+
+---
+
+## R-017 — Sensitive-field and response-size boundary
+
+**Decision**: Persist only normalized inspect fields needed by
+FEAT-004: id, name, image, status, labels, mounts, config user,
+working directory, allowlisted environment keys (`USER`, `HOME`,
+`WORKDIR`, `TMUX`), and full status. Raw `HostConfig`, raw
+non-allowlisted environment variables, and raw inspect JSON are
+excluded. Docker stderr and per-container failure messages are
+bounded to 2048 characters after NUL/control-byte sanitization before
+they enter SQLite, JSONL, logs, or socket responses. FEAT-002's
+64 KiB limit remains request-only; FEAT-003 keeps responses small by
+excluding raw inspect/env data and does not add a response-size error
+code.
+
+**Rationale**: FEAT-003 is a local host-user tool, so mount sources
+and label values remain visible until FEAT-007 redaction. The
+allowlist prevents accidental persistence of high-risk Docker fields
+while keeping enough metadata for FEAT-004 pane discovery.
+
+**Alternatives considered**:
+- Full inspect blob persistence: simpler debugging, but too broad for
+  a local security boundary. Rejected.
+- Redact labels and mount sources now: desirable, but FEAT-007 owns
+  reusable redaction policy. Deferred.
+- Add socket pagination/response-size errors now: unnecessary for the
+  MVP bench-container scale and would change FEAT-002 response
+  contracts. Deferred.
+
+---
+
+## R-018 — Scan transaction and side-effect failure handling
+
+**Decision**: The SQLite transaction that writes `container_scans` and
+all `containers` mutations is the authoritative commit boundary. If it
+fails, the transaction rolls back, no JSONL degraded event is appended,
+the scan mutex is released, and the caller receives `internal_error`.
+If the SQLite transaction commits but the degraded JSONL append or
+`scan_completed` lifecycle emit fails, the committed row is not rolled
+back; the caller receives `internal_error`, and the daemon stays alive.
+
+**Rationale**: SQLite is the durable source of truth for scan history.
+Rolling back after an external append/log failure is impossible once
+the SQLite commit has succeeded, so the failure is surfaced clearly
+without pretending the scan did not happen.

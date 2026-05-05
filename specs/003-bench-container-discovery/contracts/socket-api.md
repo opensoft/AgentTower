@@ -124,9 +124,10 @@ machine-checkable signal.
 
 ### 3.4 Error response (whole-scan failure)
 
-When the scan could not produce a result row at all (Docker
-binary missing, permission denied with no successful `docker ps`,
-or the matching config is invalid), the envelope is `ok: false`:
+When the scan cannot produce a useful result payload for the caller
+(Docker binary missing, permission denied with no successful
+`docker ps`, malformed `docker ps`, timeout before any candidate set,
+or invalid matching config), the envelope is `ok: false`:
 
 ```json
 {
@@ -138,12 +139,11 @@ or the matching config is invalid), the envelope is `ok: false`:
 }
 ```
 
-In the whole-scan-failure path the daemon still writes a
-`container_scans` row with `status = "degraded"` (auditable
-history), still appends a JSONL event, and still updates no
-`containers` rows. The new scan_id is recoverable from the
-lifecycle log but is not returned to the caller in this envelope
-shape (the caller already knows the scan failed).
+In the whole-scan-failure path the daemon still allocates a scan id,
+writes a `container_scans` row with `status = "degraded"` (auditable
+history), appends a JSONL event, and updates no `containers` rows.
+The scan id is recoverable from the lifecycle log and SQLite row but
+is not returned to the caller in this envelope shape.
 
 ### 3.5 Semantics
 
@@ -153,12 +153,42 @@ shape (the caller already knows the scan failed).
   (FR-024) plus SQLite write time. Worst-case mutex hold for a
   fully-hung Docker is `~5 seconds * (1 + N matching candidates)`
   with the per-container fallback path.
+- N>2 concurrent scan callers serialize behind the same in-process
+  mutex with no FIFO guarantee beyond the runtime's lock scheduling.
+  The mutex is recreated on daemon restart; in-flight scans do not
+  survive process exit.
 - MUST persist exactly one row to `container_scans` and zero or
   more upserts/touch-only/inactivate writes to `containers` in a
   single SQLite transaction.
+- A scan with `status="ok"` means config validation, `docker ps`, all
+  matching inspect calls, SQLite commit, and required audit writes
+  succeeded. A scan with `status="degraded"` means one of the
+  documented config/Docker/inspect failure paths happened.
+- `matched_count`, `ignored_count`, and
+  `inactive_reconciled_count` are per-scan counters. After a
+  successful `docker ps` parse, `matched_count + ignored_count`
+  equals the number of parseable running-container rows returned by
+  `docker ps`.
+- Active-to-inactive reconciliation runs only after a successful
+  `docker ps` parse. Partial inspect failures still allow
+  inactivation for previously active rows absent from the current
+  matched candidate set; failed `docker ps` and `config_invalid`
+  scans update no `containers` rows.
+- MUST resolve the Docker binary with `shutil.which("docker")` using
+  the daemon process `PATH` at scan time and invoke only the
+  enumerated argv forms from FR-027 with `shell=False`.
+- MUST terminate and wait for any timed-out Docker child before
+  returning a degraded result.
 - Healthy scans MUST NOT write to `events.jsonl`; degraded scans
   MUST write exactly one record there (event type
   `container_scan_degraded`).
+- Degraded scan errors in SQLite, JSONL, and socket responses are
+  bounded/sanitized messages, not unbounded raw Docker stderr.
+- Per-container `error_details` entries use
+  `{container_id, error_code, error_message}` at every boundary. They
+  are only for matching candidates, at most one entry per candidate,
+  and the top-level partial-degrade `error_code` is the first
+  per-container error code in Docker ps order.
 - Latency budget: SC-004 (3 s when running against the
   `FakeDockerAdapter`).
 
@@ -232,9 +262,22 @@ Empty state is a valid response: `result.containers = []`.
 
 - MUST be a read-only SQLite SELECT under a short transaction.
 - MUST NOT block on the scan mutex (R-005).
+- MUST NOT read config or call Docker.
 - MUST decode `labels_json` and `mounts_json` to JSON
   objects/arrays before emitting the response.
+- MUST reflect latest committed SQLite state only; in-flight scan
+  writes are not visible.
+- MUST order rows deterministically by `active DESC,
+  last_scanned_at DESC, container_id ASC`.
+- Exposes labels and mount source paths to the trusted host user only
+  via the inherited FEAT-002 socket-file authorization; redaction is
+  deferred to FEAT-007.
 - Latency budget: < 100 ms for ≤ 100 rows on a normally-loaded host.
+
+Response-size note: FEAT-002's 64 KiB limit applies to request lines,
+not response lines. FEAT-003 adds no separate response-size error
+code; responses are kept bounded by omitting raw inspect/env data and
+by the config/error-message bounds in FR-030/FR-032.
 
 ### 4.4 Errors
 

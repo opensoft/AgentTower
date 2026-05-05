@@ -67,7 +67,11 @@ duration_ms=<int>
 ```
 
 `duration_ms` is computed client-side from the
-`completed_at` − `started_at` round-trip on the response.
+`completed_at` minus `started_at` timestamps in the response.
+The default stdout aliases `matched_count` to `matched` and
+`inactive_reconciled_count` to `inactive_reconciled` intentionally
+to keep human output compact; `--json` preserves canonical field
+names.
 
 When `status=degraded`, two additional stderr lines are emitted
 (stderr only, after the stdout block):
@@ -128,7 +132,7 @@ as "we have data but Docker had at least one issue".
 ### Side effects
 
 - Triggers exactly one row in the daemon's `container_scans`
-  table.
+  table, including whole-scan failures that exit `3`.
 - Triggers zero or more upserts/touch-only/inactivate writes to the
   `containers` table.
 - Appends one record to `events.jsonl` only when the scan was
@@ -227,6 +231,14 @@ None on success.
   daemon**, which uses the resolved adapter
   (`SubprocessDockerAdapter` or `FakeDockerAdapter` per R-008).
   The CLI processes themselves never spawn `docker` directly.
+- The daemon resolves Docker from its inherited process `PATH` at scan
+  time and treats a shadowed Docker binary as outside the FEAT-003
+  threat model for the trusted host user. Missing or non-executable
+  Docker maps to `docker_unavailable`.
+- Human-readable output sanitizes tabs, newlines, NUL bytes, and
+  terminal control bytes from Docker-derived strings. `--json` output
+  uses JSON escaping and the same bounded error-message values as the
+  socket API.
 - All paths printed or operated on resolve to absolute paths under
   the user's `opensoft/agenttower` namespace.
 - Healthy scans produce **no records** in `events.jsonl`. Degraded
