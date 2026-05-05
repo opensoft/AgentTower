@@ -102,7 +102,7 @@ on a normally-loaded host.
 - Subprocess command construction MUST never interpolate raw config
   values into a shell string (constitution III); every Docker call
   uses `shell=False` typed argv and is limited to `docker ps
-  --no-trunc --format ...` plus `docker inspect <container-id>`
+  --no-trunc --format ...` plus `docker inspect <container-id>...`
   (FR-027). The binary is resolved with `shutil.which("docker")`
   against the daemon's inherited `PATH` at scan time; shadowed Docker
   binaries on a trusted host user's `PATH` are out of scope for
@@ -210,7 +210,7 @@ src/agenttower/
 ├── socket_api/
 │   ├── __init__.py                # unchanged
 │   ├── client.py                  # unchanged
-│   ├── errors.py                  # EXTENDS: add new error codes (`docker_unavailable`, `docker_permission_denied`, `docker_timeout`, `docker_malformed`, `config_invalid`)
+│   ├── errors.py                  # EXTENDS: add new error codes (`docker_unavailable`, `docker_permission_denied`, `docker_timeout`, `docker_failed`, `docker_malformed`, `config_invalid`)
 │   ├── lifecycle.py               # unchanged
 │   ├── methods.py                 # EXTENDS: register `scan_containers` and `list_containers` handlers; extend DaemonContext with discovery service handle
 │   └── server.py                  # unchanged (dispatch is data-driven)
