@@ -53,6 +53,15 @@ prompts and events.
 ## Development Workflow
 
 - Build features in the order defined by `docs/mvp-feature-sequence.md`.
+- Run `/speckit.specify <description>` only from the root checkout on `main`.
+  Run all later Spec Kit steps only from the intended feature worktree after
+  verifying the branch and worktree path. The normal order is specify, switch
+  to worktree, clarify, plan, checklist, tasks, analyze, implement.
+- Decide explicitly whether `/speckit.checklist <topic>` is needed before
+  generating tasks; run it for known quality gates and repeat by topic when
+  useful.
+- If tasks are deferred to a later feature, run `/speckit.taskstoissues` before
+  implementation and capture the issue links or IDs.
 - Keep each feature independently testable from the CLI.
 - Add tests proportional to risk, with broader tests for daemon state, socket
   protocol, Docker/tmux adapters, permissions, and input delivery.
