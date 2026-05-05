@@ -5,12 +5,19 @@ from __future__ import annotations
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..docker.adapter import DockerAdapter, DockerError, ScanResult, PerContainerError
+from ..docker.adapter import (
+    ContainerSummary,
+    DockerAdapter,
+    DockerError,
+    InspectResult,
+    PerContainerError,
+    ScanResult,
+)
 from ..events import writer as events_writer
 from ..socket_api import errors as _errors
 from ..state import containers as state_containers
@@ -29,6 +36,47 @@ def _bound(text: str | None) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _unique_in_order(values: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _ordered_error_details(
+    failures: Sequence[PerContainerError], matching_ids_in_order: Sequence[str]
+) -> list[PerContainerError]:
+    ordered: list[PerContainerError] = []
+    for container_id in matching_ids_in_order:
+        for failure in failures:
+            if failure.container_id == container_id and failure not in ordered:
+                ordered.append(failure)
+                break
+    return ordered
+
+
+def _partial_error_message(
+    error_details: Sequence[PerContainerError], unique_ids: Sequence[str]
+) -> str | None:
+    if not error_details:
+        return None
+    return _bound(f"{len(error_details)} of {len(unique_ids)} candidates failed inspect")
+
+
+def _error_details_payload(
+    error_details: Sequence[PerContainerError],
+) -> list[dict[str, str]] | None:
+    if not error_details:
+        return None
+    return [
+        {"container_id": e.container_id, "code": e.code, "message": _bound(e.message)}
+        for e in error_details
+    ]
 
 
 class DiscoveryService:
@@ -67,208 +115,251 @@ class DiscoveryService:
 
     def scan(self) -> ScanResult:
         """Run one container scan, serialized via the in-process mutex (FR-023)."""
-        from ..config import ConfigInvalidError  # local import avoids cycles
-
         with self._scan_mutex:
             scan_id = str(uuid.uuid4())
             started_at = _now_iso()
             self._emit_lifecycle("scan_started", scan_id=scan_id)
+            return self._scan_locked(scan_id=scan_id, started_at=started_at)
 
-            # Step 1 — load matching rule (may raise ConfigInvalidError → degraded).
-            try:
-                rule = self._rule_provider()
-            except ConfigInvalidError as exc:
-                completed_at = _now_iso()
-                result = ScanResult(
-                    scan_id=scan_id,
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    status="degraded",
-                    matched_count=0,
-                    inactive_reconciled_count=0,
-                    ignored_count=0,
-                    error_code=_errors.CONFIG_INVALID,
-                    error_message=_bound(exc.message),
-                )
-                self._persist_whole_failure(result)
-                self._emit_lifecycle(
-                    "scan_completed",
-                    scan_id=scan_id,
-                    status="degraded",
-                    matched=0,
-                    inactive=0,
-                    ignored=0,
-                    error=_errors.CONFIG_INVALID,
-                )
-                raise DockerError(
-                    code=_errors.CONFIG_INVALID, message=_bound(exc.message)
-                ) from None
+    # -- Internals -----------------------------------------------------------
 
-            # Step 2 — list_running.
-            try:
-                summaries = list(self._adapter.list_running())
-            except DockerError as exc:
-                completed_at = _now_iso()
-                result = ScanResult(
-                    scan_id=scan_id,
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    status="degraded",
-                    matched_count=0,
-                    inactive_reconciled_count=0,
-                    ignored_count=0,
-                    error_code=exc.code,
-                    error_message=_bound(exc.message),
-                )
-                self._persist_whole_failure(result)
-                self._emit_lifecycle(
-                    "scan_completed",
-                    scan_id=scan_id,
-                    status="degraded",
-                    matched=0,
-                    inactive=0,
-                    ignored=0,
-                    error=exc.code,
-                )
-                raise
+    def _scan_locked(self, *, scan_id: str, started_at: str) -> ScanResult:
+        rule = self._load_rule_or_fail(scan_id=scan_id, started_at=started_at)
+        summaries = self._list_running_or_fail(scan_id=scan_id, started_at=started_at)
+        matching = [summary for summary in summaries if rule.matches(summary.name)]
+        ignored_count = len(summaries) - len(matching)
+        matching_ids_in_order = [summary.container_id for summary in matching]
+        unique_ids = _unique_in_order(matching_ids_in_order)
+        successes, failures = self._inspect_or_fail(
+            scan_id=scan_id,
+            started_at=started_at,
+            unique_ids=unique_ids,
+            ignored_count=ignored_count,
+        )
+        return self._persist_reconciled_scan(
+            scan_id=scan_id,
+            started_at=started_at,
+            matching=matching,
+            matching_ids_in_order=matching_ids_in_order,
+            unique_ids=unique_ids,
+            successes=successes,
+            failures=failures,
+            ignored_count=ignored_count,
+        )
 
-            # Step 3 — apply matching rule. FR-041: counters are per-scan and
-            # `matched + ignored == |parseable docker ps rows|`.
-            matching = [s for s in summaries if rule.matches(s.name)]
-            ignored_count = len(summaries) - len(matching)
-            matching_ids_in_order = [s.container_id for s in matching]
-            unique_ids: list[str] = []
-            seen: set[str] = set()
-            for cid in matching_ids_in_order:
-                if cid not in seen:
-                    seen.add(cid)
-                    unique_ids.append(cid)
+    def _load_rule_or_fail(self, *, scan_id: str, started_at: str) -> MatchingRule:
+        from ..config import ConfigInvalidError  # local import avoids cycles
 
-            # Step 4 — inspect matching candidates.
-            successes: dict[str, Any] = {}
-            failures: list[PerContainerError] = []
-            if unique_ids:
-                try:
-                    succ, fails = self._adapter.inspect(unique_ids)
-                    successes = dict(succ)
-                    failures = list(fails)
-                except DockerError as exc:
-                    completed_at = _now_iso()
-                    result = ScanResult(
-                        scan_id=scan_id,
-                        started_at=started_at,
-                        completed_at=completed_at,
-                        status="degraded",
-                        matched_count=len(unique_ids),
-                        inactive_reconciled_count=0,
-                        ignored_count=ignored_count,
-                        error_code=exc.code,
-                        error_message=_bound(exc.message),
-                    )
-                    self._persist_whole_failure(result)
-                    self._emit_lifecycle(
-                        "scan_completed",
-                        scan_id=scan_id,
-                        status="degraded",
-                        matched=len(unique_ids),
-                        inactive=0,
-                        ignored=ignored_count,
-                        error=exc.code,
-                    )
-                    raise
-
-            # Step 5 — reconcile + commit (one transaction per FR-042).
-            prior_active = state_containers.select_active_container_ids(self._conn)
-            prior_known = state_containers.select_known_container_ids(self._conn)
-            failed_ids = [f.container_id for f in failures if f.container_id in {s.container_id for s in matching}]
-            write_set = reconcile(
-                matching_summaries=matching,
-                successful_inspects=successes,
-                failed_inspect_ids=failed_ids,
-                prior_active_ids=prior_active,
-                prior_known_ids=prior_known,
-            )
-
-            now_iso = _now_iso()
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                self._apply_write_set(write_set, now_iso=now_iso)
-                # Determine status + degraded details (FR-037, FR-044).
-                degraded = bool(failures)
-                error_code: str | None = None
-                error_message: str | None = None
-                error_details: list[PerContainerError] = []
-                if degraded:
-                    # First per-container error in docker ps order (FR-044).
-                    by_id_first_failure: list[PerContainerError] = []
-                    for cid in matching_ids_in_order:
-                        for f in failures:
-                            if f.container_id == cid and f not in by_id_first_failure:
-                                by_id_first_failure.append(f)
-                                break
-                    error_details = by_id_first_failure
-                    if error_details:
-                        error_code = error_details[0].code
-                        error_message = _bound(
-                            f"{len(error_details)} of {len(unique_ids)} candidates failed inspect"
-                        )
-
-                completed_at = _now_iso()
-                state_containers.insert_container_scan(
-                    self._conn,
-                    scan_id=scan_id,
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    status="degraded" if degraded else "ok",
-                    matched_count=write_set.matched_count,
-                    inactive_reconciled_count=write_set.inactive_reconciled_count,
-                    ignored_count=ignored_count,
-                    error_code=error_code,
-                    error_message=error_message,
-                    error_details=[
-                        {"container_id": e.container_id, "code": e.code, "message": _bound(e.message)}
-                        for e in error_details
-                    ]
-                    if error_details
-                    else None,
-                )
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
-
-            # Step 6 — degraded JSONL event after commit (FR-019, FR-043).
-            if degraded:
-                self._emit_jsonl_degraded(
-                    scan_id=scan_id,
-                    error_code=error_code,
-                    error_message=error_message,
-                    error_details=error_details,
-                )
-            self._emit_lifecycle(
-                "scan_completed",
+        try:
+            return self._rule_provider()
+        except ConfigInvalidError as exc:
+            message = _bound(exc.message)
+            self._record_whole_failure(
                 scan_id=scan_id,
-                status="degraded" if degraded else "ok",
-                matched=write_set.matched_count,
-                inactive=write_set.inactive_reconciled_count,
-                ignored=ignored_count,
-                error=error_code,
+                started_at=started_at,
+                matched_count=0,
+                ignored_count=0,
+                code=_errors.CONFIG_INVALID,
+                message=message,
             )
+            raise DockerError(code=_errors.CONFIG_INVALID, message=message) from None
 
-            return ScanResult(
+    def _list_running_or_fail(
+        self, *, scan_id: str, started_at: str
+    ) -> list[ContainerSummary]:
+        try:
+            return list(self._adapter.list_running())
+        except DockerError as exc:
+            self._record_whole_failure(
+                scan_id=scan_id,
+                started_at=started_at,
+                matched_count=0,
+                ignored_count=0,
+                code=exc.code,
+                message=_bound(exc.message),
+            )
+            raise
+
+    def _inspect_or_fail(
+        self,
+        *,
+        scan_id: str,
+        started_at: str,
+        unique_ids: Sequence[str],
+        ignored_count: int,
+    ) -> tuple[dict[str, InspectResult], list[PerContainerError]]:
+        if not unique_ids:
+            return {}, []
+        try:
+            successes, failures = self._adapter.inspect(unique_ids)
+        except DockerError as exc:
+            self._record_whole_failure(
+                scan_id=scan_id,
+                started_at=started_at,
+                matched_count=len(unique_ids),
+                ignored_count=ignored_count,
+                code=exc.code,
+                message=_bound(exc.message),
+            )
+            raise
+        return dict(successes), list(failures)
+
+    def _record_whole_failure(
+        self,
+        *,
+        scan_id: str,
+        started_at: str,
+        matched_count: int,
+        ignored_count: int,
+        code: str,
+        message: str,
+    ) -> None:
+        result = ScanResult(
+            scan_id=scan_id,
+            started_at=started_at,
+            completed_at=_now_iso(),
+            status="degraded",
+            matched_count=matched_count,
+            inactive_reconciled_count=0,
+            ignored_count=ignored_count,
+            error_code=code,
+            error_message=message,
+        )
+        self._persist_whole_failure(result)
+        self._emit_lifecycle(
+            "scan_completed",
+            scan_id=scan_id,
+            status="degraded",
+            matched=matched_count,
+            inactive=0,
+            ignored=ignored_count,
+            error=code,
+        )
+
+    def _persist_reconciled_scan(
+        self,
+        *,
+        scan_id: str,
+        started_at: str,
+        matching: Sequence[ContainerSummary],
+        matching_ids_in_order: Sequence[str],
+        unique_ids: Sequence[str],
+        successes: Mapping[str, InspectResult],
+        failures: Sequence[PerContainerError],
+        ignored_count: int,
+    ) -> ScanResult:
+        write_set = self._build_write_set(matching, successes, failures)
+        error_details = _ordered_error_details(failures, matching_ids_in_order)
+        error_code = error_details[0].code if error_details else None
+        error_message = _partial_error_message(error_details, unique_ids)
+        completed_at = self._commit_reconciled_scan(
+            scan_id=scan_id,
+            started_at=started_at,
+            write_set=write_set,
+            ignored_count=ignored_count,
+            error_code=error_code,
+            error_message=error_message,
+            error_details=error_details,
+        )
+        self._after_scan_commit(
+            scan_id=scan_id,
+            write_set=write_set,
+            ignored_count=ignored_count,
+            error_code=error_code,
+            error_message=error_message,
+            error_details=error_details,
+        )
+        return ScanResult(
+            scan_id=scan_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            status="degraded" if error_details else "ok",
+            matched_count=write_set.matched_count,
+            inactive_reconciled_count=write_set.inactive_reconciled_count,
+            ignored_count=ignored_count,
+            error_code=error_code,
+            error_message=error_message,
+            error_details=tuple(error_details),
+        )
+
+    def _build_write_set(
+        self,
+        matching: Sequence[ContainerSummary],
+        successes: Mapping[str, InspectResult],
+        failures: Sequence[PerContainerError],
+    ) -> ReconcileWriteSet:
+        prior_active = state_containers.select_active_container_ids(self._conn)
+        prior_known = state_containers.select_known_container_ids(self._conn)
+        matching_ids = {summary.container_id for summary in matching}
+        failed_ids = [f.container_id for f in failures if f.container_id in matching_ids]
+        return reconcile(
+            matching_summaries=matching,
+            successful_inspects=successes,
+            failed_inspect_ids=failed_ids,
+            prior_active_ids=prior_active,
+            prior_known_ids=prior_known,
+        )
+
+    def _commit_reconciled_scan(
+        self,
+        *,
+        scan_id: str,
+        started_at: str,
+        write_set: ReconcileWriteSet,
+        ignored_count: int,
+        error_code: str | None,
+        error_message: str | None,
+        error_details: Sequence[PerContainerError],
+    ) -> str:
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._apply_write_set(write_set, now_iso=_now_iso())
+            completed_at = _now_iso()
+            state_containers.insert_container_scan(
+                self._conn,
                 scan_id=scan_id,
                 started_at=started_at,
                 completed_at=completed_at,
-                status="degraded" if degraded else "ok",
+                status="degraded" if error_details else "ok",
                 matched_count=write_set.matched_count,
                 inactive_reconciled_count=write_set.inactive_reconciled_count,
                 ignored_count=ignored_count,
                 error_code=error_code,
                 error_message=error_message,
-                error_details=tuple(error_details),
+                error_details=_error_details_payload(error_details),
             )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return completed_at
 
-    # -- Internals -----------------------------------------------------------
+    def _after_scan_commit(
+        self,
+        *,
+        scan_id: str,
+        write_set: ReconcileWriteSet,
+        ignored_count: int,
+        error_code: str | None,
+        error_message: str | None,
+        error_details: Sequence[PerContainerError],
+    ) -> None:
+        if error_details:
+            self._emit_jsonl_degraded(
+                scan_id=scan_id,
+                error_code=error_code,
+                error_message=error_message,
+                error_details=list(error_details),
+            )
+        self._emit_lifecycle(
+            "scan_completed",
+            scan_id=scan_id,
+            status="degraded" if error_details else "ok",
+            matched=write_set.matched_count,
+            inactive=write_set.inactive_reconciled_count,
+            ignored=ignored_count,
+            error=error_code,
+        )
 
     def _apply_write_set(self, write_set: ReconcileWriteSet, *, now_iso: str) -> None:
         for upsert in write_set.upserts:

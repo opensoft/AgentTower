@@ -42,7 +42,7 @@ def _bound(text: str | None) -> str:
     return cleaned[:_MAX_TEXT]
 
 
-def _classify_failure(stderr: str, returncode: int) -> str:
+def _classify_failure(stderr: str) -> str:
     s = (stderr or "").lower()
     for pattern in _PERMISSION_PATTERNS:
         if pattern.lower() in s:
@@ -62,7 +62,7 @@ class SubprocessDockerAdapter(DockerAdapter):
         argv = self._argv("ps", "--no-trunc", "--format", _PS_FORMAT)
         completed = self._run(argv)
         if completed.returncode != 0:
-            code = _classify_failure(completed.stderr, completed.returncode)
+            code = _classify_failure(completed.stderr)
             raise DockerError(
                 code=code,
                 message=_bound(
@@ -79,7 +79,7 @@ class SubprocessDockerAdapter(DockerAdapter):
         argv = self._argv("inspect", *ids)
         completed = self._run(argv)
         if completed.returncode != 0:
-            code = _classify_failure(completed.stderr, completed.returncode)
+            code = _classify_failure(completed.stderr)
             # `docker inspect` returns non-zero when ANY id fails. We still
             # parse stdout because Docker emits a partial JSON array for the
             # ids it did succeed on; per-container errors are recorded for

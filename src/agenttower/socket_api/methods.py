@@ -119,7 +119,7 @@ def _list_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, An
         )
     unexpected = set(params) - {"active_only"}
     if unexpected:
-        first = sorted(unexpected)[0]
+        first = min(unexpected)
         return errors.make_error(errors.BAD_REQUEST, f"unknown param: {first}")
     active_only = params.get("active_only", False)
     if not isinstance(active_only, bool):

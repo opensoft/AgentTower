@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -20,7 +21,7 @@ from agenttower.socket_api import errors as _errors
 
 
 @pytest.fixture(autouse=True)
-def _ungate_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+def _ungate_docker(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Unblock the conftest guard for *this* unit-test module so we can
     drive `SubprocessDockerAdapter` against a patched `subprocess.run`.
     """
@@ -55,7 +56,7 @@ def test_argv_for_list_running_is_typed_and_shell_false(monkeypatch: pytest.Monk
         "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
     ]
     assert captured["kw"]["shell"] is False
-    assert captured["kw"]["timeout"] == 5.0
+    assert captured["kw"]["timeout"] == pytest.approx(5.0)
     assert captured["kw"]["check"] is False
 
 

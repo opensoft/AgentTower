@@ -27,6 +27,10 @@ LOG_FILENAME = "agenttowerd.log"
 READY_BUDGET_SECONDS = 2.0
 READY_POLL_INTERVALS = (0.01, 0.05, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2)
 JSON_LINE_HELP = "emit one JSON line on stdout"
+DAEMON_UNAVAILABLE_MESSAGE = (
+    "error: daemon is not running or socket is unreachable: "
+    "try `agenttower ensure-daemon`"
+)
 
 
 def _namespace_root(any_member: Path) -> Path:
@@ -288,11 +292,7 @@ def _status_command(args: argparse.Namespace) -> int:
             paths.socket, "status", connect_timeout=1.0, read_timeout=1.0
         )
     except DaemonUnavailable:
-        print(
-            "error: daemon is not running or socket is unreachable: "
-            "try `agenttower ensure-daemon`",
-            file=sys.stderr,
-        )
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
         return 2
     except DaemonError as exc:
         print(f"error: {exc.message}", file=sys.stderr)
@@ -550,11 +550,7 @@ def _scan_command(args: argparse.Namespace) -> int:
             paths.socket, "scan_containers", connect_timeout=1.0, read_timeout=10.0
         )
     except DaemonUnavailable:
-        print(
-            "error: daemon is not running or socket is unreachable: "
-            "try `agenttower ensure-daemon`",
-            file=sys.stderr,
-        )
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
         return 2
     except DaemonError as exc:
         if args.json:
@@ -606,11 +602,7 @@ def _list_containers_command(args: argparse.Namespace) -> int:
             read_timeout=1.0,
         )
     except DaemonUnavailable:
-        print(
-            "error: daemon is not running or socket is unreachable: "
-            "try `agenttower ensure-daemon`",
-            file=sys.stderr,
-        )
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
         return 2
     except DaemonError as exc:
         if args.json:

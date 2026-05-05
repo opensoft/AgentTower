@@ -51,7 +51,7 @@ def env_with_fake(tmp_path: Path):
 
 
 def test_scan_containers_default_summary(env_with_fake) -> None:
-    env, fake_path, home = env_with_fake
+    env, fake_path, _home = env_with_fake
     _write_fake_fixture(
         fake_path,
         {
@@ -81,7 +81,8 @@ def test_scan_containers_default_summary(env_with_fake) -> None:
     result = _scan_containers(env)
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
-    by_key = dict(line.split("=", 1) for line in lines if "=" in line)
+    pairs = (line.split("=", 1) for line in lines if "=" in line)
+    by_key = {key: value for key, value in pairs}
     assert by_key["status"] == "ok"
     assert by_key["matched"] == "1"
     assert by_key["ignored"] == "1"

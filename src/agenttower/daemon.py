@@ -111,6 +111,91 @@ def _read_schema_version(paths: Paths) -> int | None:
     return int(row[0]) if row is not None else None
 
 
+def _build_discovery_service(
+    paths: Paths, logger: LifecycleLogger
+) -> tuple[DiscoveryService | None, sqlite3.Connection | None]:
+    adapter = _resolve_docker_adapter()
+    if adapter is None:
+        return None, None
+    conn = sqlite3.connect(
+        str(paths.state_db), isolation_level=None, check_same_thread=False
+    )
+    service = DiscoveryService(
+        connection=conn,
+        adapter=adapter,
+        rule_provider=lambda: load_containers_block(paths.config_file),
+        events_file=paths.events_file,
+        lifecycle_logger=logger,
+    )
+    return service, conn
+
+
+def _build_context(
+    *,
+    paths: Paths,
+    state_dir,
+    shutdown_event: threading.Event,
+    discovery_service: DiscoveryService | None,
+    logger: LifecycleLogger,
+) -> DaemonContext:
+    return DaemonContext(
+        pid=os.getpid(),
+        start_time_utc=datetime.now(timezone.utc),
+        socket_path=paths.socket,
+        state_path=state_dir,
+        daemon_version=__version__,
+        schema_version=_read_schema_version(paths),
+        shutdown_requested=shutdown_event,
+        discovery_service=discovery_service,
+        events_file=paths.events_file,
+        lifecycle_logger=logger,
+    )
+
+
+def _assert_runtime_paths_safe(
+    *,
+    state_dir,
+    logs_dir,
+    lock_path,
+    pid_path,
+    log_path,
+) -> bool:
+    try:
+        lifecycle.assert_paths_safe(
+            state_dir=state_dir,
+            logs_dir=logs_dir,
+            lock_file=lock_path,
+            pid_file=pid_path,
+            log_file=log_path,
+        )
+    except lifecycle.UnsafePathError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def _recover_stale_artifacts(paths: Paths, pid_path, logger: LifecycleLogger) -> bool:
+    try:
+        lifecycle.recover_stale_artifacts(
+            socket_path=paths.socket,
+            pid_path=pid_path,
+            logger=logger,
+        )
+    except lifecycle.StaleArtifactRefused as exc:
+        logger.emit(
+            EVENT_ERROR_FATAL,
+            reason=f"refuse stale: {exc.path} ({exc.kind})",
+            level="fatal",
+        )
+        print(
+            f"error: socket path is not a unix socket: {exc.path}: "
+            f"refusing to remove {exc.kind}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def _run(args: argparse.Namespace) -> int:
     paths = resolve_paths()
     state_dir = paths.state_db.parent
@@ -139,17 +224,13 @@ def _run(args: argparse.Namespace) -> int:
     accept_thread: threading.Thread | None = None
     exit_code = 0
     try:
-        # Verify host-user-only invariants before any irreversible action (R-011).
-        try:
-            lifecycle.assert_paths_safe(
-                state_dir=state_dir,
-                logs_dir=logs_dir,
-                lock_file=lock_path,
-                pid_file=pid_path,
-                log_file=log_path,
-            )
-        except lifecycle.UnsafePathError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+        if not _assert_runtime_paths_safe(
+            state_dir=state_dir,
+            logs_dir=logs_dir,
+            lock_path=lock_path,
+            pid_path=pid_path,
+            log_path=log_path,
+        ):
             return 1
 
         logger = LifecycleLogger(log_path)
@@ -159,57 +240,17 @@ def _run(args: argparse.Namespace) -> int:
             state_dir=str(state_dir),
         )
 
-        # Recover stale lifecycle artifacts (US3 / T024).
-        try:
-            lifecycle.recover_stale_artifacts(
-                socket_path=paths.socket,
-                pid_path=pid_path,
-                logger=logger,
-            )
-        except lifecycle.StaleArtifactRefused as exc:
-            logger.emit(
-                EVENT_ERROR_FATAL,
-                reason=f"refuse stale: {exc.path} ({exc.kind})",
-                level="fatal",
-            )
-            print(
-                f"error: socket path is not a unix socket: {exc.path}: "
-                f"refusing to remove {exc.kind}",
-                file=sys.stderr,
-            )
+        if not _recover_stale_artifacts(paths, pid_path, logger):
             return 1
 
         shutdown_event = threading.Event()
-
-        # Build the FEAT-003 DiscoveryService. The adapter is the test fake when
-        # `AGENTTOWER_TEST_DOCKER_FAKE` points at a fixture; otherwise a real
-        # SubprocessDockerAdapter is plugged in by US3 (FEAT-003 T037+).
-        scan_db_conn: sqlite3.Connection | None = None
-        discovery_service: DiscoveryService | None = None
-        adapter = _resolve_docker_adapter()
-        if adapter is not None:
-            scan_db_conn = sqlite3.connect(
-                str(paths.state_db), isolation_level=None, check_same_thread=False
-            )
-            discovery_service = DiscoveryService(
-                connection=scan_db_conn,
-                adapter=adapter,
-                rule_provider=lambda: load_containers_block(paths.config_file),
-                events_file=paths.events_file,
-                lifecycle_logger=logger,
-            )
-
-        ctx = DaemonContext(
-            pid=os.getpid(),
-            start_time_utc=datetime.now(timezone.utc),
-            socket_path=paths.socket,
-            state_path=state_dir,
-            daemon_version=__version__,
-            schema_version=_read_schema_version(paths),
-            shutdown_requested=shutdown_event,
+        discovery_service, scan_db_conn = _build_discovery_service(paths, logger)
+        ctx = _build_context(
+            paths=paths,
+            state_dir=state_dir,
+            shutdown_event=shutdown_event,
             discovery_service=discovery_service,
-            events_file=paths.events_file,
-            lifecycle_logger=logger,
+            logger=logger,
         )
 
         try:
