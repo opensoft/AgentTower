@@ -4,7 +4,9 @@
 
 A five-minute, top-to-bottom walkthrough of the FEAT-001 surface area
 once it ships. Use this as the manual smoke test that mirrors what the
-automated `tests/integration/test_cli.py` covers.
+automated `tests/integration/test_cli_version.py`,
+`tests/integration/test_cli_paths.py`, and
+`tests/integration/test_cli_init.py` cover.
 
 Assumes Python 3.11+ and a checkout of the repo at
 `/workspace/projects/AgentTower`.
@@ -41,7 +43,9 @@ agenttowerd --version
 # → agenttowerd 0.1.0
 ```
 
-Both commands MUST exit `0` and report the same version. Neither
+Both commands MUST exit `0` and report the same version. In a fully
+installed FEAT-001 package this is `0.1.0`; direct source-tree execution
+without package metadata may report the fallback `0.0.0+local`. Neither
 creates any files on disk yet.
 
 ---

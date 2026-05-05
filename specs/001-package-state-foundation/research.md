@@ -162,8 +162,11 @@ options that were evaluated and rejected (with why).
 
 ## R-006 — SQLite open semantics and schema-version idempotence
 
-- **Decision**: `state.schema.open_registry(state_db: Path) -> sqlite3.Connection`:
-  - Ensures the parent directory exists (mode `0700`).
+- **Decision**: `state.schema.open_registry(state_db: Path) -> tuple[sqlite3.Connection, str]`:
+  - Ensures the parent directory exists (mode `0700`), creating and
+    chmod'ing only directories this call created.
+  - Refuses with `OSError` if a required pre-existing parent directory or
+    `state_db` file has a broader mode than FR-015 allows.
   - Opens with `sqlite3.connect(state_db, isolation_level=None,
     detect_types=0)`.
   - Sets `PRAGMA journal_mode = WAL` (idempotent).
@@ -177,13 +180,17 @@ options that were evaluated and rejected (with why).
   - If the table is empty, inserts the current schema generation
     integer (constant `CURRENT_SCHEMA_VERSION = 1`). If the table is
     non-empty, leaves it alone (idempotence).
-  - Sets the file mode to `0600` after creation (only if the file did
-    not previously exist on this run).
+  - Sets the main database file and any SQLite companion files created
+    during this call to mode `0600`.
+  - Returns the connection plus a status string: `"created"` when this
+    call created `state_db`, otherwise `"already initialized"`.
 - **Rationale**: All ops use `IF NOT EXISTS` and a count-then-insert
   pattern, satisfying FR-009 and FR-010. WAL mode is the standard for
   long-lived SQLite registries that will be opened concurrently by the
   daemon (FEAT-002+). `foreign_keys=ON` costs nothing today and avoids
-  a future PRAGMA-during-migration footgun.
+  a future PRAGMA-during-migration footgun. Returning the status lets the
+  CLI print the config and registry outcomes without duplicating DB-open
+  heuristics.
 - **Alternatives considered**:
   - **`PRAGMA user_version`**: only one integer, but invisible to
     `SELECT` queries and doesn't survive `.dump`/`.restore`. The
@@ -208,10 +215,14 @@ options that were evaluated and rejected (with why).
   - Acquires a module-level `threading.Lock` for the duration of the
     open-append-flush.
   - Opens the file with `O_WRONLY | O_CREAT | O_APPEND`, mode `0o600`.
+  - Sets the file mode to `0600` after creation and refuses with
+    `OSError` if a required pre-existing file or parent directory has a
+    broader mode than FR-015 allows.
   - Writes the JSON string + `"\n"` in one `write()` call, then
     `os.fsync(fd)`, then closes.
   - If the parent directory does not exist, creates it with mode
-    `0o700` first.
+    `0o700` first and verifies the final mode after creation so `umask`
+    cannot broaden the result.
   - Timestamps use `datetime.datetime.now(datetime.UTC).isoformat(
     timespec="microseconds")` so records are sortable lexicographically.
 - **Rationale**: A single `write()` of `≤ PIPE_BUF` bytes on a regular
@@ -282,9 +293,11 @@ options that were evaluated and rejected (with why).
      test specifically exercises an XDG override.
   3. Returns a `Paths` instance freshly resolved from that environment.
 
-  Integration tests invoke the CLI via
-  `subprocess.run([sys.executable, "-m", "agenttower", ...], env=...)`
-  so the entry-point wiring is exercised end-to-end.
+  Integration tests invoke the installed console scripts via
+  `subprocess.run(["agenttower", ...], env=...)` and
+  `subprocess.run(["agenttowerd", ...], env=...)` after T004 installs the
+  package in editable mode, so the actual entry-point wiring is exercised
+  end-to-end without requiring `src/agenttower/__main__.py`.
 - **Rationale**: Guarantees cross-test independence, matches the
   spec's "tests can assert this without invoking any other AgentTower
   feature", and avoids polluting the real `~/.config`/`~/.local/state`.

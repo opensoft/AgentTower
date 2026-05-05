@@ -44,11 +44,15 @@ each return in well under five seconds on a clean dev install (SC-001);
 second; the event-writer handles 100 concurrent in-process appends without
 record interleaving (SC-007).
 **Constraints**: No network listener (FR-016); strict host-only file modes
-(`0700` for directories, `0600` for files, FR-015); no FEAT-001 command
-emits a JSONL event (FR-016); no third-party runtime dependencies; nothing
-in `--version`, `config paths`, or `config init` may invoke Docker, tmux,
-the daemon socket listener, the registry beyond the schema-version row,
-the event classifier, or any input delivery path.
+(`0700` for every directory created by FEAT-001, including intermediate
+`opensoft/` parents, and `0600` for every file created by FEAT-001,
+including SQLite companion files, FR-015); required pre-existing
+AgentTower-owned artifacts with broader modes are refused rather than
+chmod'd; no FEAT-001 command emits a JSONL event (FR-016); no third-party
+runtime dependencies; nothing in `--version`, `config paths`, or
+`config init` may invoke Docker, tmux, the daemon socket listener, the
+registry beyond the schema-version row, the event classifier, or any input
+delivery path.
 **Scale/Scope**: One host user, one config file, one SQLite DB with one
 table and one row, one append-only event file. The entire feature surface
 is two console scripts and three subcommands.
@@ -129,7 +133,9 @@ tests/
 │   └── test_events_writer.py           # NEW: append, timestamp, concurrent threads
 └── integration/
     ├── __init__.py
-    └── test_cli.py                     # NEW: end-to-end --version / config paths / config init / idempotence / unwritable-target / permissions
+    ├── test_cli_version.py             # NEW: end-to-end agenttower/agenttowerd --version + help
+    ├── test_cli_paths.py               # NEW: config paths output, XDG overrides, no side effects
+    └── test_cli_init.py                # NEW: config init, idempotence, stale artifacts, failure cleanup, permissions
 ```
 
 **Structure Decision**: Single-project layout, kept consistent with the

@@ -32,12 +32,22 @@ Implied parent directories also created by `config init` with mode
 
 - `~/.config/opensoft/`, `~/.config/opensoft/agenttower/`
 - `~/.local/state/opensoft/`, `~/.local/state/opensoft/agenttower/`
-- `~/.cache/opensoft/` (only the `agenttower/` leaf is created with mode
-  `0700`; intermediate `opensoft/` parents adopt mode `0700` only if
-  this command creates them)
+- `~/.cache/opensoft/`, `~/.cache/opensoft/agenttower/`
 
-Pre-existing parent directories that already exist with different
-permissions are **not** chmod'd by `config init` (FR-015 last sentence).
+Mode policy for pre-existing artifacts:
+
+- FEAT-001 never chmods a pre-existing artifact to "fix" it.
+- "AgentTower-owned" means any path under the resolved
+  `opensoft/agenttower` namespace for this feature.
+- If a required AgentTower-owned artifact that FEAT-001 must use already
+  exists with a broader mode than required (`0700` for directories,
+  `0600` for files), the command or writer refuses and names the path,
+  leaving bytes and mode unchanged.
+- Pre-existing artifacts FEAT-001 does not touch, such as a stale socket
+  file or prior log file, are left alone regardless of mode.
+- Newly-created files and directories are chmod'd/fchmod'd after creation
+  as needed so process `umask` cannot make the final mode broader than
+  the table above.
 
 ### Invariants
 
@@ -91,7 +101,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
-| `version` | `INTEGER` | `NOT NULL` | Schema generation; monotonically increasing across releases. |
+| `version` | `INTEGER` | `NOT NULL` | Schema generation; monotonically increasing across durable schema migrations. |
 
 Row-level invariants (enforced by application code in `state.schema`):
 
@@ -99,6 +109,9 @@ Row-level invariants (enforced by application code in `state.schema`):
 - The single row's `version` value MUST match the package's compile-time
   constant `CURRENT_SCHEMA_VERSION` after `config init` runs against a
   fresh database. For the FEAT-001 release, `CURRENT_SCHEMA_VERSION = 1`.
+- `CURRENT_SCHEMA_VERSION` is owned by the AgentTower codebase, is
+  independent of the package release version, and is incremented by later
+  migration features only when they add or change durable schema.
 - `config init` MUST NOT change `version` if a row already exists. (Schema
   migrations are owned by later features; FEAT-001 only seeds the row.)
 

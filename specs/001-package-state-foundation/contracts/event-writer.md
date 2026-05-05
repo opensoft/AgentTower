@@ -124,15 +124,17 @@ is valid JSON Lines (one object per line).
 |---|---|
 | Mode on creation | `0o600` |
 | Parent dir mode on creation | `0o700` |
-| Existing file mode | unchanged |
-| Existing parent dir mode | unchanged |
+| Existing file mode | unchanged if no broader than `0o600`; otherwise refused |
+| Existing parent dir mode | unchanged if no broader than `0o700`; otherwise refused |
 | Truncation | never |
 | Rotation | never (out of scope for FEAT-001; FEAT-008 may add) |
 
-The writer does **not** chmod a pre-existing `events_file`. If a
-previous tool or test left the file with permissive mode, the writer
-still appends; a defensive permission check is the responsibility of
-the operator and FEAT-008's audit-hardening pass.
+The writer does **not** chmod a pre-existing `events_file` or parent
+directory. If a previous tool or test left either with a mode broader than
+the FR-015 host-only requirement, the writer raises `OSError` before
+appending and leaves existing bytes untouched. Newly-created files and
+directories are chmod'd/fchmod'd after creation as needed so process
+`umask` cannot broaden the final mode.
 
 ---
 
@@ -149,7 +151,8 @@ These invariants are verified in `tests/unit/test_events_writer.py`:
    `{"ts": "carrier-supplied"}` produces a line whose `ts` value is
    `"carrier-supplied"` (caller wins).
 4. **File creation**: when `events_file` does not exist, the first
-   call creates it with mode `0o600`. (Verified by `os.stat`.)
+   call creates it with mode `0o600`, including under a permissive
+   process `umask`. (Verified by `os.stat`.)
 5. **Parent creation**: when the parent directory does not exist, the
    first call creates the directory chain with mode `0o700` on each
    newly created leaf.
@@ -160,3 +163,6 @@ These invariants are verified in `tests/unit/test_events_writer.py`:
    duplication).
 7. **Append-only**: a pre-existing file's prior contents are preserved;
    the writer adds to the end and never truncates.
+8. **Weak pre-existing mode refusal**: a pre-existing `events_file` with a
+   broader mode than `0o600` causes `append_event` to raise `OSError`
+   before appending.

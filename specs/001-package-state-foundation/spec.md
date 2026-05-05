@@ -13,6 +13,8 @@
 - Q: What canonical output shape should `agenttower config paths` use? → A: `KEY=value` per line (one path per line, uppercase keys), single canonical output for both humans and scripts; no `--format` flag for MVP.
 - Q: How should the registry database represent its schema version? → A: A monotonically increasing integer starting at `1`, stored as a single row in a `schema_version(version INTEGER NOT NULL)` table; decoupled from the package release version.
 - Q: Should `config init` itself emit JSONL audit records to `events.jsonl`? → A: No. The event-writer utility ships ready for callers in FEAT-002+, but FEAT-001 commands write no event records; init outcomes are observable only via stdout and exit code.
+- Q: What should happen when a pre-existing AgentTower-owned artifact that FEAT-001 must use has permissions broader than the required host-only mode? → A: Refuse with exit code `1` and an actionable path-specific error, leaving the artifact byte-identical; do not silently accept the weaker mode and do not chmod user-created artifacts.
+- Q: Who owns schema-version increments after the initial `1`? → A: The AgentTower codebase owns `CURRENT_SCHEMA_VERSION`; FEAT-001 seeds value `1`, later schema-migration features increment it when they introduce a durable schema change, and package release versions remain independent.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -176,7 +178,9 @@ callers do not interleave bytes within a single record.
   some directories exist: subsequent runs MUST complete the layout without
   overwriting anything that already exists.
 - A pre-existing configuration file with user edits is present when the user
-  runs `config init`: the user's file MUST be preserved unchanged.
+  runs `config init`: the user's file MUST be preserved unchanged if it has
+  required host-only permissions; if it has broader permissions, init MUST
+  refuse with an actionable error and leave the file byte-identical.
 - A pre-existing registry database is present and already contains a schema
   version row: re-running initialization MUST leave the recorded version
   untouched and MUST NOT add a second version row. (Schema migration is
@@ -245,11 +249,13 @@ callers do not interleave bytes within a single record.
   a table named `schema_version` with a single non-null integer column
   named `version`. Initialization MUST insert exactly one row whose value
   is the current schema generation, expressed as a monotonically
-  increasing integer starting at `1`. The schema generation is owned by
-  the AgentTower codebase and is intentionally decoupled from the package
-  release version. The database MUST open cleanly on subsequent
-  invocations and MUST never contain more than one row in
-  `schema_version`.
+  increasing integer starting at `1`. The codebase MUST expose this value
+  as `CURRENT_SCHEMA_VERSION`; FEAT-001 sets it to `1`, and FEAT-002+
+  schema-migration features increment it only when they introduce a
+  durable schema change. The schema generation is intentionally decoupled
+  from the package release version. The database MUST open cleanly on
+  subsequent `config init` runs and subsequent registry opens, and MUST
+  never contain more than one row in `schema_version`.
 - **FR-010**: `config init` MUST be idempotent: running it any number of
   times in succession on a host that has already been initialized MUST exit
   with status `0`, MUST NOT modify the existing configuration file, MUST NOT
@@ -267,17 +273,29 @@ callers do not interleave bytes within a single record.
   interleaved within another.
 - **FR-014**: When a CLI subcommand fails (for example, `config init`
   encounters an unwritable directory), the CLI MUST exit with a non-zero
-  status and print an actionable error message naming the offending path or
-  cause; failures MUST NOT be silently swallowed.
+  status and print exactly one actionable stderr line in the
+  `error: <action verb>: <absolute path>: <reason>` shape defined by
+  `contracts/cli.md` C-CLI-004; failures MUST NOT be silently swallowed.
 - **FR-015**: All durable artifacts created by `config init` MUST be created
   with strict host-only permissions: every directory it creates (the
-  configuration directory, state directory, logs directory, and cache
-  directory) MUST have mode `0700` (read/write/execute for the owning user
-  only), and every file it creates (the default configuration file, the
-  registry database file, and any file the event-writer utility creates)
-  MUST have mode `0600` (read/write for the owning user only). Pre-existing
-  artifacts that `config init` does not modify MAY retain their existing
-  permissions.
+  intermediate `opensoft/` parents, configuration directory, state
+  directory, logs directory, and cache directory) MUST have mode `0700`
+  (read/write/execute for the owning user only), and every file it creates
+  (the default configuration file, the registry database file, any SQLite
+  companion files it creates such as `-wal` / `-shm`, and any file the
+  event-writer utility creates) MUST have mode `0600` (read/write for the
+  owning user only). The implementation MUST set or verify these modes
+  after creation so process `umask` cannot make newly-created artifacts
+  broader than specified. For FEAT-001, "AgentTower-owned" means any path
+  under the resolved `opensoft/agenttower` namespace; UID, ACL, and label
+  ownership are out of scope because the MVP assumes one host user. If a
+  required pre-existing AgentTower-owned file or directory that FEAT-001
+  must read, write, or append to has a broader mode than required, the
+  command or writer MUST refuse with exit code `1` or a propagated
+  `OSError`, name the offending path, and leave the artifact
+  byte-identical. Pre-existing artifacts that FEAT-001 does not touch,
+  such as stale socket files and prior log files, MAY retain their
+  existing permissions.
 - **FR-016**: The product MUST NOT open any network listener, start any
   daemon, scan Docker, scan tmux, register agents, ingest logs, classify
   events, route messages, or send terminal input as part of `--version`,
@@ -328,10 +346,11 @@ callers do not interleave bytes within a single record.
   and receive matching, non-empty version output in under five seconds each,
   with no prior initialization required.
 - **SC-002**: After a single successful run of `agenttower config init` on a
-  host that previously had no AgentTower directories, all six members of the
-  Resolved Path Set exist on disk: configuration file, registry database
-  file, event history parent directory, logs directory, daemon socket parent
-  directory, and cache directory.
+  host that previously had no AgentTower directories, every init-owned path
+  needed by the six-member Resolved Path Set exists on disk: configuration
+  file, registry database file, event history parent directory, logs
+  directory, daemon socket parent directory, and cache directory. The
+  `EVENTS_FILE` and `SOCKET` path values themselves MUST remain absent.
 - **SC-003**: Running `agenttower config init` ten times consecutively on the
   same host produces no errors and leaves the configuration file content,
   the registry database file size and schema-version row, and the directory
@@ -350,21 +369,26 @@ callers do not interleave bytes within a single record.
   Opensoft namespace.
 - **SC-006**: When `config init` is run against an unwritable target, the
   command exits non-zero, prints an error message identifying the offending
-  path, and leaves no partial files behind; this behavior is reproducible
-  from a test fixture without manual intervention.
+  path, and leaves no partial files behind for the current failing call,
+  including `agenttower.sqlite3` and SQLite companion files such as
+  `agenttower.sqlite3-wal`, `agenttower.sqlite3-shm`, and rollback journal
+  files; this behavior is reproducible from a test fixture without manual
+  intervention.
 - **SC-007**: The internal event-writer utility, exercised from a test that
   appends one hundred records from concurrent callers, produces a file with
   exactly one hundred well-formed JSON lines and no truncated or interleaved
   bytes within any record.
 - **SC-008**: Path resolution under XDG overrides yields the same final
   `opensoft/agenttower` sub-namespace under the overridden parent, verified
-  by tests that set each XDG variable in isolation.
+  by tests that set each XDG variable in isolation and by one test that
+  sets `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` together.
 - **SC-009**: After a successful `config init` on a clean host, the
-  configuration directory, state directory, logs directory, and cache
-  directory each have mode `0700`, and the default configuration file, the
-  registry database file, and any event history file the writer has
-  produced each have mode `0600`; this is verified by a filesystem
-  permission test on each created artifact.
+  intermediate `opensoft/` parents, configuration directory, state
+  directory, logs directory, and cache directory created by the command
+  each have mode `0700`, and the default configuration file, the registry
+  database file, any SQLite companion file created by init, and any event
+  history file the writer has produced each have mode `0600`; this is
+  verified by a filesystem permission test on each created artifact.
 
 ## Assumptions
 
@@ -385,6 +409,13 @@ callers do not interleave bytes within a single record.
 - The schema-version record is stored as a single row in a single
   schema-version table. Migration tooling, multi-version history, and
   upgrade flows are explicitly deferred to later features.
+- Strict host-only permissions are defined by POSIX mode bits only. ACLs,
+  security labels, extended attributes, and hard-link attack hardening are
+  out of scope for FEAT-001 and may be handled by later audit-hardening
+  work.
+- FEAT-001 implementations enforce required file modes by setting or
+  verifying modes after creating files/directories rather than changing the
+  process-wide `umask`.
 - The event-writer utility uses ordinary append-mode file writes with
   whatever locking is available on the host filesystem; cross-host or
   network-filesystem semantics are out of scope for MVP.

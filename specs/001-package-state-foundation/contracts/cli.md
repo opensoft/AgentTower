@@ -162,7 +162,8 @@ Creates the durable Opensoft layout idempotently. On a fresh host:
 
 1. Creates each missing directory among the configuration directory
    (parent of `CONFIG_FILE`), the state directory (parent of
-   `STATE_DB`), `LOGS_DIR`, and `CACHE_DIR`, with mode `0700`.
+   `STATE_DB`), `LOGS_DIR`, `CACHE_DIR`, and any intermediate
+   `opensoft/` parent that the command creates, with mode `0700`.
 2. Creates `CONFIG_FILE` with the default content (see
    `data-model.md` §2 and `research.md` R-005), mode `0600`, **only if**
    the file does not already exist.
@@ -171,9 +172,16 @@ Creates the durable Opensoft layout idempotently. On a fresh host:
    `schema_version(version INTEGER NOT NULL)` table exists, and
    inserts the integer `1` (the current `CURRENT_SCHEMA_VERSION`)
    **only if** the table is empty.
+   Any SQLite companion files created by the call are set to mode
+   `0600`.
 4. Does NOT create `EVENTS_FILE`. Does NOT create `SOCKET`. Does NOT
    touch any pre-existing log file, socket file, event history file, or
    other artifact in the resolved paths.
+
+If a required pre-existing AgentTower-owned artifact that this command
+must read or write has a broader mode than required by FR-015, the command
+fails with exit code `1`, prints the path-specific error shape below, and
+leaves the artifact byte-identical.
 
 ### Output (stdout)
 
@@ -218,6 +226,7 @@ error: create directory: /nonwritable/.config/opensoft/agenttower: Permission de
 | `0` | Success (created or idempotent no-op). |
 | `1` | Filesystem error (unwritable parent, permission denied, etc.). |
 | `1` | SQLite error (corrupt existing DB, lock failure). |
+| `1` | Permission-mode refusal for a required pre-existing AgentTower-owned artifact. |
 
 There is exactly one non-success exit code in FEAT-001 (`1`). Subdivision
 into more codes is left to later features that need to distinguish
@@ -225,17 +234,23 @@ classes of failure programmatically.
 
 ### Side effects on success
 
-- Directories created with mode `0700`.
-- Files created with mode `0600`.
-- Pre-existing artifacts left untouched.
+- Directories created with mode `0700`, including intermediate
+  `opensoft/` parents created by the command.
+- Files created with mode `0600`, including SQLite companion files created
+  by the command.
+- Required pre-existing AgentTower-owned artifacts are used only when their
+  modes are no broader than required; otherwise the command fails without
+  mutating them.
+- Unrelated pre-existing artifacts are left untouched.
 - Nothing written to `EVENTS_FILE` (per FR-016 and Q4).
 - No network listener opened. No daemon started. No Docker / tmux call
   made.
 
 ### Side effects on failure
 
-- No partially-initialized `STATE_DB` left behind: the SQLite file is
-  either fully initialized (table + row) or absent.
+- No partially-initialized `STATE_DB` left behind for the current failing
+  call: the SQLite file and any companion files created during that call
+  are either fully initialized (table + row) or absent.
 - A partially-created directory tree may exist (e.g. the config dir was
   created before the state dir failed); subsequent `config init`
   invocations MUST be able to complete the tree without errors. This
