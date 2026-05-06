@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agenttower.config_doctor.checks import CheckResult
 from agenttower.config_doctor.runner import DoctorReport
 
 

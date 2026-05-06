@@ -23,11 +23,13 @@ defined by FEAT-002 / FEAT-003 / FEAT-004:
 | 2 | `list_containers`  | FEAT-003 | `container_identity` cross-check (full-id + 12-char short-id prefix match) |
 | 3 | `list_panes`       | FEAT-004 | `tmux_pane_match` cross-check (filter by resolved container id when known) |
 
-`list_panes` is called with `params.container_id` set to the full
+`list_panes` is called with `params.container` set to the full
 id from `IdentityResolution.matched_id` when the cross-check
 classified as `unique_match`; otherwise it is called with no
-filter. Both shapes are already supported by the FEAT-004 method
-contract.
+filter. The parameter name is `container` (not `container_id`)
+to match the FEAT-004 method shape at
+`src/agenttower/socket_api/methods.py::_list_panes`. Both shapes
+are already supported by the FEAT-004 method contract.
 
 ### What FEAT-005 does NOT add
 
