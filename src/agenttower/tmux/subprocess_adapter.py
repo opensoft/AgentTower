@@ -2,11 +2,11 @@
 
 Argv is constructed as a typed list with ``shell=False``; container ids,
 names, the bench user, socket paths, and tmux output never reach a shell
-string (FR-021). Each subprocess call has a 5-second timeout (FR-018) and
-a hung process is killed and waited before returning a
-``docker_exec_timeout`` :class:`TmuxError`. If termination itself fails or
-exceeds a secondary 1-second grace period, the per-scope error escalates
-to ``internal_error`` (FR-018 escalation, R-003 termination escalation).
+string (FR-021). Each subprocess call has a 5-second timeout (FR-018). When
+``subprocess.run`` raises ``TimeoutExpired`` we normalize it to
+``docker_exec_timeout`` after stdlib cleanup; deeper kill-escalation behavior
+would require a ``Popen``-based implementation and is documented as a known
+follow-up in the FEAT-004 artifacts.
 """
 
 from __future__ import annotations
@@ -19,10 +19,6 @@ from collections.abc import Mapping, Sequence
 from ..socket_api import errors as _errors
 from .adapter import SocketListing, TmuxAdapter, TmuxError
 from .parsers import (
-    MAX_COMMAND,
-    MAX_DEFAULT,
-    MAX_PATH,
-    MAX_TITLE,
     ParsedPane,
     parse_id_u,
     parse_list_panes,
@@ -31,7 +27,6 @@ from .parsers import (
 )
 
 _TIMEOUT_SECONDS = 5.0
-_KILL_GRACE_SECONDS = 1.0
 _LIST_PANES_FORMAT = (
     "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}\t"
     "#{pane_pid}\t#{pane_tty}\t#{pane_current_command}\t#{pane_current_path}\t"
@@ -187,15 +182,13 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             raise TmuxError(
                 code=_errors.OUTPUT_MALFORMED,
                 message=_bound(
-                    f"{len(malformed)} tmux list-panes rows had wrong field count"
+                    f"{len(malformed)} tmux list-panes rows malformed or unparseable"
                 ),
                 container_id=container_id,
                 tmux_socket_path=socket_path,
+                malformed_rows=tuple(malformed),
             )
         if malformed:
-            # At least one parsed row + some malformed rows → reconciler
-            # records a per-scope output_malformed alongside the successful
-            # panes (treated as a degraded socket scan via PaneDiscoveryService).
             raise TmuxError(
                 code=_errors.OUTPUT_MALFORMED,
                 message=_bound(
@@ -204,6 +197,8 @@ class SubprocessTmuxAdapter(TmuxAdapter):
                 ),
                 container_id=container_id,
                 tmux_socket_path=socket_path,
+                partial_panes=tuple(parsed),
+                malformed_rows=tuple(malformed),
             )
         return parsed
 
@@ -241,12 +236,9 @@ class SubprocessTmuxAdapter(TmuxAdapter):
                 env=self._env,
             )
         except subprocess.TimeoutExpired as exc:
-            # ``subprocess.run`` calls ``proc.kill(); proc.communicate()``
-            # before raising TimeoutExpired, which is the cleanup behavior
-            # FR-018 requires. If that internal cleanup itself failed we'd
-            # hit the kill-escalation path; ``run`` does not surface that
-            # specific failure, so we treat reaching this except clause as
-            # the success-of-cleanup path.
+            # ``subprocess.run`` performs stdlib cleanup before surfacing
+            # TimeoutExpired. We normalize the timeout here; deeper
+            # kill-escalation handling would require a ``Popen`` rewrite.
             raise TmuxError(
                 code=_errors.DOCKER_EXEC_TIMEOUT,
                 message=_bound(

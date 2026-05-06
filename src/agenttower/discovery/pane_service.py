@@ -384,9 +384,15 @@ class PaneDiscoveryService:
                     raise
                 err = _per_scope_from_tmux_error(exc, socket_path=socket_path)
                 state.failures.append(err)
-                state.socket_outcomes[(container_id, socket_path)] = FailedSocketScan(
-                    error_code=err.error_code, error_message=err.error_message
-                )
+                if exc.code == _errors.OUTPUT_MALFORMED and exc.partial_panes:
+                    any_success = True
+                    state.socket_outcomes[(container_id, socket_path)] = OkSocketScan(
+                        panes=tuple(exc.partial_panes)
+                    )
+                else:
+                    state.socket_outcomes[(container_id, socket_path)] = FailedSocketScan(
+                        error_code=err.error_code, error_message=err.error_message
+                    )
                 continue
             any_success = True
             state.socket_outcomes[(container_id, socket_path)] = OkSocketScan(
@@ -567,11 +573,8 @@ class PaneDiscoveryService:
         """Group truncation notes by ``(container_id, tmux_socket_path)``."""
         out: dict[tuple[str, str], list] = {}
         for note in write_set.pane_truncations:
-            for upsert in write_set.upserts:
-                if upsert.tmux_pane_id == note.tmux_pane_id:
-                    key = (upsert.container_id, upsert.tmux_socket_path)
-                    out.setdefault(key, []).append(note)
-                    break
+            key = (note.container_id, note.tmux_socket_path)
+            out.setdefault(key, []).append(note)
         return out
 
     @staticmethod
@@ -654,6 +657,8 @@ def _per_scope_to_dict(err: PerScopeError) -> dict[str, Any]:
         out["pane_truncations"] = [
             {
                 "tmux_pane_id": note.tmux_pane_id,
+                "tmux_socket_path": note.tmux_socket_path,
+                "container_id": note.container_id,
                 "field": note.field,
                 "original_len": note.original_len,
             }

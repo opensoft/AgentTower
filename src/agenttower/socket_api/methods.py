@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..tmux.parsers import sanitize_text
+
 from . import errors
 
 if TYPE_CHECKING:
@@ -104,9 +106,9 @@ def _scan_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, An
     except DockerError as exc:
         if exc.code in errors.CLOSED_CODE_SET:
             return errors.make_error(exc.code, exc.message)
-        return errors.make_error(errors.INTERNAL_ERROR, str(exc))
+        return errors.make_error(errors.INTERNAL_ERROR, _internal_error_message(str(exc), prefix="scan failed"))
     except Exception as exc:  # pragma: no cover — defensive
-        return errors.make_error(errors.INTERNAL_ERROR, f"scan failed: {exc}")
+        return errors.make_error(errors.INTERNAL_ERROR, _internal_error_message(str(exc), prefix="scan failed"))
     return errors.make_ok(_scan_result_to_payload(result))
 
 
@@ -221,9 +223,9 @@ def _scan_panes(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     except TmuxError as exc:
         if exc.code in errors.CLOSED_CODE_SET:
             return errors.make_error(exc.code, exc.message)
-        return errors.make_error(errors.INTERNAL_ERROR, str(exc))
+        return errors.make_error(errors.INTERNAL_ERROR, _internal_error_message(str(exc), prefix="pane scan failed"))
     except Exception as exc:  # pragma: no cover — defensive
-        return errors.make_error(errors.INTERNAL_ERROR, f"pane scan failed: {exc}")
+        return errors.make_error(errors.INTERNAL_ERROR, _internal_error_message(str(exc), prefix="pane scan failed"))
     return errors.make_ok(_pane_scan_to_payload(result))
 
 
@@ -250,6 +252,12 @@ def _list_panes(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     }
     return errors.make_ok(payload)
 
+
+def _internal_error_message(message: str, *, prefix: str) -> str:
+    bounded, _ = sanitize_text(message, 2048)
+    if not bounded:
+        return prefix
+    return f"{prefix}: {bounded}"
 
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
 # FEAT-003's two and FEAT-004's two new entries. FEAT-002 keys retain

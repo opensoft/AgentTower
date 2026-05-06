@@ -118,6 +118,8 @@ def test_sanitize_and_truncate_records_pane_truncation_note() -> None:
     assert len(write_set.upserts) == 1
     assert len(write_set.pane_truncations) == 1
     note = write_set.pane_truncations[0]
+    assert note.container_id == _CONTAINER
+    assert note.tmux_socket_path == _SOCKET
     assert note.field == "pane_title"
     assert note.tmux_pane_id == "%0"
     assert note.original_len == 5000

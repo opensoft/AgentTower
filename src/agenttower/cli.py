@@ -572,16 +572,28 @@ def _scan_command(args: argparse.Namespace) -> int:
     first_block = True
     if args.containers:
         code = _run_container_scan(paths, args, first_block=first_block)
-        final_code = max(final_code, code)
+        if code in (2, 3):
+            return code
+        final_code = _combine_scan_exit_codes(final_code, code)
         first_block = False
-        # Stop the combined run early if container scan hit a daemon error;
-        # callers expect at most one envelope per scan kind.
-        if code == 3:
-            return final_code
     if args.panes:
         code = _run_pane_scan(paths, args, first_block=first_block)
-        final_code = max(final_code, code)
+        if code in (2, 3):
+            return code
+        final_code = _combine_scan_exit_codes(final_code, code)
     return final_code
+
+
+def _combine_scan_exit_codes(current: int, new: int) -> int:
+    """Apply FEAT scan precedence for combined runs.
+
+    Daemon-unavailable / daemon-error (2/3) are handled by the caller and
+    short-circuit immediately; among successful/degraded scan results we keep
+    the degraded exit code when any step degraded.
+    """
+    if current == 5 or new == 5:
+        return 5
+    return 0
 
 
 def _run_container_scan(

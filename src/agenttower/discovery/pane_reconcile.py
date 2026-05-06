@@ -212,6 +212,8 @@ def _build_upsert(
         if truncated:
             truncations.append(
                 PaneTruncationNote(
+                    container_id=container_id,
+                    tmux_socket_path=socket_path,
                     tmux_pane_id=parsed.tmux_pane_id,
                     field=field,
                     original_len=len(_strip_only(value)),

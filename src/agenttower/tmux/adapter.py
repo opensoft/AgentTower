@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, Union
 
-from .parsers import ParsedPane
+from .parsers import MalformedRow, ParsedPane
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,8 @@ class TmuxError(Exception):
     message: str
     container_id: str | None = None
     tmux_socket_path: str | None = None
+    partial_panes: tuple[ParsedPane, ...] = ()
+    malformed_rows: tuple[MalformedRow, ...] = ()
 
     def __str__(self) -> str:
         scope = []
@@ -113,6 +115,8 @@ class TmuxAdapter(Protocol):
         Returns the parsed pane rows. Raises :class:`TmuxError` for the
         closed-set codes (``tmux_unavailable``, ``tmux_no_server``,
         ``docker_exec_failed``, ``docker_exec_timeout``, ``output_malformed``).
-        Malformed rows produce a single ``output_malformed`` error so the
-        reconciler can attribute the failure per-(container, socket).
+        When malformed rows are encountered alongside parseable rows, adapters
+        attach the successfully parsed subset on ``TmuxError.partial_panes`` so
+        the service layer can persist the socket as degraded without losing the
+        good rows.
         """

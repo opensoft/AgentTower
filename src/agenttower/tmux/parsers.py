@@ -1,7 +1,7 @@
 """Pure parsers + sanitization helpers for FEAT-004.
 
 No I/O; no Docker dependency; no tmux dependency. Every function takes a
-``str`` (subprocess stdout, in production) and returns a typed dataclass
+``str | None`` (subprocess stdout, in production) and returns a typed dataclass
 or a list. Per-field length caps and byte-class stripping live here so
 the reconciler stays focused on per-(container, socket) write-set
 construction (R-009).
@@ -44,7 +44,7 @@ class MalformedRow:
     actual_fields: int
 
 
-def sanitize_text(value: str, max_length: int) -> tuple[str, bool]:
+def sanitize_text(value: str | None, max_length: int) -> tuple[str, bool]:
     """Strip NUL + C0 control bytes; replace tabs/newlines with spaces; truncate.
 
     Returns ``(value, truncated)`` where ``truncated`` is True iff the
@@ -76,7 +76,7 @@ def sanitize_text(value: str, max_length: int) -> tuple[str, bool]:
     return cleaned, truncated
 
 
-def parse_id_u(stdout: str) -> str:
+def parse_id_u(stdout: str | None) -> str:
     """Parse the stdout of ``id -u`` and return the digit string.
 
     Raises ``ValueError`` when the stdout is empty after stripping or the
@@ -94,7 +94,7 @@ def parse_id_u(stdout: str) -> str:
     raise ValueError("id -u stdout is empty")
 
 
-def parse_socket_listing(stdout: str) -> list[str]:
+def parse_socket_listing(stdout: str | None) -> list[str]:
     """Parse ``ls -1 -- /tmp/tmux-<uid>`` stdout into candidate socket names.
 
     Skips empty lines and any name that contains ``/`` (defensive — ``ls -1``
@@ -116,7 +116,7 @@ def parse_socket_listing(stdout: str) -> list[str]:
     return out
 
 
-def parse_list_panes(stdout: str) -> tuple[list[ParsedPane], list[MalformedRow]]:
+def parse_list_panes(stdout: str | None) -> tuple[list[ParsedPane], list[MalformedRow]]:
     """Parse ``tmux list-panes -a -F <format>`` stdout (R-002).
 
     The format string emits 10 tab-separated fields per row:

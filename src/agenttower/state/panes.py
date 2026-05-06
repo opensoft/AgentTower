@@ -95,6 +95,8 @@ class PaneUpsert:
 
 @dataclass(frozen=True)
 class PaneTruncationNote:
+    container_id: str
+    tmux_socket_path: str
     tmux_pane_id: str
     field: str
     original_len: int

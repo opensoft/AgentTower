@@ -203,3 +203,51 @@ def test_post_commit_pane_scan_completed_failure_preserves_row(
     # Mutex was released — a follow-up scan can acquire it without blocking.
     assert service.scan_mutex.acquire(blocking=False) is True
     service.scan_mutex.release()
+
+
+def test_output_malformed_with_partial_rows_persists_parsed_subset(
+    tmp_path: Path,
+) -> None:
+    """Partial parse + output_malformed must persist good rows as degraded."""
+
+    class _PartialAdapter(_StubAdapter):
+        def list_socket_dir(self, *, container_id: str, bench_user: str, uid: str) -> SocketListing:
+            return SocketListing(container_id=container_id, uid=uid, sockets=("default",))
+
+        def list_panes(self, *, container_id: str, bench_user: str, socket_path: str) -> Sequence[ParsedPane]:
+            raise TmuxError(
+                code=_errors.OUTPUT_MALFORMED,
+                message="1 of 2 tmux list-panes rows malformed",
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                partial_panes=(
+                    ParsedPane(
+                        tmux_session_name="work",
+                        tmux_window_index=0,
+                        tmux_pane_index=0,
+                        tmux_pane_id="%0",
+                        pane_pid=1,
+                        pane_tty="/dev/pts/0",
+                        pane_current_command="bash",
+                        pane_current_path="/workspace",
+                        pane_title="title",
+                        pane_active=True,
+                    ),
+                ),
+            )
+
+    service = _make_service(tmp_path, adapter=_PartialAdapter())
+    result = service.scan()
+    assert result.status == "degraded"
+    assert result.panes_seen == 1
+    assert result.sockets_scanned == 1
+    assert result.error_code == _errors.OUTPUT_MALFORMED
+
+    conn = sqlite3.connect(str(tmp_path / "state" / "agenttower.sqlite3"))
+    try:
+        rows = conn.execute(
+            "SELECT tmux_socket_path, tmux_pane_id, active FROM panes"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows == [("/tmp/tmux-1000/default", "%0", 1)]
