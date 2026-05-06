@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -75,8 +75,88 @@ def _apply_migration_v2(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_v3(conn: sqlite3.Connection) -> None:
+    """Create FEAT-004 tables. Idempotent because of IF NOT EXISTS guards.
+
+    Adds two tables — ``panes`` and ``pane_scans`` — and three indexes.
+    Touches no existing FEAT-003 table (FR-030).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS panes (
+            container_id            TEXT NOT NULL,
+            tmux_socket_path        TEXT NOT NULL,
+            tmux_session_name       TEXT NOT NULL,
+            tmux_window_index       INTEGER NOT NULL,
+            tmux_pane_index         INTEGER NOT NULL,
+            tmux_pane_id            TEXT NOT NULL,
+            container_name          TEXT NOT NULL,
+            container_user          TEXT NOT NULL,
+            pane_pid                INTEGER NOT NULL,
+            pane_tty                TEXT NOT NULL,
+            pane_current_command    TEXT NOT NULL,
+            pane_current_path       TEXT NOT NULL,
+            pane_title              TEXT NOT NULL,
+            pane_active             INTEGER NOT NULL CHECK(pane_active IN (0, 1)),
+            active                  INTEGER NOT NULL CHECK(active IN (0, 1)),
+            first_seen_at           TEXT NOT NULL,
+            last_scanned_at         TEXT NOT NULL,
+            PRIMARY KEY (
+                container_id,
+                tmux_socket_path,
+                tmux_session_name,
+                tmux_window_index,
+                tmux_pane_index,
+                tmux_pane_id
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS panes_active_order
+            ON panes(active DESC, container_id ASC, tmux_socket_path ASC,
+                     tmux_session_name ASC, tmux_window_index ASC,
+                     tmux_pane_index ASC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS panes_container_socket
+            ON panes(container_id, tmux_socket_path)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pane_scans (
+            scan_id                      TEXT PRIMARY KEY,
+            started_at                   TEXT NOT NULL,
+            completed_at                 TEXT NOT NULL,
+            status                       TEXT NOT NULL CHECK(status IN ('ok', 'degraded')),
+            containers_scanned           INTEGER NOT NULL,
+            sockets_scanned              INTEGER NOT NULL,
+            panes_seen                   INTEGER NOT NULL,
+            panes_newly_active           INTEGER NOT NULL,
+            panes_reconciled_inactive    INTEGER NOT NULL,
+            containers_skipped_inactive  INTEGER NOT NULL,
+            containers_tmux_unavailable  INTEGER NOT NULL,
+            error_code                   TEXT,
+            error_message                TEXT,
+            error_details_json           TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS pane_scans_started
+            ON pane_scans(started_at DESC)
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
+    3: _apply_migration_v3,
 }
 
 
@@ -150,9 +230,11 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
             f"on-disk schema_version={current_version} is newer than this "
             f"build supports ({CURRENT_SCHEMA_VERSION}); refusing to open"
         )
-    # Existing DB at current version: ensure FEAT-003 tables exist in case
-    # the row got there ahead of the tables (defensive).
+    # Existing DB at current version: ensure FEAT-003 + FEAT-004 tables
+    # exist in case the schema_version row got there ahead of the tables
+    # (defensive — every migration body uses IF NOT EXISTS).
     _apply_migration_v2(conn)
+    _apply_migration_v3(conn)
 
 
 def _chmod_new_companions(

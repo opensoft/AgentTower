@@ -68,8 +68,11 @@ def test_status_json_output_shape(env: dict[str, str]) -> None:
         "daemon_version",
     }
     assert result["alive"] is True
-    # FEAT-003 bumps the schema to v2 (data-model.md §7).
-    assert result["schema_version"] == 2
+    # FEAT-004 bumps the schema to v3 (data-model.md §7); we read the
+    # current version symbolically so future bumps don't break this gate.
+    from agenttower.state.schema import CURRENT_SCHEMA_VERSION
+
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION
 
 
 def test_status_unavailable_returns_exit_2(env: dict[str, str]) -> None:

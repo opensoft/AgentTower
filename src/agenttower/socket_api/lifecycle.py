@@ -184,6 +184,12 @@ EVENT_SCAN_STARTED = "scan_started"
 EVENT_SCAN_COMPLETED = "scan_completed"
 EVENT_SCAN_JSONL_FAILED = "scan_jsonl_failed"
 
+# FEAT-004 additions (R-014). Distinct from FEAT-003 tokens so operators
+# can grep them apart.
+EVENT_PANE_SCAN_STARTED = "pane_scan_started"
+EVENT_PANE_SCAN_COMPLETED = "pane_scan_completed"
+EVENT_PANE_SCAN_JSONL_FAILED = "pane_scan_jsonl_failed"
+
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
         EVENT_DAEMON_STARTING,
@@ -195,6 +201,9 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         EVENT_SCAN_STARTED,
         EVENT_SCAN_COMPLETED,
         EVENT_SCAN_JSONL_FAILED,
+        EVENT_PANE_SCAN_STARTED,
+        EVENT_PANE_SCAN_COMPLETED,
+        EVENT_PANE_SCAN_JSONL_FAILED,
     }
 )
 

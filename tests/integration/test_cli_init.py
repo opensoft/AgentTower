@@ -116,8 +116,11 @@ def test_idempotent_reruns_leave_bytes_and_rows_unchanged(tmp_path: Path) -> Non
             ((count,),) = list(conn.execute("SELECT COUNT(*) FROM schema_version"))
             ((version,),) = list(conn.execute("SELECT version FROM schema_version"))
         assert count == 1
-        # FEAT-003 bumps the schema to v2 (data-model.md §7).
-        assert version == 2
+        # FEAT-004 bumps the schema to v3 (data-model.md §7); read the
+        # current version symbolically so future bumps don't break this gate.
+        from agenttower.state.schema import CURRENT_SCHEMA_VERSION
+
+        assert version == CURRENT_SCHEMA_VERSION
 
 
 def test_modes_correct_under_permissive_umask(tmp_path: Path) -> None:
