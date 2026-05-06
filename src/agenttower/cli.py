@@ -50,7 +50,12 @@ def _resolve_socket_with_paths(env: dict[str, str] | None = None) -> tuple[Paths
     if env is None:
         env = dict(os.environ)
     paths = resolve_paths(env)
-    runtime_context = runtime_detect.detect()
+    # Thread AGENTTOWER_TEST_PROC_ROOT through the supplied env so runtime
+    # detection stays consistent with the resolver (PR-6 review #2/#3 finding:
+    # detect() previously read os.environ directly, breaking custom-env callers).
+    runtime_context = runtime_detect.detect(
+        proc_root=env.get("AGENTTOWER_TEST_PROC_ROOT")
+    )
     try:
         resolved = resolve_socket_path(env, paths, runtime_context)
     except SocketPathInvalid as exc:

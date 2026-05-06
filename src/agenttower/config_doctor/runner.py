@@ -23,10 +23,7 @@ from agenttower.config_doctor.checks import (
     check_tmux_pane_match,
     check_tmux_present,
 )
-from agenttower.config_doctor.socket_resolve import (
-    SocketPathInvalid,
-    resolve_socket_path,
-)
+from agenttower.config_doctor.socket_resolve import resolve_socket_path
 from agenttower.paths import Paths
 from agenttower.socket_api.client import (
     DaemonError,
@@ -68,7 +65,12 @@ def run_doctor(
     + exit `1` BEFORE calling :func:`run_doctor`.
     """
 
-    runtime_context = runtime_detect.detect()
+    # Thread AGENTTOWER_TEST_PROC_ROOT through the supplied env so runtime
+    # detection stays consistent with run_doctor's other env-derived inputs
+    # (PR-6 review finding: detect() previously read os.environ directly).
+    runtime_context = runtime_detect.detect(
+        proc_root=env.get("AGENTTOWER_TEST_PROC_ROOT")
+    )
     resolved = resolve_socket_path(env, host_paths, runtime_context)
 
     socket_resolved = check_socket_resolved(resolved)
