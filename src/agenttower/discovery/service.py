@@ -87,6 +87,14 @@ def _error_details_payload(
     ]
 
 
+def _read_connection_factory(conn: sqlite3.Connection) -> Callable[[], sqlite3.Connection]:
+    row = conn.execute("PRAGMA database_list").fetchone()
+    db_path = str(row[2]) if row is not None else ""
+    if not db_path:
+        raise ValueError("DiscoveryService requires a file-backed SQLite connection")
+    return lambda: sqlite3.connect(db_path)
+
+
 class DiscoveryService:
     """Owns the scan mutex, scans Docker, reconciles SQLite, emits audit events.
 
@@ -108,7 +116,9 @@ class DiscoveryService:
         self._conn = connection
         self._adapter = adapter
         self._rule_provider = rule_provider or default_rule
-        self._list_connection_factory = list_connection_factory
+        self._list_connection_factory = list_connection_factory or _read_connection_factory(
+            connection
+        )
         self._events_file = events_file
         self._lifecycle_logger = lifecycle_logger
         self._scan_mutex = threading.Lock()
@@ -119,8 +129,6 @@ class DiscoveryService:
 
     def list_containers(self, *, active_only: bool = False) -> list[state_containers.ContainerRow]:
         """Return persisted container rows without acquiring the scan mutex."""
-        if self._list_connection_factory is None:
-            return state_containers.select_containers(self._conn, active_only=active_only)
         conn = self._list_connection_factory()
         try:
             return state_containers.select_containers(conn, active_only=active_only)
