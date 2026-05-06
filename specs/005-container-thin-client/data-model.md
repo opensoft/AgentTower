@@ -271,9 +271,11 @@ exit `1` per FR-002 (R-001).
 
 Walks the six `CheckResult`s in order and applies R-006's mapping
 table. Pre-flight failures short-circuit to `1` *before* the
-`DoctorReport` is constructed (this is enforced by `runner.py`
-catching the validator's `SystemExit(1)` from `socket_resolve.py`
-and re-raising rather than producing a partial report).
+`DoctorReport` is constructed: `socket_resolve.py` raises
+`SocketPathInvalid` (the FR-002 validator), which propagates out of
+`run_doctor` and is caught by the CLI handler in `cli.py` (the
+`SocketPathInvalid` → stderr + exit `1` translation lives there,
+not in `runner.py`).
 
 ---
 

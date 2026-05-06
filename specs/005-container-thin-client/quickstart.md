@@ -112,31 +112,28 @@ unset (data-model §3.3).
 
 ```bash
 $ agenttower config doctor --json
+{"summary": {"exit_code": 0, "total": 6, "passed": 3, "warned": 0, "failed": 0, "info": 3}, "checks": {"socket_resolved": {"status": "pass", "details": "/home/brett/.local/state/opensoft/agenttower/agenttowerd.sock (host_default)", "source": "host_default"}, "socket_reachable": {"status": "pass", "details": "daemon_version=0.5.0 schema_version=3", "source": "round_trip"}, "daemon_status": {"status": "pass", "details": "schema_version=3 (cli supports 3); daemon_version=0.5.0", "source": "schema_check"}, "container_identity": {"status": "info", "details": "host_context", "sub_code": "host_context"}, "tmux_present": {"status": "info", "details": "not_in_tmux", "sub_code": "not_in_tmux"}, "tmux_pane_match": {"status": "info", "details": "not_in_tmux", "sub_code": "not_in_tmux"}}}
+```
+
+One canonical JSON object on a single line per invocation
+(`json.dumps` default — no pretty-print). Pipe through `jq` or
+`python -m json.tool` for a multi-line view:
+
+```bash
+$ agenttower config doctor --json | python -m json.tool
 {
-  "summary": {
-    "exit_code": 0,
-    "total":     6,
-    "passed":    3,
-    "warned":    0,
-    "failed":    0,
-    "info":      3
-  },
-  "checks": {
-    "socket_resolved":   {"status": "pass", "details": "/home/brett/.local/state/opensoft/agenttower/agenttowerd.sock (host_default)", "source": "host_default"},
-    "socket_reachable":  {"status": "pass", "details": "daemon_version=0.5.0 schema_version=3", "source": "round_trip"},
-    "daemon_status":     {"status": "pass", "details": "schema_version=3 (cli supports 3); daemon_version=0.5.0", "source": "schema_check"},
-    "container_identity":{"status": "info", "details": "host_context", "sub_code": "host_context"},
-    "tmux_present":      {"status": "info", "details": "not_in_tmux", "sub_code": "not_in_tmux"},
-    "tmux_pane_match":   {"status": "info", "details": "not_in_tmux", "sub_code": "not_in_tmux"}
-  }
+    "summary": {
+        "exit_code": 0,
+        ...
+    },
+    ...
 }
 ```
 
-One canonical JSON object per invocation. No incidental stderr
-lines. `summary.exit_code` matches the CLI exit code. The keys are
-emitted in the per-row dict order produced by the renderer
-(`status`, `details`, optional `source`, optional `sub_code`,
-optional `actionable_message`).
+No incidental stderr lines. `summary.exit_code` matches the CLI
+exit code. The keys are emitted in the per-row dict order produced
+by the renderer (`status`, `details`, optional `source`, optional
+`sub_code`, optional `actionable_message`).
 
 ---
 

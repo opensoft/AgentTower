@@ -134,14 +134,18 @@ def _safe_call(socket_path, method: str) -> dict[str, Any] | None:
 def _compute_exit_code(rows: tuple[CheckResult, ...]) -> Literal[0, 1, 2, 3, 4, 5]:
     """R-006 exit-code mapping (FR-018, post-clarify Q5 layering).
 
-    * ``0`` — every required check is ``pass`` or ``info``.
+    * ``0`` — every required check is ``pass``, ``warn``, or ``info``.
+      ``warn`` is reachable on ``daemon_status`` for
+      ``schema_version_older`` (forward-compat per R-010); the doctor
+      keeps exit ``0`` so scripts that only gate on ``$?`` continue
+      to work against an older daemon.
     * ``2`` — ``socket_reachable`` is ``fail`` with sub-code in
       ``{socket_missing, connection_refused, connect_timeout}``.
     * ``3`` — ``socket_reachable`` is ``pass`` AND ``daemon_status`` is
       ``fail`` with sub-code ``daemon_error`` or ``schema_version_newer``
       (Clarifications 2026-05-06).
-    * ``5`` — round-trip ok and required checks pass, but a non-required
-      check is ``fail``.
+    * ``5`` — round-trip ok and required checks pass/warn, but a
+      non-required check is ``fail``.
     * ``1`` is reserved for pre-flight (handled by cli.py before
       :func:`run_doctor`); ``4`` is reserved per FEAT-002.
     """

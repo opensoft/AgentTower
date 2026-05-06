@@ -87,7 +87,9 @@ class DaemonUnavailable(RuntimeError):
         "connect_timeout",
         "protocol_error",
     ]
-    # existing init signature unchanged
+    # __init__ gains an additive keyword-only ``kind`` parameter;
+    # existing positional callers (FEAT-002 / FEAT-003 / FEAT-004)
+    # continue to work without modification.
 ```
 
 The doctor's `socket_reachable` check catches `DaemonUnavailable`
