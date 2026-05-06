@@ -161,12 +161,11 @@ def _compute_exit_code(rows: tuple[CheckResult, ...]) -> Literal[0, 1, 2, 3, 4, 
         return 3
 
     # Required checks all pass/warn/info now. Look at non-required.
-    non_required_fails = [
+    if any(
         row.status == "fail"
         for row in rows
         if row.code not in REQUIRED_CHECKS
-    ]
-    if any(non_required_fails):
+    ):
         return 5
     return 0
 

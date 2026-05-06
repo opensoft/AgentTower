@@ -13,11 +13,10 @@ def _args(*, containers: bool, panes: bool, json: bool = False) -> argparse.Name
 
 
 def test_combined_scan_short_circuits_on_daemon_unavailable(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "resolve_paths", lambda: object())
-    monkeypatch.setattr(cli, "_run_container_scan", lambda paths, args, first_block: 2)
+    monkeypatch.setattr(cli, "_run_container_scan", lambda args, first_block: 2)
     called = {"panes": 0}
 
-    def fail_if_called(paths, args, first_block):
+    def fail_if_called(args, first_block):
         called["panes"] += 1
         return 0
 
@@ -27,9 +26,8 @@ def test_combined_scan_short_circuits_on_daemon_unavailable(monkeypatch) -> None
 
 
 def test_combined_scan_daemon_error_overrides_prior_degraded(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "resolve_paths", lambda: object())
-    monkeypatch.setattr(cli, "_run_container_scan", lambda paths, args, first_block: 5)
-    monkeypatch.setattr(cli, "_run_pane_scan", lambda paths, args, first_block: 3)
+    monkeypatch.setattr(cli, "_run_container_scan", lambda args, first_block: 5)
+    monkeypatch.setattr(cli, "_run_pane_scan", lambda args, first_block: 3)
     assert cli._scan_command(_args(containers=True, panes=True)) == 3
 
 

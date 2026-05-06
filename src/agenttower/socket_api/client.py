@@ -57,6 +57,64 @@ class DaemonError(RuntimeError):
         self.message = message
 
 
+def _do_connect(sock: socket.socket, socket_path: Path) -> None:
+    """Connect ``sock`` to ``socket_path`` and translate transport errors
+    into :class:`DaemonUnavailable` with the FR-016 closed-set ``kind``.
+
+    Existing exception messages are preserved byte-for-byte (locked by
+    ``test_socket_client_back_compat.py``).
+    """
+    try:
+        _connect_via_chdir(sock, socket_path)
+    except FileNotFoundError as exc:
+        raise DaemonUnavailable(
+            f"socket missing: {socket_path}", kind="socket_missing"
+        ) from exc
+    except ConnectionRefusedError as exc:
+        raise DaemonUnavailable(
+            f"socket refused: {socket_path}", kind="connection_refused"
+        ) from exc
+    except OSError as exc:
+        kind = "permission_denied" if exc.errno == errno.EACCES else "connect_timeout"
+        raise DaemonUnavailable(f"connect failed: {exc}", kind=kind) from exc
+
+
+def _do_send_and_recv(sock: socket.socket, payload: bytes) -> bytes:
+    """Send ``payload`` and read one newline-delimited response, mapping
+    I/O errors into :class:`DaemonUnavailable` with the FR-016 closed-set
+    ``kind``. Existing exception messages are preserved byte-for-byte.
+    """
+    try:
+        sock.sendall(payload)
+        return _recv_line(sock)
+    except (TimeoutError, socket.timeout) as exc:  # noqa: UP041
+        raise DaemonUnavailable(
+            "daemon read timeout", kind="connect_timeout"
+        ) from exc
+    except OSError as exc:
+        raise DaemonUnavailable(
+            f"socket I/O failed: {exc}", kind="connect_timeout"
+        ) from exc
+
+
+def _parse_envelope(data: bytes) -> dict[str, Any]:
+    """Decode the daemon's JSON envelope or raise
+    :class:`DaemonUnavailable` with ``kind="protocol_error"``."""
+    if not data:
+        raise DaemonUnavailable("daemon returned no data", kind="protocol_error")
+    try:
+        envelope = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DaemonUnavailable(
+            f"daemon returned invalid JSON: {exc}", kind="protocol_error"
+        ) from exc
+    if not isinstance(envelope, dict) or "ok" not in envelope:
+        raise DaemonUnavailable(
+            "daemon returned malformed envelope", kind="protocol_error"
+        )
+    return envelope
+
+
 def send_request(
     socket_path: Path,
     method: str,
@@ -80,57 +138,16 @@ def send_request(
     sock.settimeout(connect_timeout)
     socket_path = Path(socket_path)
     try:
-        try:
-            _connect_via_chdir(sock, socket_path)
-        except FileNotFoundError as exc:
-            raise DaemonUnavailable(
-                f"socket missing: {socket_path}", kind="socket_missing"
-            ) from exc
-        except ConnectionRefusedError as exc:
-            raise DaemonUnavailable(
-                f"socket refused: {socket_path}", kind="connection_refused"
-            ) from exc
-        except OSError as exc:
-            if exc.errno == errno.EACCES:
-                raise DaemonUnavailable(
-                    f"connect failed: {exc}", kind="permission_denied"
-                ) from exc
-            raise DaemonUnavailable(
-                f"connect failed: {exc}", kind="connect_timeout"
-            ) from exc
-
+        _do_connect(sock, socket_path)
         sock.settimeout(read_timeout)
-        try:
-            sock.sendall(payload)
-            data = _recv_line(sock)
-        except (TimeoutError, socket.timeout) as exc:  # noqa: UP041
-            raise DaemonUnavailable(
-                "daemon read timeout", kind="connect_timeout"
-            ) from exc
-        except OSError as exc:
-            raise DaemonUnavailable(
-                f"socket I/O failed: {exc}", kind="connect_timeout"
-            ) from exc
+        data = _do_send_and_recv(sock, payload)
     finally:
         try:
             sock.close()
         except OSError:
             pass
 
-    if not data:
-        raise DaemonUnavailable("daemon returned no data", kind="protocol_error")
-
-    try:
-        envelope = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise DaemonUnavailable(
-            f"daemon returned invalid JSON: {exc}", kind="protocol_error"
-        ) from exc
-
-    if not isinstance(envelope, dict) or "ok" not in envelope:
-        raise DaemonUnavailable(
-            "daemon returned malformed envelope", kind="protocol_error"
-        )
+    envelope = _parse_envelope(data)
 
     if envelope["ok"] is True:
         result = envelope.get("result", {})

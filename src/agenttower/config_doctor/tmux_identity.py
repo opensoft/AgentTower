@@ -25,7 +25,9 @@ from dataclasses import dataclass
 
 from agenttower.config_doctor.sanitize import ENV_VALUE_CAP, sanitize_text
 
-_TMUX_PANE_RE = re.compile(r"^%[0-9]+$")
+# Use ``\d`` with ``re.ASCII`` to match the FR-009 / R-005 contract literally
+# (``[0-9]+``); the ASCII flag prevents \d from broadening to Unicode digits.
+_TMUX_PANE_RE = re.compile(r"^%\d+$", re.ASCII)
 
 
 @dataclass(frozen=True)

@@ -46,6 +46,16 @@ from agenttower.paths import Paths, ResolvedSocket, SocketSource
 MOUNTED_DEFAULT_PATH = Path("/run/agenttower/agenttowerd.sock")
 """R-002: the MVP in-container default mounted socket path."""
 
+# FR-002 closed-set ``<reason>`` tokens. These literals are part of the
+# stable CLI stderr contract and are referenced by name throughout the
+# validator and doctor checks; defining them as constants prevents drift
+# under refactor (locked by T009 + T024 spelling assertions).
+REASON_EMPTY = "value is empty"
+REASON_NOT_ABSOLUTE = "value is not absolute"
+REASON_NUL_BYTE = "value contains NUL byte"
+REASON_DOES_NOT_EXIST = "value does not exist"
+REASON_NOT_UNIX_SOCKET = "value is not a Unix socket"
+
 
 class SocketPathInvalid(Exception):
     """Raised when AGENTTOWER_SOCKET is set but fails the FR-002 validator.
@@ -60,11 +70,11 @@ class SocketPathInvalid(Exception):
     """
 
     REASONS = (
-        "value is empty",
-        "value is not absolute",
-        "value contains NUL byte",
-        "value does not exist",
-        "value is not a Unix socket",
+        REASON_EMPTY,
+        REASON_NOT_ABSOLUTE,
+        REASON_NUL_BYTE,
+        REASON_DOES_NOT_EXIST,
+        REASON_NOT_UNIX_SOCKET,
     )
 
     def __init__(self, reason: str):
@@ -84,19 +94,19 @@ def _validate_env_override(value: str) -> Path:
 
     stripped = value.strip()
     if not stripped:
-        raise SocketPathInvalid("value is empty")
+        raise SocketPathInvalid(REASON_EMPTY)
     if "\x00" in stripped:
-        raise SocketPathInvalid("value contains NUL byte")
+        raise SocketPathInvalid(REASON_NUL_BYTE)
     if not os.path.isabs(stripped):
-        raise SocketPathInvalid("value is not absolute")
+        raise SocketPathInvalid(REASON_NOT_ABSOLUTE)
 
     candidate = Path(stripped)
 
     # Apply exactly one os.readlink follow per FR-002 / R-001.
     # Per analyze finding A4: if the single readlink target is itself a symlink,
-    # the path fails with "value is not a Unix socket" — we do NOT follow a
-    # second symlink. This makes the "exactly one follow" rule load-bearing
-    # under operator-controlled symlink chains.
+    # the path fails with REASON_NOT_UNIX_SOCKET — we do NOT follow a second
+    # symlink. This makes the "exactly one follow" rule load-bearing under
+    # operator-controlled symlink chains.
     target_for_stat: Path = candidate
     try:
         if candidate.is_symlink():
@@ -107,15 +117,15 @@ def _validate_env_override(value: str) -> Path:
             # Reject second-level symlinks (A4 chained-symlink policy).
             try:
                 if link_target.is_symlink():
-                    raise SocketPathInvalid("value is not a Unix socket")
+                    raise SocketPathInvalid(REASON_NOT_UNIX_SOCKET)
             except OSError:
                 # is_symlink() raises on broken parent paths — treat as not a socket
-                raise SocketPathInvalid("value does not exist")
+                raise SocketPathInvalid(REASON_DOES_NOT_EXIST)
             target_for_stat = link_target
     except FileNotFoundError:
-        raise SocketPathInvalid("value does not exist")
+        raise SocketPathInvalid(REASON_DOES_NOT_EXIST)
     except OSError:
-        raise SocketPathInvalid("value does not exist")
+        raise SocketPathInvalid(REASON_DOES_NOT_EXIST)
 
     try:
         # Use lstat on the post-readlink target to enforce the "no second-level
@@ -124,13 +134,13 @@ def _validate_env_override(value: str) -> Path:
         # symlink-to-symlink chain fails before we ever stat the second link's
         # target.
         st = os.lstat(target_for_stat)
-    except FileNotFoundError:
-        raise SocketPathInvalid("value does not exist")
     except OSError:
-        raise SocketPathInvalid("value does not exist")
+        # FileNotFoundError is a subclass of OSError; both map to the same
+        # closed-set reason (REASON_DOES_NOT_EXIST).
+        raise SocketPathInvalid(REASON_DOES_NOT_EXIST)
 
     if not stat.S_ISSOCK(st.st_mode):
-        raise SocketPathInvalid("value is not a Unix socket")
+        raise SocketPathInvalid(REASON_NOT_UNIX_SOCKET)
 
     return candidate
 
@@ -154,7 +164,8 @@ def _mounted_default_is_reachable() -> bool:
                 return False
             path = link_target
         st = os.lstat(path)
-    except (FileNotFoundError, OSError):
+    except OSError:
+        # FileNotFoundError is a subclass of OSError; both fall through.
         return False
     return stat.S_ISSOCK(st.st_mode)
 

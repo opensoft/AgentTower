@@ -387,7 +387,7 @@ def _wait_for_spawned_daemon(
 
 
 def _status_command(args: argparse.Namespace) -> int:
-    paths, resolved = _resolve_socket_with_paths()
+    _, resolved = _resolve_socket_with_paths()
     try:
         result = send_request(
             resolved.path, "status", connect_timeout=1.0, read_timeout=1.0
@@ -677,17 +677,16 @@ def _scan_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    paths: Paths = resolve_paths()
     final_code = 0
     first_block = True
     if args.containers:
-        code = _run_container_scan(paths, args, first_block=first_block)
+        code = _run_container_scan(args, first_block=first_block)
         if code in (2, 3):
             return code
         final_code = _combine_scan_exit_codes(final_code, code)
         first_block = False
     if args.panes:
-        code = _run_pane_scan(paths, args, first_block=first_block)
+        code = _run_pane_scan(args, first_block=first_block)
         if code in (2, 3):
             return code
         final_code = _combine_scan_exit_codes(final_code, code)
@@ -707,7 +706,7 @@ def _combine_scan_exit_codes(current: int, new: int) -> int:
 
 
 def _run_container_scan(
-    paths: Paths, args: argparse.Namespace, *, first_block: bool
+    args: argparse.Namespace, *, first_block: bool
 ) -> int:
     # Resolve the socket inline so we honor AGENTTOWER_SOCKET / mounted-default
     # without changing the existing helper signature (preserves FEAT-003 test
@@ -754,7 +753,7 @@ def _run_container_scan(
 
 
 def _run_pane_scan(
-    paths: Paths, args: argparse.Namespace, *, first_block: bool
+    args: argparse.Namespace, *, first_block: bool
 ) -> int:
     # Resolve the socket inline (see _run_container_scan note above).
     _, resolved = _resolve_socket_with_paths()
@@ -830,7 +829,7 @@ def _parse_iso(text: str) -> "datetime":  # type: ignore[name-defined]
 
 
 def _list_containers_command(args: argparse.Namespace) -> int:
-    paths, resolved = _resolve_socket_with_paths()
+    _, resolved = _resolve_socket_with_paths()
     params: dict[str, Any] = {"active_only": bool(args.active_only)}
     try:
         result = send_request(
@@ -865,7 +864,7 @@ def _list_containers_command(args: argparse.Namespace) -> int:
 
 
 def _list_panes_command(args: argparse.Namespace) -> int:
-    paths, resolved = _resolve_socket_with_paths()
+    _, resolved = _resolve_socket_with_paths()
     params: dict[str, Any] = {
         "active_only": bool(args.active_only),
         "container": args.container,
