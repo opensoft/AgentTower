@@ -13,8 +13,11 @@ the round-trip.
 
 from __future__ import annotations
 
+import os
+import stat as _stat
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Literal
 
 from agenttower.config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
@@ -100,6 +103,39 @@ def check_socket_resolved(resolved: ResolvedSocket) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
+def _path_is_socket(path: Path) -> tuple[bool, bool]:
+    """Return ``(exists, is_socket)`` honoring exactly one ``os.readlink``
+    follow consistent with FR-002 / R-001 / ``socket_resolve.py`` semantics.
+
+    * ``(False, False)`` — path does not exist (or is unreadable).
+    * ``(True, False)`` — path exists but is not an ``S_ISSOCK`` target
+      (regular file, directory, broken symlink chain, etc.).
+    * ``(True, True)`` — path exists and resolves to a Unix socket after
+      at most one symlink follow.
+    """
+
+    target = path
+    try:
+        if path.is_symlink():
+            link_target_str = os.readlink(path)
+            link_target = Path(link_target_str)
+            if not link_target.is_absolute():
+                link_target = path.parent / link_target
+            # Reject second-level symlink chains, matching socket_resolve.py.
+            try:
+                if link_target.is_symlink():
+                    return (True, False)
+            except OSError:
+                return (False, False)
+            target = link_target
+        st = os.lstat(target)
+    except FileNotFoundError:
+        return (False, False)
+    except OSError:
+        return (False, False)
+    return (True, _stat.S_ISSOCK(st.st_mode))
+
+
 def check_socket_reachable(
     resolved: ResolvedSocket,
 ) -> tuple[CheckResult, dict[str, Any] | None]:
@@ -108,7 +144,32 @@ def check_socket_reachable(
     ``socket_reachable`` is transport-only: it reports ``pass`` whenever the
     daemon returns any well-formed frame, including a structured
     ``DaemonError`` envelope. Payload semantics are owned by ``daemon_status``.
+
+    Fast pre-flight: if the resolved path exists but is not a Unix socket
+    (e.g., a regular file or directory at the host-default path that the
+    resolver cannot S_ISSOCK-validate), emit ``sub_code="socket_not_unix"``
+    rather than letting the connect attempt fail as a generic timeout. The
+    resolver pre-validates ``env_override`` and ``mounted_default``; this
+    gate covers ``host_default``, where the resolver returns the path
+    unconditionally.
     """
+
+    exists, is_socket = _path_is_socket(resolved.path)
+    if exists and not is_socket:
+        return (
+            CheckResult(
+                code="socket_reachable",
+                status="fail",
+                source="round_trip",
+                details=_bound_details(f"socket_not_unix: {resolved.path}"),
+                actionable_message=_bound_actionable(
+                    f"resolved path exists but is not a Unix socket: "
+                    f"{resolved.path}"
+                ),
+                sub_code="socket_not_unix",
+            ),
+            None,
+        )
 
     try:
         result = send_request(

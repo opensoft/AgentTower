@@ -64,15 +64,6 @@ class CgroupMultiCandidate:
 DetectResult = Union[IdentityCandidate, CgroupMultiCandidate, None]
 
 
-# Build a regex that captures the "last segment" of any path component starting
-# with one of the FR-004 prefixes. Groups: (prefix-token-without-slash, id-tail).
-_CGROUP_LINE_PATTERN = re.compile(
-    r"(?:" + "|".join(re.escape(p[:-1]) for p in CGROUP_PREFIXES) + r")"
-    r"[-/]"  # the slash that the prefix token's trailing slash matched, OR a hyphen used by systemd-mangled names like docker-<id>.scope
-    r"([0-9A-Za-z][0-9A-Za-z._-]*)"
-)
-
-
 def _resolve_proc_root(proc_root: str | None) -> Path:
     if proc_root is not None:
         return Path(proc_root)

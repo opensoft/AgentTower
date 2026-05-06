@@ -22,7 +22,6 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
 
 from agenttower.config_doctor.sanitize import ENV_VALUE_CAP, sanitize_text
 

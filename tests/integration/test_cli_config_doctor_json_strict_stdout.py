@@ -160,8 +160,26 @@ class TestJsonStdoutDaemonDown:
 
 
 # ---------------------------------------------------------------------------
-# No mount — AGENTTOWER_SOCKET points to a path that does not exist
+# No mount — simulated bench container with neither AGENTTOWER_SOCKET nor a
+# bind-mounted host socket; the developer forgot the `-v` mount. The
+# resolver tries the mounted-default path, falls through to host_default,
+# and the doctor still emits one canonical JSON object on stdout with
+# stderr empty.
 # ---------------------------------------------------------------------------
+
+
+def _pin_container_context_no_mount(env, tmp_path):
+    """Pin runtime detection to ContainerContext via fake_proc and ensure
+    the host_default socket is absent (no daemon spawned)."""
+    fake_root = tmp_path / "fake-container-no-mount"
+    (fake_root / "proc" / "self").mkdir(parents=True)
+    (fake_root / "etc").mkdir(parents=True)
+    (fake_root / "proc" / "self" / "cgroup").write_text(
+        "0::/docker/abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567\n"
+    )
+    (fake_root / ".dockerenv").write_text("")
+    env["AGENTTOWER_TEST_PROC_ROOT"] = str(fake_root)
+    env.setdefault("AGENTTOWER_TEST_DOCKER_FAKE", "1")
 
 
 class TestJsonStdoutNoMount:
@@ -169,20 +187,28 @@ class TestJsonStdoutNoMount:
         self, env, tmp_path
     ):
         run_config_init(env)
-        _pin_host_context(env, tmp_path)
+        _pin_container_context_no_mount(env, tmp_path)
         for var in ("TMUX", "TMUX_PANE", "AGENTTOWER_CONTAINER_ID"):
             env.pop(var, None)
-        # Point the override at a path that exists as a directory, so the
-        # *resolver* succeeds (it's a valid absolute path) but the *transport*
-        # fails — exercising the daemon-down code path with an explicit path.
-        missing_socket = resolved_paths(tmp_path)["socket"]
-        # Don't start the daemon; ensure the socket file does not exist.
-        assert not missing_socket.exists()
+        env.pop("AGENTTOWER_SOCKET", None)
+        # Don't start the daemon — the host_default socket does not exist;
+        # the mounted-default `/run/agenttower/agenttowerd.sock` is also
+        # not present in this test environment. socket_reachable will
+        # surface socket_missing on whichever the resolver picks.
+        host_default_socket = resolved_paths(tmp_path)["socket"]
+        assert not host_default_socket.exists()
 
         proc = _run_doctor_json(env)
         envelope = json.loads(proc.stdout)
         assert isinstance(envelope, dict)
+        assert "summary" in envelope
+        assert "checks" in envelope
         assert proc.stderr == "", repr(proc.stderr)
+        # socket_reachable should fail with the `socket_missing` sub-code
+        # (the path the resolver picked does not exist).
+        socket_reachable = envelope["checks"]["socket_reachable"]
+        assert socket_reachable["status"] == "fail"
+        assert socket_reachable["sub_code"] == "socket_missing"
 
 
 # ---------------------------------------------------------------------------

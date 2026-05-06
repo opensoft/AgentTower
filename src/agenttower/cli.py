@@ -220,16 +220,21 @@ def _config_doctor(args: argparse.Namespace) -> int:
 
 
 def _ensure_daemon(args: argparse.Namespace) -> int:
-    paths, resolved = _resolve_socket_with_paths()
+    # ensure-daemon manages the host daemon, which always binds at the
+    # FEAT-001 host-default socket path. AGENTTOWER_SOCKET only redirects
+    # *client* connect targets; threading it through the daemon-lifecycle
+    # path would route the readiness ping at one path and spawn the daemon
+    # at another, which is the pre-fix behavior the PR-6 review caught.
+    # We still call _resolve_socket_with_paths() so a malformed
+    # AGENTTOWER_SOCKET fires the FR-002 pre-flight (exit 1) — but the
+    # resolved path is intentionally discarded for routing.
+    paths, _ = _resolve_socket_with_paths()
     state_dir = paths.state_db.parent
     logs_dir = paths.logs_dir
     lock_path = state_dir / LOCK_FILENAME
-    # ensure-daemon spawns the host daemon; the daemon binds at the host
-    # default. AGENTTOWER_SOCKET overrides ONLY the client's ping target so
-    # it sees whether *that* socket is reachable.
     socket_path = paths.socket
 
-    preflight = _ensure_daemon_preflight(paths, resolved, json_mode=args.json)
+    preflight = _ensure_daemon_preflight(paths, json_mode=args.json)
     if preflight is not None:
         return preflight
 
@@ -251,9 +256,7 @@ def _ensure_daemon(args: argparse.Namespace) -> int:
     )
 
 
-def _ensure_daemon_preflight(
-    paths: Paths, resolved: ResolvedSocket, *, json_mode: bool
-) -> int | None:
+def _ensure_daemon_preflight(paths: Paths, *, json_mode: bool) -> int | None:
     state_dir = paths.state_db.parent
 
     if not paths.state_db.exists():
@@ -263,12 +266,11 @@ def _ensure_daemon_preflight(
         )
         return 1
 
-    # Ping the resolved socket so AGENTTOWER_SOCKET overrides which socket
-    # the readiness check inspects; the daemon's own bind path is unchanged.
-    pre_existing = _try_ping(resolved.path)
+    # Ping the host-default socket — the only path the daemon binds at.
+    pre_existing = _try_ping(paths.socket)
     if pre_existing is not None:
         return _print_ready(
-            pre_existing, resolved.path, state_dir, json_mode=json_mode, started=False
+            pre_existing, paths.socket, state_dir, json_mode=json_mode, started=False
         )
 
     try:
