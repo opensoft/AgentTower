@@ -95,6 +95,39 @@ def select_known_container_ids(conn: sqlite3.Connection) -> set[str]:
     }
 
 
+def select_active_containers_with_user(
+    conn: sqlite3.Connection,
+) -> list[tuple[str, str, str | None]]:
+    """Return ``(container_id, name, config_user)`` for every active container.
+
+    Read-only helper used by FEAT-004 ``PaneDiscoveryService`` at scan start
+    (FR-002 / R-005). The list order is deterministic by ``container_id`` so
+    test assertions on the per-container scan order are stable.
+    """
+    rows = conn.execute(
+        "SELECT container_id, name, config_user FROM containers "
+        "WHERE active = 1 ORDER BY container_id ASC"
+    ).fetchall()
+    return [(r[0], r[1], r[2]) for r in rows]
+
+
+def select_inactive_container_ids_with_panes(
+    conn: sqlite3.Connection,
+) -> set[str]:
+    """Return the FR-009 cascade set: ``container_id`` values whose
+    ``containers.active = 0`` AND that have at least one row in ``panes``.
+
+    Used by FEAT-004 to flip stale pane rows to inactive without invoking
+    any ``docker exec`` against the container.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT containers.container_id FROM containers "
+        "INNER JOIN panes ON panes.container_id = containers.container_id "
+        "WHERE containers.active = 0"
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
 def upsert_container(
     conn: sqlite3.Connection,
     *,

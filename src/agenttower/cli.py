@@ -509,10 +509,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     scan = subparsers.add_parser(
         "scan",
-        help="scan host resources (FEAT-003: --containers)",
-        description="scan host resources (FEAT-003: --containers)",
+        help="scan host resources (FEAT-003: --containers; FEAT-004: --panes)",
+        description="scan host resources (FEAT-003: --containers; FEAT-004: --panes)",
     )
     scan.add_argument("--containers", action="store_true", help="scan Docker containers")
+    scan.add_argument(
+        "--panes",
+        action="store_true",
+        help="scan tmux panes inside active bench containers",
+    )
     scan.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     scan.set_defaults(_handler=_scan_command)
 
@@ -529,6 +534,24 @@ def _build_parser() -> argparse.ArgumentParser:
     list_containers.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     list_containers.set_defaults(_handler=_list_containers_command)
 
+    list_panes = subparsers.add_parser(
+        "list-panes",
+        help="list persisted tmux pane records",
+        description="list persisted tmux pane records",
+    )
+    list_panes.add_argument(
+        "--active-only",
+        action="store_true",
+        help="only return currently-active panes",
+    )
+    list_panes.add_argument(
+        "--container",
+        default=None,
+        help="filter by exact container id (64-char hex) or container name",
+    )
+    list_panes.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    list_panes.set_defaults(_handler=_list_panes_command)
+
     return parser
 
 
@@ -538,13 +561,44 @@ def _print_subusage_and_exit(parser: argparse.ArgumentParser) -> int:
 
 
 def _scan_command(args: argparse.Namespace) -> int:
-    if not args.containers:
+    if not args.containers and not args.panes:
         print(
-            "error: scan requires a target flag (e.g. --containers)",
+            "error: scan requires a target flag (e.g. --containers, --panes)",
             file=sys.stderr,
         )
         return 1
     paths: Paths = resolve_paths()
+    final_code = 0
+    first_block = True
+    if args.containers:
+        code = _run_container_scan(paths, args, first_block=first_block)
+        if code in (2, 3):
+            return code
+        final_code = _combine_scan_exit_codes(final_code, code)
+        first_block = False
+    if args.panes:
+        code = _run_pane_scan(paths, args, first_block=first_block)
+        if code in (2, 3):
+            return code
+        final_code = _combine_scan_exit_codes(final_code, code)
+    return final_code
+
+
+def _combine_scan_exit_codes(current: int, new: int) -> int:
+    """Apply FEAT scan precedence for combined runs.
+
+    Daemon-unavailable / daemon-error (2/3) are handled by the caller and
+    short-circuit immediately; among successful/degraded scan results we keep
+    the degraded exit code when any step degraded.
+    """
+    if current == 5 or new == 5:
+        return 5
+    return 0
+
+
+def _run_container_scan(
+    paths: Paths, args: argparse.Namespace, *, first_block: bool
+) -> int:
     try:
         result = send_request(
             paths.socket, "scan_containers", connect_timeout=1.0, read_timeout=15.0
@@ -564,6 +618,8 @@ def _scan_command(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps({"ok": True, "result": result}))
     else:
+        if not first_block:
+            print()  # blank line between summary blocks
         try:
             started = _parse_iso(result["started_at"])
             completed = _parse_iso(result["completed_at"])
@@ -579,10 +635,76 @@ def _scan_command(args: argparse.Namespace) -> int:
         if status == "degraded":
             print(f"error: {result.get('error_message')}", file=sys.stderr)
             print(f"code: {result.get('error_code')}", file=sys.stderr)
+    return 5 if status == "degraded" else 0
 
-    if status == "degraded":
-        return 5
-    return 0
+
+def _run_pane_scan(
+    paths: Paths, args: argparse.Namespace, *, first_block: bool
+) -> int:
+    try:
+        result = send_request(
+            paths.socket, "scan_panes", connect_timeout=1.0, read_timeout=30.0
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        if args.json:
+            print(
+                json.dumps(
+                    {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+                )
+            )
+        else:
+            print(f"error: {exc.message}", file=sys.stderr)
+            print(f"code: {exc.code}", file=sys.stderr)
+        return 3
+
+    status = result.get("status", "ok")
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        if not first_block:
+            print()
+        try:
+            started = _parse_iso(result["started_at"])
+            completed = _parse_iso(result["completed_at"])
+            duration_ms = max(0, int((completed - started).total_seconds() * 1000))
+        except (KeyError, ValueError):
+            duration_ms = 0
+        print(f"scan_id={result.get('scan_id')}")
+        print(f"status={status}")
+        print(f"containers_scanned={result.get('containers_scanned')}")
+        print(f"sockets_scanned={result.get('sockets_scanned')}")
+        print(f"panes_seen={result.get('panes_seen')}")
+        print(f"panes_newly_active={result.get('panes_newly_active')}")
+        # Wire field is `panes_reconciled_to_inactive`; the human view
+        # uses the shorter `panes_reconciled_inactive` (data-model §6 note 5).
+        print(
+            f"panes_reconciled_inactive={result.get('panes_reconciled_to_inactive')}"
+        )
+        print(
+            f"containers_skipped_inactive={result.get('containers_skipped_inactive')}"
+        )
+        print(
+            f"containers_tmux_unavailable={result.get('containers_tmux_unavailable')}"
+        )
+        print(f"duration_ms={duration_ms}")
+        if status == "degraded":
+            print(f"error: {result.get('error_message')}", file=sys.stderr)
+            print(f"code: {result.get('error_code')}", file=sys.stderr)
+            for detail in (result.get("error_details") or [])[:10]:
+                socket = detail.get("tmux_socket_path")
+                socket_label = f" [socket={socket}]" if socket else ""
+                print(
+                    f"detail: {detail.get('container_id')}{socket_label} "
+                    f"{detail.get('error_code')}: {detail.get('error_message')}",
+                    file=sys.stderr,
+                )
+            extra = max(0, len(result.get("error_details") or []) - 10)
+            if extra:
+                print(f"detail: ... ({extra} more)", file=sys.stderr)
+    return 5 if status == "degraded" else 0
 
 
 def _parse_iso(text: str) -> "datetime":  # type: ignore[name-defined]
@@ -622,6 +744,67 @@ def _list_containers_command(args: argparse.Namespace) -> int:
                 f"{active}\t{c.get('id')}\t{c.get('name')}\t{c.get('image')}\t"
                 f"{c.get('status')}\t{c.get('last_scanned_at')}"
             )
+    return 0
+
+
+def _list_panes_command(args: argparse.Namespace) -> int:
+    paths: Paths = resolve_paths()
+    params: dict[str, Any] = {
+        "active_only": bool(args.active_only),
+        "container": args.container,
+    }
+    try:
+        result = send_request(
+            paths.socket,
+            "list_panes",
+            params=params,
+            connect_timeout=1.0,
+            read_timeout=1.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        if args.json:
+            print(
+                json.dumps(
+                    {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+                )
+            )
+        else:
+            print(f"error: {exc.message}", file=sys.stderr)
+            print(f"code: {exc.code}", file=sys.stderr)
+        return 3
+
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+        return 0
+    print(
+        "ACTIVE\tFOCUSED\tCONTAINER\tSOCKET\tSESSION\tW\tP\tPANE_ID\tPID\tTTY\tCOMMAND\tCWD\tLAST_SCANNED"
+    )
+    for pane in result.get("panes", []):
+        active = "1" if pane.get("active") else "0"
+        focused = "1" if pane.get("pane_active") else "0"
+        print(
+            "\t".join(
+                str(value)
+                for value in (
+                    active,
+                    focused,
+                    pane.get("container_name"),
+                    pane.get("tmux_socket_path"),
+                    pane.get("tmux_session_name"),
+                    pane.get("tmux_window_index"),
+                    pane.get("tmux_pane_index"),
+                    pane.get("tmux_pane_id"),
+                    pane.get("pane_pid"),
+                    pane.get("pane_tty"),
+                    pane.get("pane_current_command"),
+                    pane.get("pane_current_path"),
+                    pane.get("last_scanned_at"),
+                )
+            )
+        )
     return 0
 
 

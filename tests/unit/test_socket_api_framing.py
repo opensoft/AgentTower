@@ -9,7 +9,7 @@ import pytest
 from agenttower.socket_api import errors
 
 
-def test_closed_code_set_contains_feat002_and_feat003_codes() -> None:
+def test_closed_code_set_contains_feat002_through_feat004_codes() -> None:
     # FEAT-002 codes (FR-022 backward-compat).
     feat002 = {
         errors.BAD_JSON,
@@ -29,8 +29,20 @@ def test_closed_code_set_contains_feat002_and_feat003_codes() -> None:
         errors.DOCKER_MALFORMED,
     }
     assert feat003 <= errors.CLOSED_CODE_SET
+    # FEAT-004 additions (research R-011 / FR-019).
+    feat004 = {
+        errors.TMUX_UNAVAILABLE,
+        errors.TMUX_NO_SERVER,
+        errors.SOCKET_DIR_MISSING,
+        errors.SOCKET_UNREADABLE,
+        errors.DOCKER_EXEC_FAILED,
+        errors.DOCKER_EXEC_TIMEOUT,
+        errors.OUTPUT_MALFORMED,
+        errors.BENCH_USER_UNRESOLVED,
+    }
+    assert feat004 <= errors.CLOSED_CODE_SET
     # No surprise codes beyond the documented sets.
-    assert errors.CLOSED_CODE_SET == feat002 | feat003
+    assert errors.CLOSED_CODE_SET == feat002 | feat003 | feat004
 
 
 @pytest.mark.parametrize(

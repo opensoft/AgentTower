@@ -23,6 +23,16 @@ DOCKER_TIMEOUT: Final[str] = "docker_timeout"
 DOCKER_FAILED: Final[str] = "docker_failed"
 DOCKER_MALFORMED: Final[str] = "docker_malformed"
 
+# FEAT-004 additions (research R-011).
+TMUX_UNAVAILABLE: Final[str] = "tmux_unavailable"
+TMUX_NO_SERVER: Final[str] = "tmux_no_server"
+SOCKET_DIR_MISSING: Final[str] = "socket_dir_missing"
+SOCKET_UNREADABLE: Final[str] = "socket_unreadable"
+DOCKER_EXEC_FAILED: Final[str] = "docker_exec_failed"
+DOCKER_EXEC_TIMEOUT: Final[str] = "docker_exec_timeout"
+OUTPUT_MALFORMED: Final[str] = "output_malformed"
+BENCH_USER_UNRESOLVED: Final[str] = "bench_user_unresolved"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
     {
         BAD_JSON,
@@ -36,6 +46,14 @@ CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
         DOCKER_TIMEOUT,
         DOCKER_FAILED,
         DOCKER_MALFORMED,
+        TMUX_UNAVAILABLE,
+        TMUX_NO_SERVER,
+        SOCKET_DIR_MISSING,
+        SOCKET_UNREADABLE,
+        DOCKER_EXEC_FAILED,
+        DOCKER_EXEC_TIMEOUT,
+        OUTPUT_MALFORMED,
+        BENCH_USER_UNRESOLVED,
     }
 )
 

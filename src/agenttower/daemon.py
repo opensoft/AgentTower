@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .config import load_containers_block
+from .discovery.pane_service import PaneDiscoveryService
 from .discovery.service import DiscoveryService
 from .docker import FakeDockerAdapter
+from .tmux import FakeTmuxAdapter, SubprocessTmuxAdapter, TmuxAdapter
 from .paths import Paths, resolve_paths
 from .socket_api import lifecycle
 from .socket_api.lifecycle import (
@@ -130,12 +132,45 @@ def _build_discovery_service(
     return service, conn
 
 
+def _resolve_tmux_adapter() -> TmuxAdapter | None:
+    """Return the TmuxAdapter for this daemon process (FEAT-004 R-012).
+
+    ``AGENTTOWER_TEST_TMUX_FAKE`` set → load ``FakeTmuxAdapter`` from the
+    pointed-to JSON fixture. Unset → return the production
+    ``SubprocessTmuxAdapter``.
+    """
+    fake_path = os.environ.get("AGENTTOWER_TEST_TMUX_FAKE")
+    if fake_path:
+        return FakeTmuxAdapter.from_path(fake_path)
+    return SubprocessTmuxAdapter()
+
+
+def _build_pane_service(
+    paths: Paths, logger: LifecycleLogger
+) -> tuple[PaneDiscoveryService | None, sqlite3.Connection | None]:
+    adapter = _resolve_tmux_adapter()
+    if adapter is None:
+        return None, None
+    conn = sqlite3.connect(
+        str(paths.state_db), isolation_level=None, check_same_thread=False
+    )
+    service = PaneDiscoveryService(
+        connection=conn,
+        adapter=adapter,
+        list_connection_factory=lambda: sqlite3.connect(str(paths.state_db)),
+        events_file=paths.events_file,
+        lifecycle_logger=logger,
+    )
+    return service, conn
+
+
 def _build_context(
     *,
     paths: Paths,
     state_dir,
     shutdown_event: threading.Event,
     discovery_service: DiscoveryService | None,
+    pane_service: PaneDiscoveryService | None,
     logger: LifecycleLogger,
 ) -> DaemonContext:
     return DaemonContext(
@@ -147,6 +182,7 @@ def _build_context(
         schema_version=_read_schema_version(paths),
         shutdown_requested=shutdown_event,
         discovery_service=discovery_service,
+        pane_service=pane_service,
         events_file=paths.events_file,
         lifecycle_logger=logger,
     )
@@ -237,6 +273,7 @@ def _cleanup_run(
     server: ControlServer | None,
     paths: Paths,
     scan_db_conn: sqlite3.Connection | None,
+    pane_db_conn: sqlite3.Connection | None,
     pid_path,
     logger: LifecycleLogger | None,
     lock_fd: int,
@@ -254,6 +291,11 @@ def _cleanup_run(
     if scan_db_conn is not None:
         try:
             scan_db_conn.close()
+        except Exception:
+            pass
+    if pane_db_conn is not None:
+        try:
+            pane_db_conn.close()
         except Exception:
             pass
     lifecycle.remove_pid_file(pid_path)
@@ -289,6 +331,7 @@ def _run(args: argparse.Namespace) -> int:
     logger: LifecycleLogger | None = None
     server: ControlServer | None = None
     scan_db_conn: sqlite3.Connection | None = None
+    pane_db_conn: sqlite3.Connection | None = None
     exit_code = 0
     try:
         if not _assert_runtime_paths_safe(
@@ -312,11 +355,13 @@ def _run(args: argparse.Namespace) -> int:
 
         shutdown_event = threading.Event()
         discovery_service, scan_db_conn = _build_discovery_service(paths, logger)
+        pane_service, pane_db_conn = _build_pane_service(paths, logger)
         ctx = _build_context(
             paths=paths,
             state_dir=state_dir,
             shutdown_event=shutdown_event,
             discovery_service=discovery_service,
+            pane_service=pane_service,
             logger=logger,
         )
 
@@ -333,6 +378,7 @@ def _run(args: argparse.Namespace) -> int:
             server=server,
             paths=paths,
             scan_db_conn=scan_db_conn,
+            pane_db_conn=pane_db_conn,
             pid_path=pid_path,
             logger=logger,
             lock_fd=lock_fd,
