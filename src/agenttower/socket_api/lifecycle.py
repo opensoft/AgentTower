@@ -179,6 +179,11 @@ EVENT_DAEMON_SHUTDOWN = "daemon_shutdown"
 EVENT_DAEMON_EXITED = "daemon_exited"
 EVENT_ERROR_FATAL = "error_fatal"
 
+# FEAT-003 additions (research R-015).
+EVENT_SCAN_STARTED = "scan_started"
+EVENT_SCAN_COMPLETED = "scan_completed"
+EVENT_SCAN_JSONL_FAILED = "scan_jsonl_failed"
+
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
         EVENT_DAEMON_STARTING,
@@ -187,6 +192,9 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         EVENT_DAEMON_SHUTDOWN,
         EVENT_DAEMON_EXITED,
         EVENT_ERROR_FATAL,
+        EVENT_SCAN_STARTED,
+        EVENT_SCAN_COMPLETED,
+        EVENT_SCAN_JSONL_FAILED,
     }
 )
 

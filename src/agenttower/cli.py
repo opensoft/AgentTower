@@ -27,6 +27,10 @@ LOG_FILENAME = "agenttowerd.log"
 READY_BUDGET_SECONDS = 2.0
 READY_POLL_INTERVALS = (0.01, 0.05, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2)
 JSON_LINE_HELP = "emit one JSON line on stdout"
+DAEMON_UNAVAILABLE_MESSAGE = (
+    "error: daemon is not running or socket is unreachable: "
+    "try `agenttower ensure-daemon`"
+)
 
 
 def _namespace_root(any_member: Path) -> Path:
@@ -288,11 +292,7 @@ def _status_command(args: argparse.Namespace) -> int:
             paths.socket, "status", connect_timeout=1.0, read_timeout=1.0
         )
     except DaemonUnavailable:
-        print(
-            "error: daemon is not running or socket is unreachable: "
-            "try `agenttower ensure-daemon`",
-            file=sys.stderr,
-        )
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
         return 2
     except DaemonError as exc:
         print(f"error: {exc.message}", file=sys.stderr)
@@ -507,11 +507,121 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     stop_daemon.set_defaults(_handler=_stop_daemon)
 
+    scan = subparsers.add_parser(
+        "scan",
+        help="scan host resources (FEAT-003: --containers)",
+        description="scan host resources (FEAT-003: --containers)",
+    )
+    scan.add_argument("--containers", action="store_true", help="scan Docker containers")
+    scan.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    scan.set_defaults(_handler=_scan_command)
+
+    list_containers = subparsers.add_parser(
+        "list-containers",
+        help="list persisted bench-container records",
+        description="list persisted bench-container records",
+    )
+    list_containers.add_argument(
+        "--active-only",
+        action="store_true",
+        help="only return currently-active containers",
+    )
+    list_containers.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    list_containers.set_defaults(_handler=_list_containers_command)
+
     return parser
 
 
 def _print_subusage_and_exit(parser: argparse.ArgumentParser) -> int:
     parser.print_help()
+    return 0
+
+
+def _scan_command(args: argparse.Namespace) -> int:
+    if not args.containers:
+        print(
+            "error: scan requires a target flag (e.g. --containers)",
+            file=sys.stderr,
+        )
+        return 1
+    paths: Paths = resolve_paths()
+    try:
+        result = send_request(
+            paths.socket, "scan_containers", connect_timeout=1.0, read_timeout=15.0
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": {"code": exc.code, "message": exc.message}}))
+        else:
+            print(f"error: {exc.message}", file=sys.stderr)
+            print(f"code: {exc.code}", file=sys.stderr)
+        return 3
+
+    status = result.get("status", "ok")
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        try:
+            started = _parse_iso(result["started_at"])
+            completed = _parse_iso(result["completed_at"])
+            duration_ms = max(0, int((completed - started).total_seconds() * 1000))
+        except (KeyError, ValueError):
+            duration_ms = 0
+        print(f"scan_id={result.get('scan_id')}")
+        print(f"status={status}")
+        print(f"matched={result.get('matched_count')}")
+        print(f"inactive_reconciled={result.get('inactive_reconciled_count')}")
+        print(f"ignored={result.get('ignored_count')}")
+        print(f"duration_ms={duration_ms}")
+        if status == "degraded":
+            print(f"error: {result.get('error_message')}", file=sys.stderr)
+            print(f"code: {result.get('error_code')}", file=sys.stderr)
+
+    if status == "degraded":
+        return 5
+    return 0
+
+
+def _parse_iso(text: str) -> "datetime":  # type: ignore[name-defined]
+    from datetime import datetime as _dt
+    return _dt.fromisoformat(text)
+
+
+def _list_containers_command(args: argparse.Namespace) -> int:
+    paths: Paths = resolve_paths()
+    params: dict[str, Any] = {"active_only": bool(args.active_only)}
+    try:
+        result = send_request(
+            paths.socket,
+            "list_containers",
+            params=params,
+            connect_timeout=1.0,
+            read_timeout=1.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": {"code": exc.code, "message": exc.message}}))
+        else:
+            print(f"error: {exc.message}", file=sys.stderr)
+            print(f"code: {exc.code}", file=sys.stderr)
+        return 3
+
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        print("ACTIVE\tID\tNAME\tIMAGE\tSTATUS\tLAST_SCANNED")
+        for c in result.get("containers", []):
+            active = "1" if c.get("active") else "0"
+            print(
+                f"{active}\t{c.get('id')}\t{c.get('name')}\t{c.get('image')}\t"
+                f"{c.get('status')}\t{c.get('last_scanned_at')}"
+            )
     return 0
 
 

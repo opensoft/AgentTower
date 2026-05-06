@@ -1,0 +1,360 @@
+# Phase 1 Data Model: Bench Container Discovery
+
+**Branch**: `003-bench-container-discovery` | **Date**: 2026-05-05
+
+This document is the canonical reference for FEAT-003 entities,
+SQLite schema, and state transitions. Anything here overrides the
+informal entity descriptions in spec.md.
+
+---
+
+## 1. Filesystem footprint
+
+FEAT-003 adds **no new files**. Two existing FEAT-001 paths gain new
+behavior:
+
+| Path                                                | Read by FEAT-003 | Written by FEAT-003 |
+| --------------------------------------------------- | ---------------- | ------------------- |
+| `<STATE_DIR>/agenttower.sqlite3`                    | yes (containers, container_scans, schema_version) | yes (migration v1→v2; per-scan inserts/updates) |
+| `<STATE_DIR>/events.jsonl`                          | no               | yes (one line per *degraded* scan; nothing on healthy scans) |
+| `<LOGS_DIR>/agenttowerd.log`                        | no               | yes (two new event tokens: `scan_started`, `scan_completed`) |
+| `<CONFIG_DIR>/config.toml`                          | yes (optional `[containers]` block) | no |
+| `<STATE_DIR>/agenttowerd.sock`                      | served on        | no                  |
+| `<STATE_DIR>/agenttowerd.{pid,lock}`                | no               | no                  |
+
+No new directories are created. Modes inherited from FEAT-001:
+parent dirs `0700`, files `0600`.
+
+---
+
+## 2. SQLite schema (v2)
+
+FEAT-003 bumps `CURRENT_SCHEMA_VERSION` from `1` to `2`. The
+migration adds two tables and touches no existing table. The
+migration runner lives in `state/schema.py` and applies pending
+migrations under one transaction; rerunning is idempotent.
+
+### 2.1 Table `containers`
+
+```sql
+CREATE TABLE IF NOT EXISTS containers (
+    container_id      TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    image             TEXT NOT NULL,
+    status            TEXT NOT NULL,
+    labels_json       TEXT NOT NULL DEFAULT '{}',
+    mounts_json       TEXT NOT NULL DEFAULT '[]',
+    inspect_json      TEXT NOT NULL DEFAULT '{}',
+    config_user       TEXT,
+    working_dir       TEXT,
+    active            INTEGER NOT NULL CHECK(active IN (0, 1)),
+    first_seen_at     TEXT NOT NULL,
+    last_scanned_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS containers_active_lastscan
+    ON containers(active DESC, last_scanned_at DESC, container_id ASC);
+```
+
+| Column            | Type                | Notes |
+| ----------------- | ------------------- | ----- |
+| `container_id`    | TEXT (full id)      | Primary key. Full Docker id (no `--no-trunc` truncation). On id reuse the row is overwritten in place; `first_seen_at` is preserved. |
+| `name`            | TEXT                | Stripped of any leading `/`. Always populated. |
+| `image`           | TEXT                | From `Config.Image`. |
+| `status`          | TEXT                | From `State.Status`. Verbatim Docker text. |
+| `labels_json`     | TEXT (JSON object)  | Empty object when Docker reports `null`. |
+| `mounts_json`     | TEXT (JSON array)   | Each element: `{source, target, type, mode, rw}`. Empty array when Docker reports `null`. |
+| `inspect_json`    | TEXT (JSON object)  | Normalized identity bundle: `{config_user, working_dir, env_keys: [allowlisted names only], full_status}`. Raw inspect JSON, raw `HostConfig`, and non-allowlisted environment variables are never stored. |
+| `config_user`     | TEXT (nullable)     | Convenience extract of `inspect_json.config_user`. |
+| `working_dir`     | TEXT (nullable)     | Convenience extract of `inspect_json.working_dir`. |
+| `active`          | INTEGER (0/1)       | `1` when the container appeared as running in the most recent successful scan; `0` when reconciled away. |
+| `first_seen_at`   | TEXT (ISO-8601 UTC) | Set on insert; never updated. |
+| `last_scanned_at` | TEXT (ISO-8601 UTC) | Updated on every scan that observed this container (including inspect-failure path per FR-026). |
+
+Timestamps: ISO-8601 with offset, microsecond precision, UTC,
+matching FEAT-002's `status.start_time_utc` formatting.
+
+### 2.2 Table `container_scans`
+
+```sql
+CREATE TABLE IF NOT EXISTS container_scans (
+    scan_id                    TEXT PRIMARY KEY,
+    started_at                 TEXT NOT NULL,
+    completed_at               TEXT NOT NULL,
+    status                     TEXT NOT NULL CHECK(status IN ('ok', 'degraded')),
+    matched_count              INTEGER NOT NULL,
+    inactive_reconciled_count  INTEGER NOT NULL,
+    ignored_count              INTEGER NOT NULL,
+    error_code                 TEXT,
+    error_message              TEXT,
+    error_details_json         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS container_scans_started
+    ON container_scans(started_at DESC);
+```
+
+| Column                       | Type                | Notes |
+| ---------------------------- | ------------------- | ----- |
+| `scan_id`                    | TEXT (UUID4)        | Generated by the daemon at scan start. Returned to the caller. |
+| `started_at`                 | TEXT (ISO-8601 UTC) | Wall-clock time the scan acquired the mutex and began. |
+| `completed_at`               | TEXT (ISO-8601 UTC) | Wall-clock time of the SQLite commit. |
+| `status`                     | TEXT                | `'ok'` when config validation succeeds, `docker ps` succeeds, every parseable running row is classified, and every matching candidate inspects cleanly; `'degraded'` otherwise. |
+| `matched_count`              | INTEGER             | Per-scan count of parseable running `docker ps` rows whose normalized names matched the current rule, including matching candidates whose inspect failed. |
+| `inactive_reconciled_count`  | INTEGER             | Per-scan count of rows transitioned from `active=1` to `active=0`, excluding rows that were already inactive. |
+| `ignored_count`              | INTEGER             | Per-scan count of parseable running containers reported by `docker ps` but not matched by the current rule. |
+| `error_code`                 | TEXT (nullable)     | Closed-set token (`docker_unavailable`, `docker_permission_denied`, `docker_timeout`, `docker_failed`, `docker_malformed`, `config_invalid`). NULL on healthy scans. |
+| `error_message`              | TEXT (nullable)     | Human-readable message captured at degrade time, sanitized of NUL/control bytes and truncated to 2048 characters. |
+| `error_details_json`         | TEXT (nullable JSON) | When the failure is partial (e.g., per-container inspect failures), one element per failed container: `{container_id, error_code, error_message}`; each message follows the same 2048-character sanitized bound. |
+
+### 2.3 Schema version row
+
+`schema_version` already exists from FEAT-001. After the v2
+migration, its single row reads `version = 2`. The daemon caches
+this value at startup (FEAT-002 contract). `agenttower status` will
+report `schema_version: 2` after this feature lands.
+
+---
+
+## 3. Domain entities
+
+### 3.1 `ContainerSummary` (parsed `docker ps` row)
+
+In-memory only; not persisted directly.
+
+```python
+@dataclass(frozen=True)
+class ContainerSummary:
+    container_id: str   # full id
+    name: str           # leading slash stripped
+    image: str
+    status: str         # raw `docker ps` status text
+```
+
+### 3.2 `InspectResult`
+
+In-memory only; result of a single `docker inspect` per container.
+
+```python
+@dataclass(frozen=True)
+class InspectResult:
+    container_id: str
+    name: str
+    image: str
+    status: str
+    labels: dict[str, str]
+    mounts: list[Mount]
+    config_user: str | None
+    working_dir: str | None
+    env_keys: list[str]   # allowlisted names only (R-007)
+    inspect_blob: dict    # full normalized blob persisted as inspect_json
+
+@dataclass(frozen=True)
+class Mount:
+    source: str
+    target: str
+    type: str        # bind | volume | tmpfs
+    mode: str
+    rw: bool
+```
+
+### 3.3 `DockerError`
+
+```python
+@dataclass(frozen=True)
+class DockerError(Exception):
+    code: str          # one of the closed-set tokens (R-014)
+    message: str
+    container_id: str | None = None  # populated for per-container failures
+```
+
+### 3.4 `ScanResult`
+
+The return value of `DiscoveryService.scan()` and the payload of
+the `scan_containers` socket method's `result`.
+
+```python
+@dataclass(frozen=True)
+class ScanResult:
+    scan_id: str
+    started_at: str       # ISO-8601 UTC
+    completed_at: str
+    status: Literal["ok", "degraded"]
+    matched_count: int
+    inactive_reconciled_count: int
+    ignored_count: int
+    error_code: str | None
+    error_message: str | None
+    error_details: list[PerContainerError]   # may be empty even when degraded
+
+@dataclass(frozen=True)
+class PerContainerError:
+    container_id: str
+    code: str
+    message: str
+```
+
+### 3.5 `MatchingRule`
+
+```python
+@dataclass(frozen=True)
+class MatchingRule:
+    name_contains: tuple[str, ...]   # case-insensitive substrings; default ("bench",)
+
+    def matches(self, name: str) -> bool: ...
+```
+
+Validation (config loader):
+- Must be a TOML array of strings if present.
+- Empty list rejected with `config_invalid` (FR-006).
+- Non-list / non-string element rejected with `config_invalid`.
+- Each element is `.strip()`'d; empty post-strip rejected.
+- More than 32 entries rejected with `config_invalid`.
+- Any stripped element longer than 128 characters rejected with
+  `config_invalid`.
+- Stored case-folded for matching but echoed verbatim in error
+  messages.
+
+---
+
+## 4. State transitions
+
+### 4.1 `containers.active` flag
+
+```text
+       (never seen)            (matching scan, inspect ok)
+          ┌───────┐  ──────────────────────────────►   ┌───────────┐
+          │ none  │                                    │ active=1  │
+          └───────┘                                    └─────┬─────┘
+                ▲                                            │
+                │                                            │ matching scan,
+                │                                            │ container absent
+                │                                            ▼
+                │                                       ┌───────────┐
+                │      matching scan, inspect ok        │ active=0  │
+                │  ◄────────────────────────────────────┤           │
+                │                                       └─────┬─────┘
+                │                                             │
+                │           (rows are never deleted)          │
+                └─────────────────────────────────────────────┘
+```
+
+Plus the FR-026 corner case: if a container appears in `docker ps`
+but its inspect fails, then:
+- prior row exists → `active` flag UNCHANGED, `last_scanned_at`
+  updated, all other inspect-derived columns UNCHANGED.
+- prior row does not exist → no row inserted; failure recorded only
+  in `container_scans.error_details_json`.
+
+If a previously inactive row reappears and inspect succeeds, it
+transitions back to `active=1`; `first_seen_at` remains unchanged.
+If a previously inactive row reappears and inspect fails, the
+FR-026 "prior row exists" branch applies and the row remains inactive
+with only `last_scanned_at` updated.
+
+### 4.2 `container_scans.status`
+
+```text
+   start ──► ok            (docker ps ok AND every matching candidate inspected cleanly)
+         └─► degraded      (any of: docker not available, permission denied, timeout,
+                            non-zero exit, malformed output, OR at least one inspect
+                            failure on a matching candidate, OR config_invalid)
+```
+
+`ok` and `degraded` are terminal; rows are never updated after
+insertion. Whole-scan failures use `status='degraded'` and still
+persist a `container_scans` row, even when the socket envelope is
+`ok:false`.
+
+---
+
+## 5. Reconciliation algorithm
+
+Pure function in `discovery/reconcile.py` so it can be unit tested
+without touching SQLite:
+
+```python
+def reconcile(
+    *,
+    prior_active_ids: set[str],            # SELECT container_id FROM containers WHERE active = 1
+    prior_known_ids: set[str],             # SELECT container_id FROM containers
+    successful_inspects: dict[str, InspectResult],   # by container_id
+    failed_inspect_ids: set[str],          # matching candidates whose inspect failed
+    now_iso: str,
+) -> ReconcileWriteSet:
+    ...
+```
+
+The returned `ReconcileWriteSet` is consumed by the SQLite writer
+in one `BEGIN/COMMIT`:
+
+```python
+@dataclass(frozen=True)
+class ReconcileWriteSet:
+    upserts: list[ContainerUpsert]      # full row writes for successful_inspects
+    touch_only: list[str]               # container_ids whose only change is last_scanned_at (FR-026 prior-record case)
+    inactivate: list[str]               # prior_active_ids - successful_inspects.keys() - failed_inspect_ids ∩ prior_known_ids
+    matched_count: int                  # number of matching parseable docker ps rows for this scan
+    inactive_reconciled_count: int      # len(inactivate)
+```
+
+`ignored_count` is computed earlier (during the matching pass) and
+is not the reconciler's responsibility. For a successful `docker ps`
+parse, `matched_count + ignored_count` equals the number of parseable
+running-container rows emitted by `docker ps`.
+
+The `inactivate` set is computed only after a successful `docker ps`
+parse. A failed `docker ps` or `config_invalid` scan never changes
+`containers` rows. A partial inspect failure still allows inactivation
+for previously-active rows absent from the successfully parsed and
+matched `docker ps` candidate set.
+
+All rows in `container_scans` and all writes in `ReconcileWriteSet`
+commit in a single SQLite transaction. If the transaction fails,
+the transaction rolls back, no JSONL degraded event is appended, the
+scan mutex is released, and the caller receives `internal_error`.
+
+---
+
+## 6. JSON serialization at the socket boundary
+
+The two new socket methods serialize the dataclasses above into the
+shapes documented in `contracts/socket-api.md`. Two notes that
+matter for clients:
+
+1. The `containers` table stores `labels_json` and `mounts_json` as
+   JSON-encoded TEXT. The `list_containers` handler decodes these
+   back to objects/arrays before emitting the response — clients
+   never see a doubly-encoded JSON string.
+2. `scan_containers` returns the same `ScanResult` shape for healthy
+   scans and partial degraded scans; `status="degraded"` is the signal,
+   not a different envelope. Whole-scan failures return an `ok:false`
+   envelope while still persisting a `container_scans` row for audit.
+3. `container_scans.error_details_json`, socket `result.error_details`,
+   JSONL degraded event details, and CLI `--json` details share one
+   canonical per-container shape: `{container_id, error_code,
+   error_message}`. A matching candidate contributes at most one entry.
+
+---
+
+## 7. Migration & backward compatibility
+
+| FEAT | Concern | Resolution |
+| ---- | ------- | ---------- |
+| FEAT-001 | `agenttower config init` byte-for-byte stable | The new `[containers]` block is **not** added to the default config (R-009). |
+| FEAT-001 | `events.jsonl` schema | Degraded scans append using the existing `events.writer.append_event(...)` API. Event type token: `container_scan_degraded`. No existing record shape changes. |
+| FEAT-002 | `agenttower status` schema | `schema_version` field now reports `2` (was `1`). FEAT-002 already documents `schema_version` as forward-compatible (clients tolerate unknown values). |
+| FEAT-002 | `ping` / `status` / `shutdown` envelopes | Unchanged. New methods (`scan_containers`, `list_containers`) added to the dispatch table; unknown-method responses for any other token are unchanged. |
+
+A daemon running the FEAT-003 build against a v1 SQLite database
+applies the v2 migration exactly once at startup. A daemon running
+the FEAT-002 build against a v2 SQLite database refuses to start
+(schema-version mismatch) — this is the correct behavior; downgrade
+is not supported in MVP.
+
+The v1→v2 migration runs in a single transaction. If any statement
+fails, the transaction rolls back and the daemon refuses to serve
+requests rather than operating with a partial schema. Future database
+versions greater than this build supports also cause startup refusal.
+An otherwise-empty v1 database still receives both new tables and then
+bumps `schema_version` to 2.

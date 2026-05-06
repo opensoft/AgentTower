@@ -9,16 +9,28 @@ import pytest
 from agenttower.socket_api import errors
 
 
-def test_closed_code_set_is_exactly_five() -> None:
-    assert errors.CLOSED_CODE_SET == frozenset(
-        {
-            errors.BAD_JSON,
-            errors.BAD_REQUEST,
-            errors.UNKNOWN_METHOD,
-            errors.REQUEST_TOO_LARGE,
-            errors.INTERNAL_ERROR,
-        }
-    )
+def test_closed_code_set_contains_feat002_and_feat003_codes() -> None:
+    # FEAT-002 codes (FR-022 backward-compat).
+    feat002 = {
+        errors.BAD_JSON,
+        errors.BAD_REQUEST,
+        errors.UNKNOWN_METHOD,
+        errors.REQUEST_TOO_LARGE,
+        errors.INTERNAL_ERROR,
+    }
+    assert feat002 <= errors.CLOSED_CODE_SET
+    # FEAT-003 additions (research R-014).
+    feat003 = {
+        errors.CONFIG_INVALID,
+        errors.DOCKER_UNAVAILABLE,
+        errors.DOCKER_PERMISSION_DENIED,
+        errors.DOCKER_TIMEOUT,
+        errors.DOCKER_FAILED,
+        errors.DOCKER_MALFORMED,
+    }
+    assert feat003 <= errors.CLOSED_CODE_SET
+    # No surprise codes beyond the documented sets.
+    assert errors.CLOSED_CODE_SET == feat002 | feat003
 
 
 @pytest.mark.parametrize(

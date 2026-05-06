@@ -15,8 +15,28 @@ UNKNOWN_METHOD: Final[str] = "unknown_method"
 REQUEST_TOO_LARGE: Final[str] = "request_too_large"
 INTERNAL_ERROR: Final[str] = "internal_error"
 
+# FEAT-003 additions (research R-014).
+CONFIG_INVALID: Final[str] = "config_invalid"
+DOCKER_UNAVAILABLE: Final[str] = "docker_unavailable"
+DOCKER_PERMISSION_DENIED: Final[str] = "docker_permission_denied"
+DOCKER_TIMEOUT: Final[str] = "docker_timeout"
+DOCKER_FAILED: Final[str] = "docker_failed"
+DOCKER_MALFORMED: Final[str] = "docker_malformed"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
-    {BAD_JSON, BAD_REQUEST, UNKNOWN_METHOD, REQUEST_TOO_LARGE, INTERNAL_ERROR}
+    {
+        BAD_JSON,
+        BAD_REQUEST,
+        UNKNOWN_METHOD,
+        REQUEST_TOO_LARGE,
+        INTERNAL_ERROR,
+        CONFIG_INVALID,
+        DOCKER_UNAVAILABLE,
+        DOCKER_PERMISSION_DENIED,
+        DOCKER_TIMEOUT,
+        DOCKER_FAILED,
+        DOCKER_MALFORMED,
+    }
 )
 
 
