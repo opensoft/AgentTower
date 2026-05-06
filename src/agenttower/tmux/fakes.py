@@ -108,13 +108,13 @@ class FakeTmuxAdapter:
         if entry.get("socket_dir_missing"):
             raise TmuxError(
                 code=_errors.SOCKET_DIR_MISSING,
-                message=f"/tmp/tmux-{uid}: no such file or directory",
+                message=f"/tmp/tmux-{uid}: no such file or directory",  # NOSONAR - fixture mirrors real tmux socket-dir error.
                 container_id=container_id,
             )
         if entry.get("socket_unreadable"):
             raise TmuxError(
                 code=_errors.SOCKET_UNREADABLE,
-                message=f"/tmp/tmux-{uid}: permission denied",
+                message=f"/tmp/tmux-{uid}: permission denied",  # NOSONAR - fixture mirrors real tmux socket-dir error.
                 container_id=container_id,
             )
         socket_listing_failure = entry.get("socket_listing_failure")

@@ -129,7 +129,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
     def list_socket_dir(
         self, *, container_id: str, bench_user: str, uid: str
     ) -> SocketListing:
-        socket_dir = f"/tmp/tmux-{uid}"
+        socket_dir = f"/tmp/tmux-{uid}"  # NOSONAR - intentional tmux socket dir on Linux benches.
         argv = self._argv(
             "exec", "-u", bench_user, container_id, "ls", "-1", "--", socket_dir
         )

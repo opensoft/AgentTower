@@ -371,7 +371,7 @@ class PaneDiscoveryService:
 
         any_success = False
         for socket_name in listing.sockets:
-            socket_path = f"/tmp/tmux-{uid}/{socket_name}"
+            socket_path = f"/tmp/tmux-{uid}/{socket_name}"  # NOSONAR - intentional tmux socket path inside bench container.
             state.sockets_scanned += 1
             try:
                 panes = self._adapter.list_panes(
