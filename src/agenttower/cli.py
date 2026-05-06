@@ -15,7 +15,12 @@ from typing import Any
 
 from . import __version__
 from .config import _DIR_MODE, _ensure_dir_chain, write_default_config
-from .paths import Paths, resolve_paths
+from .config_doctor import runtime_detect
+from .config_doctor.socket_resolve import (
+    SocketPathInvalid,
+    resolve_socket_path,
+)
+from .paths import Paths, ResolvedSocket, resolve_paths
 from .socket_api import lifecycle
 from .socket_api.client import DaemonError, DaemonUnavailable, send_request
 from .state.schema import companion_paths_for, open_registry
@@ -31,6 +36,60 @@ DAEMON_UNAVAILABLE_MESSAGE = (
     "error: daemon is not running or socket is unreachable: "
     "try `agenttower ensure-daemon`"
 )
+
+
+def _resolve_socket_with_paths(env: dict[str, str] | None = None) -> tuple[Paths, ResolvedSocket]:
+    """Resolve filesystem paths AND the daemon socket path with FR-001 priority.
+
+    On invalid ``AGENTTOWER_SOCKET`` (any of the FR-002 closed-set ``<reason>``
+    tokens), prints the FR-002 stderr line and raises :class:`SystemExit(1)`.
+    Returns ``(paths, resolved_socket)`` for normal control flow; every
+    socket-using handler then opens the socket via ``resolved_socket.path``.
+    """
+
+    if env is None:
+        env = dict(os.environ)
+    paths = resolve_paths(env)
+    runtime_context = runtime_detect.detect()
+    try:
+        resolved = resolve_socket_path(env, paths, runtime_context)
+    except SocketPathInvalid as exc:
+        print(
+            f"error: AGENTTOWER_SOCKET must be an absolute path to a Unix socket: {exc.reason}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    return paths, resolved
+
+
+def _guard_production_test_seam_unset() -> None:
+    """A2 / FR-025: refuse to run under leaked ``AGENTTOWER_TEST_PROC_ROOT``.
+
+    When ``AGENTTOWER_TEST_PROC_ROOT`` is set but no other ``AGENTTOWER_TEST_*``
+    companion env var is also set, the binary is almost certainly running
+    outside the test harness (e.g., a developer's stale shell). Refuse to
+    proceed so a fake ``/proc`` cannot silently substitute for the real one
+    in a production CLI invocation.
+
+    A test harness already sets at least one of ``AGENTTOWER_TEST_DOCKER_FAKE``
+    / ``AGENTTOWER_TEST_TMUX_FAKE`` (FEAT-003 / FEAT-004) along with
+    ``AGENTTOWER_TEST_PROC_ROOT``, so this gate does not fire under pytest.
+    """
+
+    if "AGENTTOWER_TEST_PROC_ROOT" not in os.environ:
+        return
+    companions = [
+        key
+        for key in os.environ
+        if key.startswith("AGENTTOWER_TEST_") and key != "AGENTTOWER_TEST_PROC_ROOT"
+    ]
+    if companions:
+        return
+    print(
+        "error: AGENTTOWER_TEST_PROC_ROOT is set outside the test harness; unset it before running production",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 
 def _namespace_root(any_member: Path) -> Path:
@@ -112,13 +171,18 @@ def _config_init(args: argparse.Namespace) -> int:
 
 
 def _config_paths(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+    # Resolve paths AND the socket together so the SOCKET= line and the new
+    # SOCKET_SOURCE= line cannot drift (FR-019). On invalid AGENTTOWER_SOCKET,
+    # _resolve_socket_with_paths exits 1 with the FR-002 stderr message
+    # before any KEY=value line is printed.
+    paths, resolved = _resolve_socket_with_paths()
     print(f"CONFIG_FILE={paths.config_file}")
     print(f"STATE_DB={paths.state_db}")
     print(f"EVENTS_FILE={paths.events_file}")
     print(f"LOGS_DIR={paths.logs_dir}")
-    print(f"SOCKET={paths.socket}")
+    print(f"SOCKET={resolved.path}")
     print(f"CACHE_DIR={paths.cache_dir}")
+    print(f"SOCKET_SOURCE={resolved.source}")
     if not paths.state_db.exists():
         print(
             "note: agenttower has not been initialized; run `agenttower config init`",
@@ -127,14 +191,45 @@ def _config_paths(args: argparse.Namespace) -> int:
     return 0
 
 
+def _config_doctor(args: argparse.Namespace) -> int:
+    """``agenttower config doctor`` — run the closed-set diagnostic checks.
+
+    Pre-flight ``SocketPathInvalid`` is converted to the FR-002 stderr path
+    + exit ``1`` BEFORE constructing a :class:`DoctorReport`. Otherwise the
+    runner produces a six-row report which is rendered as TSV (default) or
+    canonical JSON (``--json``); the CLI exits with ``report.exit_code``.
+    """
+
+    from .config_doctor import render_json, render_tsv, run_doctor
+
+    paths = resolve_paths()
+    try:
+        report = run_doctor(dict(os.environ), paths)
+    except SocketPathInvalid as exc:
+        print(
+            f"error: AGENTTOWER_SOCKET must be an absolute path to a Unix socket: {exc.reason}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.json:
+        print(render_json(report))
+    else:
+        sys.stdout.write(render_tsv(report))
+    return int(report.exit_code)
+
+
 def _ensure_daemon(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+    paths, resolved = _resolve_socket_with_paths()
     state_dir = paths.state_db.parent
     logs_dir = paths.logs_dir
     lock_path = state_dir / LOCK_FILENAME
+    # ensure-daemon spawns the host daemon; the daemon binds at the host
+    # default. AGENTTOWER_SOCKET overrides ONLY the client's ping target so
+    # it sees whether *that* socket is reachable.
     socket_path = paths.socket
 
-    preflight = _ensure_daemon_preflight(paths, json_mode=args.json)
+    preflight = _ensure_daemon_preflight(paths, resolved, json_mode=args.json)
     if preflight is not None:
         return preflight
 
@@ -156,7 +251,9 @@ def _ensure_daemon(args: argparse.Namespace) -> int:
     )
 
 
-def _ensure_daemon_preflight(paths: Paths, *, json_mode: bool) -> int | None:
+def _ensure_daemon_preflight(
+    paths: Paths, resolved: ResolvedSocket, *, json_mode: bool
+) -> int | None:
     state_dir = paths.state_db.parent
 
     if not paths.state_db.exists():
@@ -166,10 +263,12 @@ def _ensure_daemon_preflight(paths: Paths, *, json_mode: bool) -> int | None:
         )
         return 1
 
-    pre_existing = _try_ping(paths.socket)
+    # Ping the resolved socket so AGENTTOWER_SOCKET overrides which socket
+    # the readiness check inspects; the daemon's own bind path is unchanged.
+    pre_existing = _try_ping(resolved.path)
     if pre_existing is not None:
         return _print_ready(
-            pre_existing, paths.socket, state_dir, json_mode=json_mode, started=False
+            pre_existing, resolved.path, state_dir, json_mode=json_mode, started=False
         )
 
     try:
@@ -286,10 +385,10 @@ def _wait_for_spawned_daemon(
 
 
 def _status_command(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+    paths, resolved = _resolve_socket_with_paths()
     try:
         result = send_request(
-            paths.socket, "status", connect_timeout=1.0, read_timeout=1.0
+            resolved.path, "status", connect_timeout=1.0, read_timeout=1.0
         )
     except DaemonUnavailable:
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
@@ -312,9 +411,9 @@ def _status_command(args: argparse.Namespace) -> int:
 
 
 def _stop_daemon(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+    paths, resolved = _resolve_socket_with_paths()
     state_dir = paths.state_db.parent
-    socket_path = paths.socket
+    socket_path = resolved.path
     try:
         send_request(socket_path, "shutdown", connect_timeout=1.0, read_timeout=1.0)
     except DaemonUnavailable:
@@ -442,6 +541,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "config subcommands:\n"
             "  config paths   print resolved KEY=value paths AgentTower will use\n"
             "  config init    create the durable Opensoft layout (idempotent)\n"
+            "  config doctor  run the closed-set diagnostic checks (FEAT-005)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -476,6 +576,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description="create the durable Opensoft layout (idempotent)",
     )
     init_parser.set_defaults(_handler=_config_init)
+
+    doctor_parser = config_subs.add_parser(
+        "doctor",
+        help="run the closed-set diagnostic checks (FEAT-005)",
+        description="run the closed-set diagnostic checks (FEAT-005)",
+    )
+    doctor_parser.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    doctor_parser.set_defaults(_handler=_config_doctor)
 
     ensure_daemon = subparsers.add_parser(
         "ensure-daemon",
@@ -599,9 +707,14 @@ def _combine_scan_exit_codes(current: int, new: int) -> int:
 def _run_container_scan(
     paths: Paths, args: argparse.Namespace, *, first_block: bool
 ) -> int:
+    # Resolve the socket inline so we honor AGENTTOWER_SOCKET / mounted-default
+    # without changing the existing helper signature (preserves FEAT-003 test
+    # mocks per FR-026). On invalid AGENTTOWER_SOCKET this exits 1 with the
+    # FR-002 stderr message before any send_request.
+    _, resolved = _resolve_socket_with_paths()
     try:
         result = send_request(
-            paths.socket, "scan_containers", connect_timeout=1.0, read_timeout=15.0
+            resolved.path, "scan_containers", connect_timeout=1.0, read_timeout=15.0
         )
     except DaemonUnavailable:
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
@@ -641,9 +754,11 @@ def _run_container_scan(
 def _run_pane_scan(
     paths: Paths, args: argparse.Namespace, *, first_block: bool
 ) -> int:
+    # Resolve the socket inline (see _run_container_scan note above).
+    _, resolved = _resolve_socket_with_paths()
     try:
         result = send_request(
-            paths.socket, "scan_panes", connect_timeout=1.0, read_timeout=30.0
+            resolved.path, "scan_panes", connect_timeout=1.0, read_timeout=30.0
         )
     except DaemonUnavailable:
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
@@ -713,11 +828,11 @@ def _parse_iso(text: str) -> "datetime":  # type: ignore[name-defined]
 
 
 def _list_containers_command(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+    paths, resolved = _resolve_socket_with_paths()
     params: dict[str, Any] = {"active_only": bool(args.active_only)}
     try:
         result = send_request(
-            paths.socket,
+            resolved.path,
             "list_containers",
             params=params,
             connect_timeout=1.0,
@@ -748,14 +863,14 @@ def _list_containers_command(args: argparse.Namespace) -> int:
 
 
 def _list_panes_command(args: argparse.Namespace) -> int:
-    paths: Paths = resolve_paths()
+    paths, resolved = _resolve_socket_with_paths()
     params: dict[str, Any] = {
         "active_only": bool(args.active_only),
         "container": args.container,
     }
     try:
         result = send_request(
-            paths.socket,
+            resolved.path,
             "list_panes",
             params=params,
             connect_timeout=1.0,
@@ -810,6 +925,11 @@ def _list_panes_command(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the AgentTower CLI."""
+    # A2 / FR-025 production guard: refuse to honor a leaked
+    # AGENTTOWER_TEST_PROC_ROOT in a non-test invocation. Runs before any
+    # parsing or path resolution so the guard cannot be bypassed by a
+    # mid-flight code path.
+    _guard_production_test_seam_unset()
     parser = _build_parser()
     args = parser.parse_args(argv)
     handler: Any = getattr(args, "_handler", None)

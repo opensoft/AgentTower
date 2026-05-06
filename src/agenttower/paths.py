@@ -1,4 +1,9 @@
-"""Filesystem path helpers for AgentTower."""
+"""Filesystem path helpers for AgentTower.
+
+FEAT-005 R-001 / data-model §3.1 add :class:`ResolvedSocket` here so the
+``(path, source)`` pair lives next to :class:`Paths` itself; the
+``config_doctor`` package consumes it without requiring an extra hop.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +11,26 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 _NAMESPACE = ("opensoft", "agenttower")
+
+SocketSource = Literal["env_override", "mounted_default", "host_default"]
+
+
+@dataclass(frozen=True)
+class ResolvedSocket:
+    """Output of :func:`agenttower.config_doctor.socket_resolve.resolve_socket_path`.
+
+    The pair ``(path, source)`` is computed at every CLI invocation; not
+    persisted. Surfaced by ``agenttower config paths`` (FR-019) and by the
+    doctor's ``socket_resolved`` check (FR-015). Lives here (next to
+    :class:`Paths`) so existing FEAT-001 / FEAT-002 callers don't need to
+    take a transitive dependency on the FEAT-005 ``config_doctor`` package.
+    """
+
+    path: Path
+    source: SocketSource
 
 
 @dataclass(frozen=True)
