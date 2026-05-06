@@ -19,7 +19,12 @@ import pytest
 import agenttower.discovery.service as service_module
 from agenttower.discovery.matching import MatchingRule, default_rule
 from agenttower.discovery.service import DiscoveryService
-from agenttower.docker.adapter import ContainerSummary, InspectResult, Mount
+from agenttower.docker.adapter import (
+    ContainerSummary,
+    InspectResult,
+    Mount,
+    PerContainerError,
+)
 from agenttower.docker.fakes import FakeDockerAdapter
 from agenttower.socket_api import errors
 from agenttower.socket_api.methods import (
@@ -245,3 +250,12 @@ def test_jsonl_failure_after_commit_returns_internal_error_and_keeps_scan_row(
         "SELECT status, error_code FROM container_scans"
     ).fetchall()
     assert rows == [("degraded", "docker_failed")]
+
+
+def test_ordered_error_details_preserves_unmatched_failures() -> None:
+    failures = [
+        PerContainerError("extra", "docker_malformed", "malformed inspect entry"),
+        PerContainerError("abc", "docker_failed", "inspect failed"),
+    ]
+    ordered = service_module._ordered_error_details(failures, ["abc"])
+    assert [failure.container_id for failure in ordered] == ["abc", "extra"]

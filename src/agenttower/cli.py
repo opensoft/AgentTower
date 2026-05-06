@@ -547,7 +547,7 @@ def _scan_command(args: argparse.Namespace) -> int:
     paths: Paths = resolve_paths()
     try:
         result = send_request(
-            paths.socket, "scan_containers", connect_timeout=1.0, read_timeout=10.0
+            paths.socket, "scan_containers", connect_timeout=1.0, read_timeout=15.0
         )
     except DaemonUnavailable:
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)

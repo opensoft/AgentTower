@@ -61,6 +61,9 @@ def _ordered_error_details(
             if failure.container_id == container_id and failure not in ordered:
                 ordered.append(failure)
                 break
+    for failure in failures:
+        if failure not in ordered:
+            ordered.append(failure)
     return ordered
 
 

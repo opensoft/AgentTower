@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .config import load_containers_block
-from .discovery.matching import default_rule
 from .discovery.service import DiscoveryService
 from .docker import FakeDockerAdapter
 from .paths import Paths, resolve_paths
