@@ -17,10 +17,10 @@ real tmux server is required for the test-harness equivalent (see
 - The host daemon is running (`agenttower ensure-daemon` already
   succeeded; see FEAT-002 quickstart).
 - At least one bench container has been discovered by FEAT-003
-  (`agenttower scan-containers`; `agenttower list-containers`
+  (`agenttower scan --containers`; `agenttower list-containers`
   shows it).
 - At least one tmux pane has been discovered inside that container
-  by FEAT-004 (`agenttower scan-panes`; `agenttower list-panes`
+  by FEAT-004 (`agenttower scan --panes`; `agenttower list-panes`
   shows it).
 - The user is shelled into the bench container and into the
   desired tmux pane. FEAT-005's identity detection will resolve
@@ -50,11 +50,22 @@ agenttower register-self \
     --project /workspace/acme
 ```
 
-Expected output (single line on stdout, exit `0`):
+Expected output (one `key=value` line per field on stdout, exit
+`0`):
 
 ```text
-registered agent_id=agt_abc123def456 role=slave capability=codex label=codex-01 project=/workspace/acme parent=
+agent_id=agt_abc123def456
+role=slave
+capability=codex
+label=codex-01
+project_path=/workspace/acme
+parent_agent_id=-
+created_or_reactivated=created
 ```
+
+`parent_agent_id` renders as the literal `-` when null. The
+`--json` form wraps the same fields under `{"ok": true, "result":
+{...}}` (see `contracts/cli.md` for the full envelope).
 
 A new row in the `agents` table now binds this pane composite key
 to `agent_id=agt_abc123def456`. A JSONL audit row has been
@@ -105,10 +116,17 @@ Re-running the same command from the same pane returns the same
 agenttower register-self --role slave --capability codex --label codex-01 --project /workspace/acme
 ```
 
-Output:
+Output (the same field block as the first registration, but
+`created_or_reactivated=updated`):
 
 ```text
-registered agent_id=agt_abc123def456 role=slave capability=codex label=codex-01 project=/workspace/acme parent=
+agent_id=agt_abc123def456
+role=slave
+capability=codex
+label=codex-01
+project_path=/workspace/acme
+parent_agent_id=-
+created_or_reactivated=updated
 ```
 
 The agent count stays at 1; no new audit row is appended (the
@@ -125,7 +143,13 @@ agenttower register-self --label codex-main
 Output:
 
 ```text
-registered agent_id=agt_abc123def456 role=slave capability=codex label=codex-main project=/workspace/acme parent=
+agent_id=agt_abc123def456
+role=slave
+capability=codex
+label=codex-main
+project_path=/workspace/acme
+parent_agent_id=-
+created_or_reactivated=updated
 ```
 
 `role`, `capability`, and `project_path` are preserved exactly
@@ -139,14 +163,19 @@ silently demoting a master.
 
 ### 4.1 Reject promotion via `register-self` (FR-010)
 
+`register-self` does not accept `--confirm` (the master safety
+boundary is not unlocked at this surface in any way), so calling
+it with `--role master` is refused unconditionally:
+
 ```bash
-agenttower register-self --role master --confirm
+agenttower register-self --role master
 ```
 
-Exit code `1`; stderr:
+Exit code `3` (FEAT-002 daemon-error convention); stderr:
 
 ```text
-error [master_via_register_self_rejected]: register-self cannot assign role=master; register first, then run `agenttower set-role --role master --confirm`
+error: register-self cannot assign role=master; register first, then run `agenttower set-role --role master --confirm`
+code: master_via_register_self_rejected
 ```
 
 No agent row created; no audit row appended.
@@ -157,10 +186,11 @@ No agent row created; no audit row appended.
 agenttower set-role --target agt_abc123def456 --role master
 ```
 
-Exit code `1`; stderr:
+Exit code `3`; stderr:
 
 ```text
-error [master_confirm_required]: master role assignment requires --confirm
+error: master role assignment requires --confirm
+code: master_confirm_required
 ```
 
 Role unchanged.
@@ -171,10 +201,14 @@ Role unchanged.
 agenttower set-role --target agt_abc123def456 --role master --confirm
 ```
 
-Exit code `0`; stdout:
+Exit code `0`; stdout (one `key=value` line per field):
 
 ```text
-agent_id=agt_abc123def456 field=role prior=slave new=master audit_appended=true
+agent_id=agt_abc123def456
+field=role
+prior_value=slave
+new_value=master
+audit_appended=true
 ```
 
 `agenttower list-agents` now shows `role=master`. The agent's
@@ -214,7 +248,13 @@ agenttower register-self \
 Output:
 
 ```text
-registered agent_id=agt_def456abc789 role=swarm capability=claude label=claude-swarm-01 project= parent=agt_abc123def456
+agent_id=agt_def456abc789
+role=swarm
+capability=claude
+label=claude-swarm-01
+project_path=
+parent_agent_id=agt_abc123def456
+created_or_reactivated=created
 ```
 
 `agenttower list-agents` now shows two rows; the swarm row has
@@ -239,10 +279,11 @@ rejected:
 agenttower register-self --role swarm --parent agt_otherSlave1234 --capability claude
 ```
 
-Exit code `1`; stderr:
+Exit code `3`; stderr:
 
 ```text
-error [parent_immutable]: parent_agent_id is immutable for life; stored value is agt_abc123def456
+error: parent_agent_id is immutable for life; stored value is agt_abc123def456
+code: parent_immutable
 ```
 
 No mutable field is updated by this call (Q3 atomicity).
@@ -318,8 +359,10 @@ To inspect the audit log:
 tail -n 20 ~/.local/state/opensoft/agenttower/events.jsonl
 ```
 
-Each successful role transition appears as one JSON line with
-`event_type=agent_role_change` (FR-014; data-model.md §4.4).
+Each successful role transition appears as one JSON line emitted
+by the FEAT-001 `events.writer.append_event` helper. The on-disk
+record shape is `{"ts": "<utc-iso>", "type": "agent_role_change",
+"payload": {...}}` (FR-014; data-model.md §4.4).
 
 ---
 
@@ -329,12 +372,12 @@ Each successful role transition appears as one JSON line with
 | ------- | ------------ | --------------- |
 | `register-self` exits `2` | Daemon not running | `daemon_unavailable` (FEAT-002 inheritance) |
 | `register-self` exits `1` with `host_context_unsupported` | Running on the host shell, not inside a bench container | — |
-| `register-self` exits `1` with `not_in_tmux` | `$TMUX` unset | — |
-| `register-self` exits `1` with `tmux_pane_malformed` | `$TMUX_PANE` malformed | — |
-| `register-self` exits `1` with `container_unresolved` | FEAT-005 identity detection got `multi_match` / `no_match` / `no_candidate` | — |
-| `register-self` exits `1` with `pane_unknown_to_daemon` | Pane composite key not in FEAT-004 registry; focused rescan did not find it; run `agenttower scan-panes` from the host | — |
-| `set-role --role master` exits `1` with `master_confirm_required` | Forgot `--confirm` | — |
-| `set-role --role swarm` exits `1` with `swarm_role_via_set_role_rejected` | Swarm role assignment requires `register-self --role swarm --parent <id>` | — |
-| `register-self --role swarm` exits `1` with `swarm_parent_required` | Forgot `--parent <agent-id>` | — |
-| `register-self --parent <id>` exits `1` with `parent_role_mismatch` | `--parent` requires `--role swarm` | — |
-| Any CLI exits `1` with `schema_version_newer` | Daemon is newer than this CLI build; upgrade the CLI | — |
+| `register-self` exits `3` with `not_in_tmux` | `$TMUX` unset | — |
+| `register-self` exits `3` with `tmux_pane_malformed` | `$TMUX_PANE` malformed | — |
+| `register-self` exits `3` with `container_unresolved` | FEAT-005 identity detection got `multi_match` / `no_match` / `no_candidate` | — |
+| `register-self` exits `3` with `pane_unknown_to_daemon` | Pane composite key not in FEAT-004 registry; focused rescan did not find it; run `agenttower scan --panes` from the host | — |
+| `set-role --role master` exits `3` with `master_confirm_required` | Forgot `--confirm` | — |
+| `set-role --role swarm` exits `3` with `swarm_role_via_set_role_rejected` | Swarm role assignment requires `register-self --role swarm --parent <id>` | — |
+| `register-self --role swarm` exits `3` with `swarm_parent_required` | Forgot `--parent <agent-id>` | — |
+| `register-self --parent <id>` exits `3` with `parent_role_mismatch` | `--parent` requires `--role swarm` | — |
+| Any CLI exits `3` with `schema_version_newer` | Daemon is newer than this CLI build; upgrade the CLI | — |

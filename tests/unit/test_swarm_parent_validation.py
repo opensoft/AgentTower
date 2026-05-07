@@ -166,3 +166,25 @@ def test_swarm_parent_required_when_role_swarm_without_parent(tmp_path: Path) ->
             socket_peer_uid=1000,
         )
     assert info.value.code == "swarm_parent_required"
+
+
+def test_parent_role_mismatch_when_role_omitted_with_parent_supplied(
+    tmp_path: Path,
+) -> None:
+    """FR-016: supplying --parent while omitting --role MUST be rejected.
+
+    Regression for the review-pass-1 finding that the pre-flight only
+    fired when ``role_in`` was explicitly present, leaving creation to
+    silently default to role="unknown" while persisting parent_agent_id.
+    """
+    service = make_service(tmp_path)
+    _seed_two_panes(service)
+    parent = service.register_agent(
+        register_params(role="slave"), socket_peer_uid=1000
+    )
+    params = register_params(_ck1(), parent_agent_id=parent["agent_id"])
+    # Drop the role field so the wire request omits it (default unknown).
+    params.pop("role", None)
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(params, socket_peer_uid=1000)
+    assert info.value.code == "parent_role_mismatch"

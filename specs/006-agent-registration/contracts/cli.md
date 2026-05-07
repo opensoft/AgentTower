@@ -44,47 +44,70 @@ socket method.
 
 ### Exit codes (FR-032 + FR-040)
 
+The FEAT-006 CLI handlers follow the FEAT-002 / FEAT-005
+exit-code surface (daemon errors → `3`) rather than the
+spec-prose `1`-for-error sketch. The `1` slot is reserved for
+client-side context errors (today only `host_context_unsupported`).
+
 | Pattern | Exit code |
 | ------- | --------- |
 | Successful registration / idempotent re-registration / re-activation | `0` |
+| `host_context_unsupported` (running on the host shell, not in a bench container) | `1` |
 | `daemon_unavailable` (daemon down)                                   | `2` (FEAT-002 inheritance) |
-| Any other closed-set error code (e.g., `host_context_unsupported`, `container_unresolved`, `not_in_tmux`, `tmux_pane_malformed`, `pane_unknown_to_daemon`, `master_via_register_self_rejected`, `swarm_parent_required`, `parent_role_mismatch`, `parent_not_found`, `parent_inactive`, `parent_role_invalid`, `parent_immutable`, `value_out_of_set`, `field_too_long`, `project_path_invalid`, `schema_version_newer`) | `1` |
+| Any other closed-set error code (e.g., `container_unresolved`, `not_in_tmux`, `tmux_pane_malformed`, `pane_unknown_to_daemon`, `master_via_register_self_rejected`, `swarm_parent_required`, `parent_role_mismatch`, `parent_not_found`, `parent_inactive`, `parent_role_invalid`, `parent_immutable`, `value_out_of_set`, `field_too_long`, `project_path_invalid`, `schema_version_newer`) | `3` |
 | Internal CLI error                                                   | `4` (reserved per FEAT-002) |
 
 ### Default output
 
-Single line on stdout:
+One `key=value` line per field on stdout (matching the
+established multi-line key=value style FEAT-002 / FEAT-005 use for
+single-record success output):
 
 ```text
-registered agent_id=<agt_xxx> role=<role> capability=<cap> label=<label> project=<path> parent=<agt_xxx-or-empty>
+agent_id=<agt_xxx>
+role=<role>
+capability=<cap>
+label=<label>
+project_path=<path>
+parent_agent_id=<agt_xxx-or-dash>
+created_or_reactivated=<created|reactivated|updated>
 ```
 
+`parent_agent_id` renders as the literal `-` when null.
+
 ### `--json` output
+
+The success envelope wraps the daemon's `register_agent` result
+under `{"ok": true, "result": {...}}` so the same outer shape
+applies to every FEAT-006 CLI command (mirroring how `set-*`
+emit). The `result` object carries the fields below:
 
 ```json
 {
   "ok": true,
-  "agent_id": "agt_abc123def456",
-  "role": "slave",
-  "capability": "codex",
-  "label": "codex-01",
-  "project_path": "/workspace/acme",
-  "parent_agent_id": null,
-  "container_id": "<full-id>",
-  "pane_composite_key": {
+  "result": {
+    "agent_id": "agt_abc123def456",
+    "role": "slave",
+    "capability": "codex",
+    "label": "codex-01",
+    "project_path": "/workspace/acme",
+    "parent_agent_id": null,
     "container_id": "<full-id>",
-    "tmux_socket_path": "/tmp/...",
-    "tmux_session_name": "main",
-    "tmux_window_index": 0,
-    "tmux_pane_index": 0,
-    "tmux_pane_id": "%17"
-  },
-  "effective_permissions": {
-    "can_send": false,
-    "can_receive": true,
-    "can_send_to_roles": []
-  },
-  "created_or_reactivated": "created"
+    "pane_composite_key": {
+      "container_id": "<full-id>",
+      "tmux_socket_path": "/tmp/...",
+      "tmux_session_name": "main",
+      "tmux_window_index": 0,
+      "tmux_pane_index": 0,
+      "tmux_pane_id": "%17"
+    },
+    "effective_permissions": {
+      "can_send": false,
+      "can_receive": true,
+      "can_send_to_roles": []
+    },
+    "created_or_reactivated": "created"
+  }
 }
 ```
 
@@ -130,7 +153,7 @@ no `last_seen_at` mutation (R-003).
 ### Exit codes
 
 `0` on success (incl. empty result set per edge case "filter matches
-no rows" line 83 of spec); `2` on `daemon_unavailable`; `1` on any
+no rows" line 83 of spec); `2` on `daemon_unavailable`; `3` on any
 other closed-set code (e.g., `unknown_filter`, `value_out_of_set`,
 `schema_version_newer`).
 
@@ -238,34 +261,43 @@ Calls the daemon's `set_role` socket method. Master promotion
 ### Exit codes
 
 `0` on success (including no-op when new role equals stored role);
-`2` on `daemon_unavailable`; `1` on any other closed-set code
+`2` on `daemon_unavailable`; `3` on any other closed-set code
 (`agent_not_found`, `agent_inactive`, `master_confirm_required`,
 `swarm_role_via_set_role_rejected`, `value_out_of_set`,
 `schema_version_newer`).
 
 ### Default output
 
-Single line on stdout:
+One `key=value` line per field on stdout:
 
 ```text
-agent_id=<agt_xxx> field=role prior=<role> new=<role> audit_appended=<bool>
+agent_id=<agt_xxx>
+field=role
+prior_value=<role>
+new_value=<role>
+audit_appended=<true|false>
 ```
 
 ### `--json` output
 
+The success envelope is `{"ok": true, "result": {...}}` (same
+outer shape as `register-self`):
+
 ```json
 {
   "ok": true,
-  "agent_id": "agt_abc123def456",
-  "field": "role",
-  "prior_value": "slave",
-  "new_value": "master",
-  "effective_permissions": {
-    "can_send": true,
-    "can_receive": false,
-    "can_send_to_roles": ["slave", "swarm"]
-  },
-  "audit_appended": true
+  "result": {
+    "agent_id": "agt_abc123def456",
+    "field": "role",
+    "prior_value": "slave",
+    "new_value": "master",
+    "effective_permissions": {
+      "can_send": true,
+      "can_receive": false,
+      "can_send_to_roles": ["slave", "swarm"]
+    },
+    "audit_appended": true
+  }
 }
 ```
 
@@ -291,14 +323,20 @@ transitions are audited).
 
 ### Exit codes
 
-`0` on success; `2` on `daemon_unavailable`; `1` on any other
+`0` on success; `2` on `daemon_unavailable`; `3` on any other
 closed-set code (`agent_not_found`, `agent_inactive`,
 `field_too_long`, `value_out_of_set`, `schema_version_newer`).
 
 ### Default output
 
+One `key=value` line per field on stdout:
+
 ```text
-agent_id=<agt_xxx> field=label prior=<label> new=<label> audit_appended=false
+agent_id=<agt_xxx>
+field=label
+prior_value=<label>
+new_value=<label>
+audit_appended=false
 ```
 
 ### `--json` output
@@ -306,11 +344,13 @@ agent_id=<agt_xxx> field=label prior=<label> new=<label> audit_appended=false
 ```json
 {
   "ok": true,
-  "agent_id": "agt_abc123def456",
-  "field": "label",
-  "prior_value": "codex-01",
-  "new_value": "codex-main",
-  "audit_appended": false
+  "result": {
+    "agent_id": "agt_abc123def456",
+    "field": "label",
+    "prior_value": "codex-01",
+    "new_value": "codex-main",
+    "audit_appended": false
+  }
 }
 ```
 
@@ -331,7 +371,7 @@ closed set. Setting the same value is a successful no-op.
 
 ### Exit codes
 
-`0` on success; `2` on `daemon_unavailable`; `1` on any other
+`0` on success; `2` on `daemon_unavailable`; `3` on any other
 closed-set code (`agent_not_found`, `agent_inactive`,
 `value_out_of_set`, `schema_version_newer`).
 

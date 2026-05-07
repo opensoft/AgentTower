@@ -204,7 +204,7 @@ def test_dispatch_accepts_valid_ping() -> None:
 def test_dispatch_handles_internal_exception_gracefully() -> None:
     handler, _ = _make_handler(b'{"method": "ping"}\n')
 
-    def boom(ctx, params):  # noqa: ANN001
+    def boom(ctx, params, peer_uid=-1):  # noqa: ANN001
         raise RuntimeError("kaboom")
 
     from agenttower.socket_api.methods import DISPATCH

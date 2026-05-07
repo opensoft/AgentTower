@@ -288,7 +288,7 @@ def select_active_for_role_and_container(
     conn: sqlite3.Connection,
     *,
     agent_id: str,
-) -> tuple[bool, str | None] | None:
+) -> tuple[bool, bool | None] | None:
     """Atomic re-check helper for FR-011 master-promotion.
 
     Returns ``(agent_active, container_active)`` where *container_active*
@@ -314,10 +314,14 @@ def select_active_for_role_and_container(
     return (agent_active, container_active)
 
 
+# Mirror the column list of the agents_active_order index exactly so the
+# planner can satisfy the sort directly from it. SQLite's default ASC
+# sorts NULLs first, so ``parent_agent_id ASC`` already gives the
+# documented "NULLS FIRST" semantics without the redundant
+# ``(parent_agent_id IS NULL) DESC`` expression which defeats the index.
 _LIST_ORDER_BY = (
     "ORDER BY active DESC, container_id ASC, "
-    "(parent_agent_id IS NULL) DESC, parent_agent_id ASC, "
-    "label ASC, agent_id ASC"
+    "parent_agent_id ASC, label ASC, agent_id ASC"
 )
 
 

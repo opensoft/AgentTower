@@ -558,34 +558,47 @@ Appended to the existing FEAT-001 `events.jsonl`. One row per
 successful role transition (creation OR change), 0 rows on no-op
 or failure.
 
-**Row shape**:
+**Row shape**: FEAT-006 reuses the FEAT-001
+`events.writer.append_event` helper, so the on-disk record is the
+standard nested envelope — `ts` is added by the writer and
+FEAT-006 fields live under `payload`:
 
 ```json
 {
-  "event_type": "agent_role_change",
-  "ts_utc": "2026-05-07T...",
-  "agent_id": "agt_abc123def456",
-  "prior_role": null,
-  "new_role": "slave",
-  "confirm_provided": false,
-  "socket_peer_uid": 1000
+  "ts": "2026-05-07T14:30:00.123456+00:00",
+  "type": "agent_role_change",
+  "payload": {
+    "agent_id": "agt_abc123def456",
+    "prior_role": null,
+    "new_role": "slave",
+    "confirm_provided": false,
+    "socket_peer_uid": 1000
+  }
 }
 ```
 
-`prior_role` is `null` (JSON literal) on the initial creation
-transition (Q4), regardless of which role was assigned (including
-the default `unknown`). On every other transition `prior_role`
-is the previous string role.
+`payload.prior_role` is `null` (JSON literal) on the initial
+creation transition (Q4), regardless of which role was assigned
+(including the default `unknown`). On every other transition
+`prior_role` is the previous string role.
 
-`confirm_provided` is the **literal** boolean the operator
-passed in the `confirm` request parameter, never rewritten based
-on whether `--confirm` was *required* (Clarifications session
-2026-05-07-continued Q5). `true` when `--confirm` was passed;
-`false` otherwise. Demotion from master with redundant
-`--confirm` logs `true`; `set-role` to a non-master role with
-redundant `--confirm` also logs `true`; `register-self` creation
-always logs `false`. Consumers derive "was confirm required"
-from `prior_role` + `new_role`.
+`payload.confirm_provided` is the **literal** boolean the
+operator passed in the `confirm` request parameter, never
+rewritten based on whether `--confirm` was *required*
+(Clarifications session 2026-05-07-continued Q5). `true` when
+`--confirm` was passed; `false` otherwise. Demotion from master
+with redundant `--confirm` logs `true`; `set-role` to a
+non-master role with redundant `--confirm` also logs `true`;
+`register-self` creation always logs `false`. Consumers derive
+"was confirm required" from `prior_role` + `new_role`.
+
+`payload.socket_peer_uid` is the host uid of the calling process,
+extracted by the daemon from the accepted AF_UNIX connection via
+`SO_PEERCRED` and passed to the agent dispatcher out-of-band so a
+request body cannot spoof it. The sentinel value `-1` indicates
+the kernel did not surface a peer credential — in production this
+would be an unexpected operational anomaly; in tests it is the
+default when DISPATCH is invoked without a real socket.
 
 `set_label` and `set_capability` MUST NOT append rows.
 

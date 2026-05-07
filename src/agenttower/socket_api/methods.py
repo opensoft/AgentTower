@@ -23,7 +23,15 @@ if TYPE_CHECKING:
     from ..discovery.service import DiscoveryService
 
 # ``Handler`` returns the response envelope (already shaped via make_ok / make_error).
-Handler = Callable[["DaemonContext", dict[str, Any]], dict[str, Any]]
+# ``peer_uid`` is the SO_PEERCRED-derived uid of the AF_UNIX peer, injected by
+# the server out-of-band so it cannot be spoofed via the request body. Tests
+# that invoke handlers directly may rely on the default sentinel ``-1``.
+Handler = Callable[..., dict[str, Any]]
+
+
+# Sentinel used when no peer-credential information is available
+# (e.g. unit tests calling DISPATCH directly without a real socket).
+_NO_PEER_UID = -1
 
 
 @dataclass
@@ -44,11 +52,11 @@ class DaemonContext:
     lifecycle_logger: Any = None
 
 
-def _ping(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _ping(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     return errors.make_ok({})
 
 
-def _status(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     delta = (now - ctx.start_time_utc).total_seconds()
     uptime_seconds = max(0, int(delta))
@@ -66,7 +74,7 @@ def _status(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _shutdown(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _shutdown(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     if ctx.shutdown_requested is not None:
         ctx.shutdown_requested.set()
     return errors.make_ok({"shutting_down": True})
@@ -94,7 +102,7 @@ def _scan_result_to_payload(result: Any) -> dict[str, Any]:
     }
 
 
-def _scan_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _scan_containers(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     if ctx.discovery_service is None:
         return errors.make_error(
             errors.INTERNAL_ERROR, "discovery service unavailable"
@@ -113,7 +121,7 @@ def _scan_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, An
     return errors.make_ok(_scan_result_to_payload(result))
 
 
-def _list_containers(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _list_containers(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     if ctx.discovery_service is None:
         return errors.make_error(
             errors.INTERNAL_ERROR, "discovery service unavailable"
@@ -214,7 +222,7 @@ def _pane_row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
-def _scan_panes(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _scan_panes(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     if ctx.pane_service is None:
         return errors.make_error(errors.INTERNAL_ERROR, "pane service unavailable")
     from ..tmux.adapter import TmuxError  # local import: avoid cycles
@@ -230,7 +238,7 @@ def _scan_panes(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     return errors.make_ok(_pane_scan_to_payload(result))
 
 
-def _list_panes(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _list_panes(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
     if ctx.pane_service is None:
         return errors.make_error(errors.INTERNAL_ERROR, "pane service unavailable")
     active_only = params.get("active_only", False)
@@ -285,6 +293,7 @@ def _agent_service_or_error(ctx: DaemonContext) -> tuple[Any, dict[str, Any] | N
 def _dispatch_agent_method(
     ctx: DaemonContext,
     params: dict[str, Any],
+    peer_uid: int,
     *,
     method_name: str,
     pass_uid: bool = False,
@@ -294,6 +303,10 @@ def _dispatch_agent_method(
     Maps :class:`RegistrationError` to the closed-set wire envelope and
     every unexpected ``Exception`` to ``internal_error`` so the daemon
     stays alive (FR-035).
+
+    *peer_uid* is the SO_PEERCRED-derived uid the server extracted from
+    the accepted AF_UNIX connection. It is passed out-of-band so a
+    request body cannot spoof it.
     """
     service, err = _agent_service_or_error(ctx)
     if err is not None:
@@ -308,8 +321,7 @@ def _dispatch_agent_method(
     method = getattr(service, method_name)
     try:
         if pass_uid:
-            socket_peer_uid = params.pop("__socket_peer_uid__", -1)
-            result = method(params, socket_peer_uid=socket_peer_uid)
+            result = method(params, socket_peer_uid=int(peer_uid))
         else:
             result = method(params)
     except RegistrationError as exc:
@@ -327,31 +339,41 @@ def _dispatch_agent_method(
     return errors.make_ok(result)
 
 
-def _register_agent(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _register_agent(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
     return _dispatch_agent_method(
-        ctx, params, method_name="register_agent", pass_uid=True
+        ctx, params, peer_uid, method_name="register_agent", pass_uid=True
     )
 
 
-def _list_agents(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
-    return _dispatch_agent_method(ctx, params, method_name="list_agents")
+def _list_agents(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    return _dispatch_agent_method(ctx, params, peer_uid, method_name="list_agents")
 
 
-def _set_role(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _set_role(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
     return _dispatch_agent_method(
-        ctx, params, method_name="set_role", pass_uid=True
+        ctx, params, peer_uid, method_name="set_role", pass_uid=True
     )
 
 
-def _set_label(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _set_label(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
     return _dispatch_agent_method(
-        ctx, params, method_name="set_label", pass_uid=True
+        ctx, params, peer_uid, method_name="set_label", pass_uid=True
     )
 
 
-def _set_capability(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+def _set_capability(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
     return _dispatch_agent_method(
-        ctx, params, method_name="set_capability", pass_uid=True
+        ctx, params, peer_uid, method_name="set_capability", pass_uid=True
     )
 
 

@@ -205,6 +205,17 @@ class AgentService:
                     project_path_in if project_path_in is not _UNSET else ""
                 )
                 parent_agent_id = parent_in if parent_in is not _UNSET else None
+                # FR-016: a non-null parent demands role=swarm. The
+                # pre-flight only catches the case where ``role_in`` was
+                # explicitly supplied and != "swarm"; here we close the
+                # gap for "parent supplied but role omitted", where the
+                # argparse default "unknown" would otherwise silently
+                # persist alongside a parent_agent_id.
+                if parent_agent_id is not None and role != "swarm":
+                    raise RegistrationError(
+                        "parent_role_mismatch",
+                        "--parent only valid with --role swarm",
+                    )
                 # Validate parent dynamic preconditions before any write
                 # (FR-017): exists, active, role=slave.
                 if isinstance(parent_agent_id, str):

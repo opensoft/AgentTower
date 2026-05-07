@@ -164,3 +164,76 @@ def test_shutdown_with_no_event_returns_ok_anyway(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)  # shutdown_requested is None by default
     envelope = DISPATCH["shutdown"](ctx, {})
     assert envelope == {"ok": True, "result": {"shutting_down": True}}
+
+
+# ---------------------------------------------------------------------------
+# Review-pass-1: peer_uid is plumbed out-of-band, not via params.
+# Regression for the FEAT-006 review finding that ``params.pop("__socket_peer_uid__")``
+# allowed a client to spoof audit provenance (and silently fell back to -1
+# whether or not the server populated it). The dispatcher MUST source
+# peer_uid from the third positional arg the server provides from
+# SO_PEERCRED, and MUST NOT consult the params object for it.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingAgentService:
+    """Minimal stand-in for ``AgentService`` used to capture peer_uid."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict, int | None]] = []
+
+    def register_agent(self, params, *, socket_peer_uid):  # noqa: ANN001
+        self.calls.append(("register_agent", dict(params), socket_peer_uid))
+        return {"agent_id": "agt_000000000001", "role": "unknown"}
+
+    def set_role(self, params, *, socket_peer_uid):  # noqa: ANN001
+        self.calls.append(("set_role", dict(params), socket_peer_uid))
+        return {"agent_id": params.get("agent_id"), "role": params.get("role")}
+
+
+def _agent_ctx(tmp_path: Path, service: _RecordingAgentService) -> DaemonContext:
+    ctx = _ctx(tmp_path)
+    ctx.agent_service = service
+    return ctx
+
+
+def test_register_agent_uses_third_arg_peer_uid(tmp_path: Path) -> None:
+    service = _RecordingAgentService()
+    ctx = _agent_ctx(tmp_path, service)
+    DISPATCH["register_agent"](ctx, {"role": "slave"}, 4242)
+    assert service.calls == [("register_agent", {"role": "slave"}, 4242)]
+
+
+def test_register_agent_ignores_params_socket_peer_uid_field(tmp_path: Path) -> None:
+    """A client cannot spoof socket_peer_uid via the request body."""
+    service = _RecordingAgentService()
+    ctx = _agent_ctx(tmp_path, service)
+    DISPATCH["register_agent"](
+        ctx,
+        {"role": "slave", "__socket_peer_uid__": 9999, "socket_peer_uid": 9999},
+        1000,
+    )
+    # The recorded peer_uid is the third arg the server supplied — the
+    # spoofed body fields are forwarded unchanged but ignored by audit.
+    assert service.calls[0][2] == 1000
+
+
+def test_register_agent_default_peer_uid_when_called_without_third_arg(
+    tmp_path: Path,
+) -> None:
+    """Tests that exercise DISPATCH directly without a real socket get -1."""
+    service = _RecordingAgentService()
+    ctx = _agent_ctx(tmp_path, service)
+    DISPATCH["register_agent"](ctx, {"role": "slave"})
+    assert service.calls[0][2] == -1
+
+
+def test_set_role_uses_third_arg_peer_uid(tmp_path: Path) -> None:
+    service = _RecordingAgentService()
+    ctx = _agent_ctx(tmp_path, service)
+    DISPATCH["set_role"](ctx, {"agent_id": "agt_x", "role": "slave"}, 1000)
+    assert service.calls[-1] == (
+        "set_role",
+        {"agent_id": "agt_x", "role": "slave"},
+        1000,
+    )

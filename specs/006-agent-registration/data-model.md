@@ -243,39 +243,50 @@ Closed-set values per FR-021:
 
 ### 4.4 `AuditRecord` (JSONL row shape)
 
+FEAT-006 reuses the FEAT-001 `events.writer.append_event` helper
+unchanged, so its on-disk shape is the standard nested envelope —
+`ts` is added by the writer and the FEAT-006 fields live under
+`payload`:
+
 ```json
 {
-  "event_type": "agent_role_change",
-  "ts_utc": "2026-05-07T14:30:00.123456+00:00",
-  "agent_id": "agt_abc123def456",
-  "prior_role": null,
-  "new_role": "slave",
-  "confirm_provided": false,
-  "socket_peer_uid": 1000
+  "ts": "2026-05-07T14:30:00.123456+00:00",
+  "type": "agent_role_change",
+  "payload": {
+    "agent_id": "agt_abc123def456",
+    "prior_role": null,
+    "new_role": "slave",
+    "confirm_provided": false,
+    "socket_peer_uid": 1000
+  }
 }
 ```
 
 Field rules:
 
-- `event_type` — fixed literal `"agent_role_change"` for FEAT-006.
-- `ts_utc` — daemon clock; ISO-8601 with microseconds and explicit
-  `+00:00` UTC offset.
-- `prior_role` — JSON `null` on first registration of an agent
-  (creation transition); the previous string role on every other
-  transition (Clarifications Q4).
-- `new_role` — closed-set string from FR-004.
-- `confirm_provided` — the **literal** boolean the operator passed
-  in the `confirm` request parameter, never rewritten based on
-  whether `--confirm` was *required* by the transition
-  (Clarifications session 2026-05-07-continued Q5). `true` when
-  the CLI passed `--confirm`; `false` when it did not. Demotion
-  with redundant `--confirm` logs `true`; `set-role` to a
-  non-master role with redundant `--confirm` also logs `true`;
-  `register-self` creation always logs `false`. Consumers that
-  need "was confirm required" derive it from `prior_role` +
-  `new_role`.
-- `socket_peer_uid` — host uid of the calling process, from
-  FEAT-002 `SO_PEERCRED`.
+- `ts` — daemon clock, prepended by `events.writer.append_event`;
+  ISO-8601 with microseconds and explicit `+00:00` UTC offset.
+- `type` — fixed literal `"agent_role_change"` for FEAT-006.
+- `payload.prior_role` — JSON `null` on first registration of an
+  agent (creation transition); the previous string role on every
+  other transition (Clarifications Q4).
+- `payload.new_role` — closed-set string from FR-004.
+- `payload.confirm_provided` — the **literal** boolean the
+  operator passed in the `confirm` request parameter, never
+  rewritten based on whether `--confirm` was *required* by the
+  transition (Clarifications session 2026-05-07-continued Q5).
+  `true` when the CLI passed `--confirm`; `false` when it did
+  not. Demotion with redundant `--confirm` logs `true`;
+  `set-role` to a non-master role with redundant `--confirm` also
+  logs `true`; `register-self` creation always logs `false`.
+  Consumers that need "was confirm required" derive it from
+  `prior_role` + `new_role`.
+- `payload.socket_peer_uid` — host uid of the calling process, from
+  FEAT-002 `SO_PEERCRED`. The daemon extracts this from the
+  accepted AF_UNIX connection out-of-band and a request body cannot
+  spoof it; `-1` indicates the kernel did not surface a peer
+  credential (e.g. tests calling the dispatcher directly without a
+  real socket).
 
 No-op writes (set-* with the same value the agent already has;
 register-self with an unchanged role) MUST NOT append a row

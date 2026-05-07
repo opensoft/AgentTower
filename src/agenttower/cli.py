@@ -1053,7 +1053,15 @@ def _register_self_command(args: argparse.Namespace) -> int:
     except DaemonError as exc:
         return _emit_daemon_error(exc, args.json)
 
+    # Forward-compat handshake (FR-040 / edge case line 79). The CLI
+    # advertises the schema version it was built against so the daemon
+    # can refuse with ``schema_version_newer`` when its own schema has
+    # advanced past what the CLI knows. Without this hint the server
+    # cannot detect a stale CLI calling a newer daemon.
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
     params: dict[str, Any] = {
+        "schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION),
         "container_id": target.container_id,
         "pane_composite_key": {
             "container_id": target.pane_key[0],

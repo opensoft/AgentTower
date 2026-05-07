@@ -1,9 +1,14 @@
 """JSONL audit-row writer for FEAT-006 role transitions (FR-014).
 
 Every successful role transition (creation OR change) appends one row
-with ``event_type=agent_role_change`` to the existing FEAT-001
-``events.jsonl`` file. ``prior_role`` is JSON ``null`` on creation
-(Clarifications Q4); ``confirm_provided`` is the literal request value
+to the existing FEAT-001 ``events.jsonl`` file via the shared
+``events.writer.append_event`` helper. The on-disk record is the
+standard nested envelope — ``{"ts": <utc-iso>, "type":
+"agent_role_change", "payload": {...}}`` — with ``ts`` prepended by
+the writer and FEAT-006-specific fields nested under ``payload``.
+
+``payload.prior_role`` is JSON ``null`` on creation (Clarifications
+Q4); ``payload.confirm_provided`` is the literal request value
 (Clarifications session 2026-05-07-continued Q5).
 
 No-op writes (FR-027) and failed writes (FR-014, FR-035) MUST NOT
