@@ -46,7 +46,8 @@ def test_v2_to_v3_migration_creates_panes_and_pane_scans(tmp_path: Path) -> None
     conn, status = _open(state_db)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 3
+        # FEAT-006 bumped CURRENT_SCHEMA_VERSION to 4; v2→current still creates panes/pane_scans.
+        assert version == schema.CURRENT_SCHEMA_VERSION
         tables = {
             r[0]
             for r in conn.execute(
@@ -65,7 +66,8 @@ def test_v3_reopen_is_idempotent(tmp_path: Path) -> None:
     conn, _ = _open(state_db)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 3
+        # FEAT-006 bumped CURRENT_SCHEMA_VERSION to 4; v2→current still creates panes/pane_scans.
+        assert version == schema.CURRENT_SCHEMA_VERSION
         # Both new indexes should exist after re-open.
         indexes = {
             r[0]
@@ -79,13 +81,23 @@ def test_v3_reopen_is_idempotent(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_open_registry_refuses_future_v4(tmp_path: Path) -> None:
+def test_open_registry_refuses_future_version(tmp_path: Path) -> None:
+    """A schema_version newer than CURRENT_SCHEMA_VERSION must be refused.
+
+    Originally written as ``test_open_registry_refuses_future_v4`` when
+    ``CURRENT_SCHEMA_VERSION=3``; FEAT-006 bumped to 4 so the test now
+    seeds ``CURRENT_SCHEMA_VERSION + 1`` to keep the forward-compat
+    invariant testable independent of the build version.
+    """
     state_db = _make_state_db(tmp_path)
     state_db.parent.mkdir(mode=0o700, exist_ok=True)
     conn = sqlite3.connect(str(state_db), isolation_level=None)
     try:
         conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (4)")
+        conn.execute(
+            "INSERT INTO schema_version (version) VALUES (?)",
+            (schema.CURRENT_SCHEMA_VERSION + 1,),
+        )
     finally:
         conn.close()
     os.chmod(state_db, 0o600)

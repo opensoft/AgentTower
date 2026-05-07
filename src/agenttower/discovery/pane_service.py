@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover — POSIX only
 
 from ..events import writer as events_writer
 from ..socket_api import errors as _errors
+from ..state import agents as state_agents
 from ..state import containers as state_containers
 from ..state import panes as state_panes
 from ..state.panes import (
@@ -426,6 +427,21 @@ class PaneDiscoveryService:
         try:
             state_panes.apply_pane_reconcile_writeset(
                 self._conn, write_set=write_set, now_iso=started_at
+            )
+            # FEAT-006 FR-009a / FR-009 / Clarifications Q2: in the same
+            # transaction as the pane reconcile, update agents.last_seen_at
+            # for every pane observed active=true and cascade
+            # agents.active=0 for every pane that transitioned 1→0. The
+            # FEAT-006 register-mutex is NOT acquired here; cross-subsystem
+            # ordering with register_agent is via SQLite BEGIN IMMEDIATE.
+            active_keys = [
+                u.composite_key for u in write_set.upserts if u.pane_active
+            ]
+            state_agents.update_last_seen_at(
+                self._conn, pane_keys=active_keys, now_iso=started_at
+            )
+            state_agents.cascade_agents_active_from_pane(
+                self._conn, pane_keys=write_set.inactivate
             )
             completed_at = _now_iso()
             state_panes.insert_pane_scan(

@@ -79,7 +79,9 @@ def test_v1_to_v3_migrates_in_one_open(tmp_path: Path) -> None:
     try:
         assert status == "already initialized"
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 3
+        # FEAT-006 bumped CURRENT_SCHEMA_VERSION to 4; the v1→current migration
+        # still needs to land all FEAT-003 + FEAT-004 tables in one open call.
+        assert version == schema.CURRENT_SCHEMA_VERSION
 
         tables = {
             r[0]
@@ -127,8 +129,11 @@ def test_v3_reopen_does_not_create_or_alter_anything(tmp_path: Path) -> None:
     # EXISTS`` so the snapshot must not change.
     conn2, _ = _open(state_db)
     try:
-        # Sanity: still on v3.
-        assert conn2.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+        # Sanity: still at the build's current version.
+        assert (
+            conn2.execute("SELECT version FROM schema_version").fetchone()[0]
+            == schema.CURRENT_SCHEMA_VERSION
+        )
     finally:
         conn2.close()
 

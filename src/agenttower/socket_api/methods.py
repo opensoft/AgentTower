@@ -39,6 +39,7 @@ class DaemonContext:
     shutdown_requested: threading.Event | None = None
     discovery_service: "DiscoveryService | None" = None
     pane_service: "PaneDiscoveryService | None" = None
+    agent_service: Any = None
     events_file: Path | None = None
     lifecycle_logger: Any = None
 
@@ -259,9 +260,104 @@ def _internal_error_message(message: str, *, prefix: str) -> str:
         return prefix
     return f"{prefix}: {bounded}"
 
+
+# ---------------------------------------------------------------------------
+# FEAT-006 — agent-registration handlers (FR-023).
+#
+# Each handler delegates to ``ctx.agent_service`` (an ``AgentService``
+# instance wired by the daemon) and maps the agent-domain
+# :class:`RegistrationError` into the FEAT-002 closed-set wire envelope.
+# Schema-newer requests are refused via SCHEMA_VERSION_NEWER without
+# touching state (FR-040, edge case line 79).
+# ---------------------------------------------------------------------------
+
+
+def _agent_service_or_error(ctx: DaemonContext) -> tuple[Any, dict[str, Any] | None]:
+    """Return ``(service, None)`` or ``(None, error_envelope)``."""
+    service = getattr(ctx, "agent_service", None)
+    if service is None:
+        return None, errors.make_error(
+            errors.INTERNAL_ERROR, "agent service unavailable"
+        )
+    return service, None
+
+
+def _dispatch_agent_method(
+    ctx: DaemonContext,
+    params: dict[str, Any],
+    *,
+    method_name: str,
+    pass_uid: bool = False,
+) -> dict[str, Any]:
+    """Dispatch *method_name* on the wired ``AgentService``.
+
+    Maps :class:`RegistrationError` to the closed-set wire envelope and
+    every unexpected ``Exception`` to ``internal_error`` so the daemon
+    stays alive (FR-035).
+    """
+    service, err = _agent_service_or_error(ctx)
+    if err is not None:
+        return err
+    # Lazy import keeps this module's import graph independent of the
+    # ``agents`` package (which depends on ``socket_api.errors``).
+    from ..agents.errors import RegistrationError
+
+    if not isinstance(params, dict):
+        return errors.make_error(errors.BAD_REQUEST, "params must be an object")
+
+    method = getattr(service, method_name)
+    try:
+        if pass_uid:
+            socket_peer_uid = params.pop("__socket_peer_uid__", -1)
+            result = method(params, socket_peer_uid=socket_peer_uid)
+        else:
+            result = method(params)
+    except RegistrationError as exc:
+        if exc.code in errors.CLOSED_CODE_SET:
+            return errors.make_error(exc.code, exc.message)
+        return errors.make_error(
+            errors.INTERNAL_ERROR,
+            _internal_error_message(exc.message, prefix=method_name),
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        return errors.make_error(
+            errors.INTERNAL_ERROR,
+            _internal_error_message(str(exc), prefix=method_name),
+        )
+    return errors.make_ok(result)
+
+
+def _register_agent(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    return _dispatch_agent_method(
+        ctx, params, method_name="register_agent", pass_uid=True
+    )
+
+
+def _list_agents(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    return _dispatch_agent_method(ctx, params, method_name="list_agents")
+
+
+def _set_role(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    return _dispatch_agent_method(
+        ctx, params, method_name="set_role", pass_uid=True
+    )
+
+
+def _set_label(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    return _dispatch_agent_method(
+        ctx, params, method_name="set_label", pass_uid=True
+    )
+
+
+def _set_capability(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    return _dispatch_agent_method(
+        ctx, params, method_name="set_capability", pass_uid=True
+    )
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
-# FEAT-003's two and FEAT-004's two new entries. FEAT-002 keys retain
-# insertion order (FR-022).
+# FEAT-003's two, FEAT-004's two, and FEAT-006's five new entries.
+# FEAT-002 keys retain insertion order (FR-022).
 DISPATCH: dict[str, Handler] = {
     "ping": _ping,
     "status": _status,
@@ -270,4 +366,9 @@ DISPATCH: dict[str, Handler] = {
     "list_containers": _list_containers,
     "scan_panes": _scan_panes,
     "list_panes": _list_panes,
+    "register_agent": _register_agent,
+    "list_agents": _list_agents,
+    "set_role": _set_role,
+    "set_label": _set_label,
+    "set_capability": _set_capability,
 }

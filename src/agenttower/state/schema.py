@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -154,9 +154,69 @@ def _apply_migration_v3(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_v4(conn: sqlite3.Connection) -> None:
+    """Create FEAT-006 ``agents`` table + indexes (data-model.md §2.1, §2.2).
+
+    Idempotent because of IF NOT EXISTS guards. Touches no FEAT-001 /
+    FEAT-002 / FEAT-003 / FEAT-004 table (FR-037).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agents (
+            agent_id                 TEXT NOT NULL PRIMARY KEY,
+            container_id             TEXT NOT NULL,
+            tmux_socket_path         TEXT NOT NULL,
+            tmux_session_name        TEXT NOT NULL,
+            tmux_window_index        INTEGER NOT NULL,
+            tmux_pane_index          INTEGER NOT NULL,
+            tmux_pane_id             TEXT NOT NULL,
+            role                     TEXT NOT NULL CHECK(role IN ('master','slave','swarm','test-runner','shell','unknown')),
+            capability               TEXT NOT NULL CHECK(capability IN ('claude','codex','gemini','opencode','shell','test-runner','unknown')),
+            label                    TEXT NOT NULL DEFAULT '',
+            project_path             TEXT NOT NULL DEFAULT '',
+            parent_agent_id          TEXT,
+            effective_permissions    TEXT NOT NULL,
+            created_at               TEXT NOT NULL,
+            last_registered_at       TEXT NOT NULL,
+            last_seen_at             TEXT,
+            active                   INTEGER NOT NULL CHECK(active IN (0, 1)),
+            UNIQUE (
+                container_id,
+                tmux_socket_path,
+                tmux_session_name,
+                tmux_window_index,
+                tmux_pane_index,
+                tmux_pane_id
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS agents_active_order
+            ON agents(active DESC, container_id ASC, parent_agent_id ASC,
+                      label ASC, agent_id ASC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS agents_parent_lookup
+            ON agents(parent_agent_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS agents_pane_lookup
+            ON agents(container_id, tmux_socket_path, tmux_session_name,
+                      tmux_window_index, tmux_pane_index, tmux_pane_id)
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
     3: _apply_migration_v3,
+    4: _apply_migration_v4,
 }
 
 
@@ -230,11 +290,12 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
             f"on-disk schema_version={current_version} is newer than this "
             f"build supports ({CURRENT_SCHEMA_VERSION}); refusing to open"
         )
-    # Existing DB at current version: ensure FEAT-003 + FEAT-004 tables
-    # exist in case the schema_version row got there ahead of the tables
-    # (defensive — every migration body uses IF NOT EXISTS).
+    # Existing DB at current version: ensure FEAT-003 + FEAT-004 + FEAT-006
+    # tables exist in case the schema_version row got there ahead of the
+    # tables (defensive — every migration body uses IF NOT EXISTS).
     _apply_migration_v2(conn)
     _apply_migration_v3(conn)
+    _apply_migration_v4(conn)
 
 
 def _chmod_new_companions(

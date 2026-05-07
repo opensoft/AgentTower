@@ -164,6 +164,37 @@ def send_request(
     )
 
 
+def register_agent(
+    socket_path: Path, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Typed wrapper for FEAT-006 ``register_agent`` (FR-023).
+
+    Reuses the same connect / framing path as :func:`send_request`. Raises
+    :class:`DaemonUnavailable` on socket-level failure and
+    :class:`DaemonError` carrying the closed-set ``code`` on a daemon
+    error envelope.
+    """
+    return send_request(socket_path, "register_agent", params)
+
+
+def list_agents(
+    socket_path: Path, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return send_request(socket_path, "list_agents", params)
+
+
+def set_role(socket_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    return send_request(socket_path, "set_role", params)
+
+
+def set_label(socket_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    return send_request(socket_path, "set_label", params)
+
+
+def set_capability(socket_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    return send_request(socket_path, "set_capability", params)
+
+
 def _connect_via_chdir(sock: socket.socket, socket_path: Path) -> None:
     """Connect to *socket_path* via ``chdir(parent) + connect(basename)``.
 

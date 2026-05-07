@@ -37,7 +37,8 @@ def test_open_registry_migrates_v1_to_v2(tmp_path: Path) -> None:
     try:
         assert status == "already initialized"
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 3
+        # FEAT-006 bumped CURRENT_SCHEMA_VERSION to 4; v1→current still passes.
+        assert version == schema.CURRENT_SCHEMA_VERSION
         tables = {
             r[0]
             for r in conn.execute(
@@ -56,7 +57,8 @@ def test_open_registry_v2_reopen_is_idempotent(tmp_path: Path) -> None:
     conn, _ = schema.open_registry(state_db, namespace_root=state_db.parent)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 3
+        # FEAT-006 bumped CURRENT_SCHEMA_VERSION to 4; v1→current still passes.
+        assert version == schema.CURRENT_SCHEMA_VERSION
     finally:
         conn.close()
 
