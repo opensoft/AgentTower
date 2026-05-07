@@ -146,6 +146,33 @@ def test_set_label_round_trip(env_with_fake) -> None:
     assert body["agents"][0]["role"] == "slave"
 
 
+def test_set_role_swarm_text_mode_emits_code_line(env_with_fake) -> None:
+    """Review-pass-5: text-mode pre-flight errors carry both ``error:``
+    and ``code: <closed-set-token>`` on stderr (matches the established
+    CLI surface used by ``_emit_register_error`` / ``_emit_daemon_error``).
+    """
+    env, _home = _setup_env(env_with_fake)
+    agent_id = _seed_one_agent(env)
+    proc = _run_cli(env, "set-role", "--target", agent_id, "--role", "swarm")
+    assert proc.returncode == 3
+    assert "error:" in proc.stderr
+    assert "code: swarm_role_via_set_role_rejected" in proc.stderr
+    # Text mode keeps stdout free of incidental output.
+    assert proc.stdout == "", f"unexpected stdout: {proc.stdout!r}"
+
+
+def test_set_role_master_without_confirm_text_mode_emits_code_line(
+    env_with_fake,
+) -> None:
+    env, _home = _setup_env(env_with_fake)
+    agent_id = _seed_one_agent(env)
+    proc = _run_cli(env, "set-role", "--target", agent_id, "--role", "master")
+    assert proc.returncode == 3
+    assert "error:" in proc.stderr
+    assert "code: master_confirm_required" in proc.stderr
+    assert proc.stdout == "", f"unexpected stdout: {proc.stdout!r}"
+
+
 def test_set_label_rejects_malformed_target_client_side(env_with_fake) -> None:
     """Review-pass-2: set-* validate --target locally (R-020 / contracts/cli.md).
 

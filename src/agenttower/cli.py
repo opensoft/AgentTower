@@ -1170,49 +1170,26 @@ def _set_role_command(args: argparse.Namespace) -> int:
 
     # Client-side mirror of FR-012 / FR-011 so we fail fast without a
     # round-trip when the operator passed an obviously unsafe combo.
-    # ``--json`` mode is stdout-only: stderr stays quiet so the caller's
-    # pipe of stdout to ``jq`` never picks up incidental human prose.
+    # The shared ``_emit_local_error`` helper enforces the ``--json``
+    # purity contract AND the established ``error: <msg>`` /
+    # ``code: <token>`` text-mode shape so both branches stay aligned.
     if args.role == "swarm":
-        # The contract calls for a single actionable message regardless of
-        # output format — JSON consumers shouldn't have to round-trip back
-        # to docs to figure out the recovery step.
-        swarm_message = (
+        _emit_local_error(
+            "swarm_role_via_set_role_rejected",
+            # Single actionable message in both formats — JSON consumers
+            # shouldn't have to round-trip back to docs for the recovery
+            # step.
             "set-role --role swarm is rejected; use "
-            "`agenttower register-self --role swarm --parent <agent-id>` instead"
+            "`agenttower register-self --role swarm --parent <agent-id>` instead",
+            args.json,
         )
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "error": {
-                            "code": "swarm_role_via_set_role_rejected",
-                            "message": swarm_message,
-                        },
-                    }
-                )
-            )
-        else:
-            print(f"error: {swarm_message}", file=sys.stderr)
         return 3
     if args.role == "master" and not args.confirm:
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "error": {
-                            "code": "master_confirm_required",
-                            "message": "master role assignment requires --confirm",
-                        },
-                    }
-                )
-            )
-        else:
-            print(
-                "error: master role assignment requires --confirm",
-                file=sys.stderr,
-            )
+        _emit_local_error(
+            "master_confirm_required",
+            "master role assignment requires --confirm",
+            args.json,
+        )
         return 3
 
     params = {
@@ -1251,25 +1228,11 @@ def _send_set_command(
 
     target = params.get("agent_id")
     if not isinstance(target, str) or not AGENT_ID_RE.match(target):
-        message = (
-            "--target must match agt_<12-hex-lowercase>; "
-            f"got {target!r}"
+        _emit_local_error(
+            "value_out_of_set",
+            f"--target must match agt_<12-hex-lowercase>; got {target!r}",
+            json_mode,
         )
-        if json_mode:
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "error": {
-                            "code": "value_out_of_set",
-                            "message": message,
-                        },
-                    }
-                )
-            )
-        else:
-            print(f"error: {message}", file=sys.stderr)
-            print("code: value_out_of_set", file=sys.stderr)
         return 3
     try:
         result = send_request(
@@ -1293,6 +1256,30 @@ def _send_set_command(
         print(f"new_value={result.get('new_value')}")
         print(f"audit_appended={str(result.get('audit_appended', False)).lower()}")
     return 0
+
+
+def _emit_local_error(code: str, message: str, json_mode: bool) -> None:
+    """Emit a local (pre-flight, client-side) closed-set error.
+
+    Centralizes the ``--json`` purity contract and the established
+    ``error: <msg>`` / ``code: <token>`` text-mode shape so every
+    pre-flight rejection stays consistent regardless of where it
+    originates. Caller picks the exit code so this helper is reusable
+    for both ``host_context_unsupported`` (exit 1) and the closed-set
+    daemon-error mirror (exit 3) cases.
+    """
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {"code": code, "message": message},
+                }
+            )
+        )
+    else:
+        print(f"error: {message}", file=sys.stderr)
+        print(f"code: {code}", file=sys.stderr)
 
 
 def _emit_register_error(exc: Any, json_mode: bool) -> int:
