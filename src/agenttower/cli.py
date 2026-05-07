@@ -1173,6 +1173,13 @@ def _set_role_command(args: argparse.Namespace) -> int:
     # ``--json`` mode is stdout-only: stderr stays quiet so the caller's
     # pipe of stdout to ``jq`` never picks up incidental human prose.
     if args.role == "swarm":
+        # The contract calls for a single actionable message regardless of
+        # output format — JSON consumers shouldn't have to round-trip back
+        # to docs to figure out the recovery step.
+        swarm_message = (
+            "set-role --role swarm is rejected; use "
+            "`agenttower register-self --role swarm --parent <agent-id>` instead"
+        )
         if args.json:
             print(
                 json.dumps(
@@ -1180,17 +1187,13 @@ def _set_role_command(args: argparse.Namespace) -> int:
                         "ok": False,
                         "error": {
                             "code": "swarm_role_via_set_role_rejected",
-                            "message": "set-role --role swarm is rejected",
+                            "message": swarm_message,
                         },
                     }
                 )
             )
         else:
-            print(
-                "error: set-role --role swarm is rejected; use "
-                "`agenttower register-self --role swarm --parent <agent-id>` instead",
-                file=sys.stderr,
-            )
+            print(f"error: {swarm_message}", file=sys.stderr)
         return 3
     if args.role == "master" and not args.confirm:
         if args.json:

@@ -60,3 +60,42 @@ def test_unknown_role_message_lists_canonical_tokens(tmp_path: Path) -> None:
     msg = info.value.message.lower()
     for tok in ("master", "slave", "swarm", "test-runner", "shell", "unknown"):
         assert tok in msg
+
+
+def test_register_agent_rejects_unknown_keys(tmp_path: Path) -> None:
+    """Review-pass-3: unknown params keys MUST fail with bad_request.
+
+    Mirrors the FR-026 ``unknown_filter`` gate ``list_agents`` enforces.
+    Without this, a stale CLI sending an obsolete or typo'd field would
+    silently see its registration succeed with that field ignored —
+    making forward-compat issues look like "it just worked".
+    """
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service)
+    params = register_params(role="slave")
+    params["typo_label"] = "oops"
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(params, socket_peer_uid=1000)
+    assert info.value.code == "bad_request"
+    assert "typo_label" in info.value.message
+
+
+def test_register_agent_rejects_attempted_socket_peer_uid_spoof(
+    tmp_path: Path,
+) -> None:
+    """A client cannot smuggle ``socket_peer_uid`` via the request body.
+
+    The dispatcher already sources ``peer_uid`` out-of-band from
+    SO_PEERCRED (review-pass-1), but layered defence: the unknown-keys
+    gate refuses the request entirely so the audit trail is unambiguous.
+    """
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service)
+    params = register_params(role="slave")
+    params["socket_peer_uid"] = 9999
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(params, socket_peer_uid=1000)
+    assert info.value.code == "bad_request"
+    assert "socket_peer_uid" in info.value.message

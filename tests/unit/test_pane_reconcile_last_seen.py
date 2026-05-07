@@ -153,6 +153,54 @@ def test_set_label_does_not_touch_last_seen_at(tmp_path: Path) -> None:
     )
 
 
+def test_update_last_seen_at_chunks_above_sqlite_param_limit(tmp_path: Path) -> None:
+    """Review-pass-3: large scans must not hit SQLITE_MAX_VARIABLE_NUMBER.
+
+    Each pane composite key contributes 6 bound parameters, plus one
+    for ``now_iso``. SQLite's default limit is 999 on older builds, so
+    a single UPDATE could only handle ~166 keys. Drive a count well
+    above the chunk size to prove the helper batches statements rather
+    than emitting one giant UPDATE that would fail at runtime.
+    """
+    from agenttower.state.agents import _PANE_KEY_BATCH
+
+    service = make_service(tmp_path)
+    seed_container(service)
+
+    # Build many pane keys — they don't have to match real seeded panes
+    # for the UPDATE itself to run; we're proving the SQL emits cleanly.
+    bench_keys = [
+        (
+            CK_DEFAULT[0],
+            CK_DEFAULT[1],
+            CK_DEFAULT[2],
+            window // 32,
+            window % 32,
+            f"%{window}",
+        )
+        for window in range(_PANE_KEY_BATCH * 2 + 25)
+    ]
+
+    conn = service.connection_factory()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # If we ever regress to a single UPDATE, this raises
+        # ``sqlite3.OperationalError: too many SQL variables`` on a
+        # default SQLite build.
+        state_agents.update_last_seen_at(
+            conn,
+            pane_keys=bench_keys,
+            now_iso="2026-05-07T12:00:00.000000+00:00",
+        )
+        state_agents.cascade_agents_active_from_pane(
+            conn,
+            pane_keys=bench_keys,
+        )
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+
 def test_reconcile_updates_last_seen_for_every_observed_pane(tmp_path: Path) -> None:
     """Review-pass-2: agents bound to non-tmux-focused panes still get
     ``last_seen_at`` bumped on reconciliation.

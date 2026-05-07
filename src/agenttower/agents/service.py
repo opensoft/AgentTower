@@ -74,9 +74,39 @@ class AgentService:
     # register_agent (FR-007 / FR-008 / FR-010 / FR-015 / FR-018a / etc.)
     # ------------------------------------------------------------------ #
 
+    # Closed set of keys ``register_agent`` accepts on the wire. Anything
+    # outside this set is a forward-compat / typo signal and is refused
+    # with ``bad_request`` rather than silently ignored — mirrors the
+    # FR-026 ``unknown_filter`` gate that ``list_agents`` already enforces.
+    _REGISTER_AGENT_ALLOWED_KEYS = frozenset(
+        {
+            "schema_version",
+            "container_id",
+            "pane_composite_key",
+            "role",
+            "capability",
+            "label",
+            "project_path",
+            "parent_agent_id",
+            "confirm",
+        }
+    )
+
     def register_agent(
         self, params: dict[str, Any], *, socket_peer_uid: int
     ) -> dict[str, Any]:
+        # 0. Closed-key validation (FR forward-compat / FR-035 hygiene).
+        #    A typo or a stale-CLI extra field would otherwise be silently
+        #    ignored — making forward-compat issues look like "it just
+        #    worked". Refuse loudly so the caller gets a stable signal.
+        unknown = sorted(set(params.keys()) - self._REGISTER_AGENT_ALLOWED_KEYS)
+        if unknown:
+            raise RegistrationError(
+                "bad_request",
+                "register_agent: unknown params keys "
+                f"{unknown}; allowed: {sorted(self._REGISTER_AGENT_ALLOWED_KEYS)}",
+            )
+
         # 1. Forward-compat schema check (edge case line 79). The CLI
         #    sends a ``schema_version`` hint mirroring FEAT-005; we
         #    refuse without writing if the daemon's schema is newer

@@ -213,6 +213,24 @@ def update_agent_capability(
     )
 
 
+# Each PaneCompositeKey contributes 6 placeholders. SQLite's default
+# ``SQLITE_MAX_VARIABLE_NUMBER`` is 999 on builds older than 3.32 (and
+# 32766 on newer ones — we don't want to bet on the runtime version).
+# 100 keys × 6 = 600 placeholders leaves headroom for an additional
+# scalar in the UPDATE (``now_iso``).
+_PANE_KEY_BATCH = 100
+
+_PANE_KEY_PREDICATE = (
+    "(container_id = ? AND tmux_socket_path = ? AND tmux_session_name = ? "
+    "AND tmux_window_index = ? AND tmux_pane_index = ? AND tmux_pane_id = ?)"
+)
+
+
+def _chunk(items: list[Any], size: int) -> Iterable[list[Any]]:
+    for offset in range(0, len(items), size):
+        yield items[offset : offset + size]
+
+
 def update_last_seen_at(
     conn: sqlite3.Connection,
     *,
@@ -222,20 +240,22 @@ def update_last_seen_at(
     """UPDATE ``last_seen_at`` on every agent bound to a pane in *pane_keys*.
 
     Used by the FEAT-004 pane reconciliation transaction (FR-009a /
-    Clarifications Q2). Caller MUST hold a transaction.
+    Clarifications Q2). Caller MUST hold a transaction. *pane_keys* is
+    chunked at ``_PANE_KEY_BATCH`` per UPDATE so a large scan never
+    trips SQLite's ``SQLITE_MAX_VARIABLE_NUMBER`` ceiling at runtime.
     """
     keys = list(pane_keys)
     if not keys:
         return
-    clauses = [
-        "(container_id = ? AND tmux_socket_path = ? AND tmux_session_name = ? "
-        "AND tmux_window_index = ? AND tmux_pane_index = ? AND tmux_pane_id = ?)"
-    ] * len(keys)
-    sql = "UPDATE agents SET last_seen_at = ? WHERE " + " OR ".join(clauses)
-    params: list[Any] = [now_iso]
-    for key in keys:
-        params.extend(key)
-    conn.execute(sql, params)
+    for batch in _chunk(keys, _PANE_KEY_BATCH):
+        sql = (
+            "UPDATE agents SET last_seen_at = ? WHERE "
+            + " OR ".join([_PANE_KEY_PREDICATE] * len(batch))
+        )
+        params: list[Any] = [now_iso]
+        for key in batch:
+            params.extend(key)
+        conn.execute(sql, params)
 
 
 def cascade_agents_active_from_pane(
@@ -246,20 +266,21 @@ def cascade_agents_active_from_pane(
     """Set ``agents.active = 0`` for every agent bound to a pane in *pane_keys*.
 
     Used by the FEAT-004 reconciliation when a pane transitions
-    active→inactive (FR-009). Caller MUST hold a transaction.
+    active→inactive (FR-009). Caller MUST hold a transaction. Same
+    batching strategy as :func:`update_last_seen_at`.
     """
     keys = list(pane_keys)
     if not keys:
         return
-    clauses = [
-        "(container_id = ? AND tmux_socket_path = ? AND tmux_session_name = ? "
-        "AND tmux_window_index = ? AND tmux_pane_index = ? AND tmux_pane_id = ?)"
-    ] * len(keys)
-    sql = "UPDATE agents SET active = 0 WHERE " + " OR ".join(clauses)
-    params: list[Any] = []
-    for key in keys:
-        params.extend(key)
-    conn.execute(sql, params)
+    for batch in _chunk(keys, _PANE_KEY_BATCH):
+        sql = (
+            "UPDATE agents SET active = 0 WHERE "
+            + " OR ".join([_PANE_KEY_PREDICATE] * len(batch))
+        )
+        params: list[Any] = []
+        for key in batch:
+            params.extend(key)
+        conn.execute(sql, params)
 
 
 def select_agent_by_id(
