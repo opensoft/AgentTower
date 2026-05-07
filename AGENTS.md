@@ -16,6 +16,25 @@ Read these project docs before creating or implementing specs:
 
 Spec Kit lives under `.specify/`. OpenSpec lives under `openspec/`.
 
+## Claude Launch Rule
+
+When starting a new Claude session for AgentTower bench work, always start it
+with the `yolo` shell function from the bench user's `~/.zshrc`. Do not launch
+raw `claude` directly. `yolo` is required because it starts Claude with the
+expected bypass-permissions and teammate-mode flags for these tmux-driven
+workflows.
+
+If a Claude session was started without `yolo`, stop it and restart correctly
+before continuing.
+
+## Tmux Prompt Rule
+
+When prompting Claude in a tmux pane, always submit the prompt with a carriage
+return immediately after sending the text. Do not leave a prompt sitting in the
+input buffer unsubmitted. If you use `tmux send-keys` to send prompt text, send
+`C-m` in the same action or immediately after it, then verify the prompt was
+actually submitted before waiting for output.
+
 ## Spec Kit Workflow Rules
 
 Follow this sequence for feature work. Use the slash-command spelling supported
@@ -25,14 +44,21 @@ dot commands are installed), but keep the same order:
 ```text
 /speckit.specify <description>   # from root checkout
 cd <WORKTREE_PATH>                # or run /ct, then ct
-/speckit.clarify                  # optional
+/speckit.clarify
 /speckit.plan
-/speckit.checklist <topic>        # optional, repeatable
+/speckit.checklist <topic>        # decision required before tasks; repeatable when needed
 /speckit.tasks
-/speckit.analyze                  # optional
+/speckit.analyze
 
 /speckit.implement
 ```
+
+Treat the full sequence above as mandatory by default. Do not skip `clarify`,
+`plan`, `tasks`, `analyze`, or `implement` just because the feature appears
+straightforward. Do not skip the checklist decision step at all. Only skip a
+phase when the user explicitly approves the skip, a repository-specific rule
+explicitly says to skip it, or that phase is already complete and still current
+for the active feature in the correct worktree.
 
 Before `/speckit.specify`, verify `pwd` is the root checkout and
 `git rev-parse --abbrev-ref HEAD` is `main`. Do not run specify from a feature

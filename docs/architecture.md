@@ -723,6 +723,8 @@ Requirements:
 
 Likely V2 work:
 
+- containerized source-of-truth `agenttowerd` using a shared persistent
+  state/log/socket mount; see `docs/v2-container-daemon-prd.md`
 - Antigravity tmux backend support
 - optional in-container `agenttower-relay`
 - host-only tmux discovery as a peer to container discovery
