@@ -148,7 +148,7 @@ no `last_seen_at` mutation (R-003).
 | `--container <id-or-short>` | Full container id or 12-char short id; classified server-side per FR-026. |
 | `--active-only` | Boolean flag; when present, daemon returns only `active=true` agents. |
 | `--parent <agent-id>` | Filter to swarm children of the named slave (FR-026). |
-| `--json` | Emit JSON array; suppress TSV. |
+| `--json` | Emit one JSON object on stdout (the `{"ok": true, "result": {...}}` envelope, with `filter` and `agents` nested under `result`); suppress TSV. |
 
 ### Exit codes
 
@@ -190,41 +190,46 @@ Future fields MUST NOT be added to the default form; they go to
 
 ### `--json` output
 
+The success envelope wraps the daemon's `list_agents` result under
+`{"ok": true, "result": {...}}` (same outer shape as every other
+FEAT-006 CLI command):
+
 ```json
 {
   "ok": true,
-  "filter": {
-    "role": null,
-    "container_id": null,
-    "active_only": false,
-    "parent_agent_id": null
-  },
-  "agents": [
-    {
-      "agent_id": "agt_abc123def456",
-      "role": "slave",
-      "capability": "codex",
-      "label": "codex-01",
-      "project_path": "/workspace/acme",
-      "parent_agent_id": null,
-      "container_id": "<full-id>",
-      "container_name": "...",
-      "container_user": "...",
-      "tmux_socket_path": "/tmp/...",
-      "tmux_session_name": "main",
-      "tmux_window_index": 0,
-      "tmux_pane_index": 0,
-      "tmux_pane_id": "%17",
-      "pane_pid": 12345,
-      "cwd": "/workspace/acme",
-      "effective_permissions": { ... },
-      "created_at": "2026-05-07T...",
-      "last_registered_at": "2026-05-07T...",
-      "last_seen_at": "2026-05-07T..." ,
-      "active": true
+  "result": {
+    "filter": {
+      "role": null,
+      "container_id": null,
+      "active_only": false,
+      "parent_agent_id": null
     },
-    ...
-  ]
+    "agents": [
+      {
+        "agent_id": "agt_abc123def456",
+        "role": "slave",
+        "capability": "codex",
+        "label": "codex-01",
+        "project_path": "/workspace/acme",
+        "parent_agent_id": null,
+        "container_id": "<full-id>",
+        "container_name": "...",
+        "container_user": "...",
+        "tmux_socket_path": "/tmp/...",
+        "tmux_session_name": "main",
+        "tmux_window_index": 0,
+        "tmux_pane_index": 0,
+        "tmux_pane_id": "%17",
+        "pane_pid": 12345,
+        "cwd": "/workspace/acme",
+        "effective_permissions": { "...": "..." },
+        "created_at": "2026-05-07T...",
+        "last_registered_at": "2026-05-07T...",
+        "last_seen_at": "2026-05-07T...",
+        "active": true
+      }
+    ]
+  }
 }
 ```
 

@@ -94,8 +94,10 @@ JSON form:
 agenttower list-agents --json
 ```
 
-Returns a JSON object with `filter`, `agents` array, and every
-field from `data-model.md` §4.1 / §6.4.
+Returns the standard FEAT-006 envelope `{"ok": true, "result":
+{...}}`, with `filter` and the `agents` array nested under
+`result` and every field from `data-model.md` §4.1 / §6.4. See
+`contracts/cli.md` C-CLI-602 for the full shape.
 
 Filter examples:
 

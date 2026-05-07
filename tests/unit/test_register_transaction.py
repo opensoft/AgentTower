@@ -1,7 +1,7 @@
 """Unit tests for FEAT-006 single-transaction commit / rollback (T036 / FR-035).
 
 Covers:
-* On INSERT failure (forced ``IntegrityError``), no agent row is written.
+* On INSERT failure (forced ``OperationalError``), no agent row is written.
 * On INSERT failure, no audit row is appended.
 * The daemon stays alive (the service raises ``RegistrationError`` with
   code ``internal_error``).
@@ -32,7 +32,6 @@ def test_register_failure_rolls_back_and_skips_audit(
     seed_container(service)
     seed_pane(service)
 
-    from agenttower.agents import service as service_mod
     from agenttower.state import agents as state_agents
 
     def boom_insert(*args, **kwargs):
