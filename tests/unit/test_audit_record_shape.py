@@ -10,7 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-import re
+import datetime as _dt
 from pathlib import Path
 
 import pytest
@@ -41,10 +41,13 @@ def test_single_audit_row_per_transition(tmp_path: Path) -> None:
     assert payload["new_role"] == "slave"
     assert payload["confirm_provided"] is False
     assert payload["socket_peer_uid"] == 1000
-    # ts is ISO-8601 microsecond UTC with explicit +00:00 offset.
-    assert re.match(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00", rows[0]["ts"]
-    )
+    # ts is a UTC-aware ISO-8601 string. Use ``fromisoformat`` rather
+    # than a strict regex so the contract survives an offset-spelling
+    # change (e.g. ``Z`` vs ``+00:00``) without a false-positive
+    # regression.
+    parsed_ts = _dt.datetime.fromisoformat(rows[0]["ts"])
+    assert parsed_ts.tzinfo is not None
+    assert parsed_ts.utcoffset() == _dt.timedelta(0)
 
 
 def test_failed_transition_appends_no_row(tmp_path: Path) -> None:

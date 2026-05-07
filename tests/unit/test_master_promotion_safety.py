@@ -34,8 +34,18 @@ def test_register_self_rejects_master_no_confirm(tmp_path: Path) -> None:
     assert info.value.code == "master_via_register_self_rejected"
 
 
-def test_register_self_rejects_master_with_confirm(tmp_path: Path) -> None:
-    """FR-010: --confirm MUST NOT bypass the register-self master rejection."""
+def test_register_self_rejects_confirm_field_via_wire(tmp_path: Path) -> None:
+    """FR-010 + review-pass-6: ``confirm`` is not an accepted register_agent key.
+
+    The master safety boundary at register-self is unconditional, so the
+    audit contract requires ``confirm_provided=false`` for every
+    register_agent transition (data-model §4.4). Allowing the wire field
+    would let a client spoof the audit value, so the unknown-keys gate
+    refuses ``confirm`` outright before the master-role check even runs.
+    Both layers must protect FR-010: try ``confirm=True`` → ``bad_request``,
+    and try ``role=master`` alone → ``master_via_register_self_rejected``
+    (the test below).
+    """
     service = make_service(tmp_path)
     seed_container(service)
     seed_pane(service)
@@ -43,7 +53,8 @@ def test_register_self_rejects_master_with_confirm(tmp_path: Path) -> None:
         service.register_agent(
             register_params(role="master", confirm=True), socket_peer_uid=1000
         )
-    assert info.value.code == "master_via_register_self_rejected"
+    assert info.value.code == "bad_request"
+    assert "confirm" in info.value.message
 
 
 def test_set_role_master_without_confirm_rejected(tmp_path: Path) -> None:

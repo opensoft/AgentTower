@@ -98,9 +98,14 @@ def test_different_parent_value_rejected(tmp_path: Path) -> None:
     assert swarm_row["label"] != "should-not-stick"
 
 
-def test_null_to_nonnull_parent_rejected(tmp_path: Path) -> None:
-    """A non-swarm agent has parent_agent_id=NULL; supplying any --parent
-    on re-registration is rejected (parent is immutable)."""
+def test_role_slave_with_parent_caught_by_pre_flight(tmp_path: Path) -> None:
+    """FR-016 pre-flight catches role=slave + --parent BEFORE the locked
+    section runs.  The validator order matters: with role=slave the
+    static pre-flight rejects the request before the per-pane lock is
+    even taken, so the user gets the most actionable error
+    (parent_role_mismatch — "use --role swarm") instead of
+    parent_immutable.
+    """
     service = make_service(tmp_path)
     seed_container(service)
     seed_pane(service, tmux_pane_index=0, tmux_pane_id="%0")
@@ -114,8 +119,40 @@ def test_null_to_nonnull_parent_rejected(tmp_path: Path) -> None:
             register_params(role="slave", parent_agent_id=parent["agent_id"]),
             socket_peer_uid=1000,
         )
-    # The validator catches parent_role_mismatch first because role=slave
-    # with --parent is invalid by FR-016 — that's the correct early
-    # rejection. (If we changed role=swarm, parent_immutable would fire
-    # because pane_index=0 was registered as slave, not swarm.)
     assert info.value.code == "parent_role_mismatch"
+
+
+def test_null_to_nonnull_parent_rejected_as_parent_immutable(
+    tmp_path: Path,
+) -> None:
+    """Review-pass-6 N22: actually exercise the FR-018a parent_immutable
+    branch for a NULL→non-NULL transition.
+
+    To hit the locked-section parent_immutable check, the request must
+    pass the FR-016 pre-flight (so role MUST be swarm).  An existing
+    slave at CK_DEFAULT has ``parent_agent_id=None``; re-registering
+    that pane with role=swarm + parent=X is the path where the
+    pre-flight does not fire and the in-tx
+    ``parent_in != existing.parent_agent_id`` check triggers
+    parent_immutable.  Previously this test asserted on
+    ``parent_role_mismatch`` (the static pre-flight outcome of the
+    role=slave variant) — which passes for the wrong reason and
+    leaves the parent_immutable path completely untested.
+    """
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service, tmux_pane_index=0, tmux_pane_id="%0")
+    seed_pane(service, tmux_pane_index=1, tmux_pane_id="%1")
+    parent = service.register_agent(
+        register_params(role="slave"), socket_peer_uid=1000
+    )
+    # The slave at CK_DEFAULT has parent_agent_id=None. Re-registering
+    # the SAME pane with role=swarm + parent=X passes FR-016 pre-flight
+    # (role IS swarm), reaches the locked section, and fails the
+    # parent_immutable check because existing.parent_agent_id is None.
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(
+            register_params(role="swarm", parent_agent_id=parent["agent_id"]),
+            socket_peer_uid=1000,
+        )
+    assert info.value.code == "parent_immutable"

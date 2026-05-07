@@ -86,6 +86,50 @@ def test_container_id_full_id_matches(tmp_path: Path) -> None:
     assert len(result["agents"]) == 2
 
 
+def test_list_agents_json_field_set_lock(tmp_path: Path) -> None:
+    """SC-007 + review-pass-6 N20: list-agents must surface every field
+    FR-002 (identity), FR-003 (state), and FR-021 (effective_permissions
+    derivation) call out, plus the four contract-required JOIN fields
+    (container_name, container_user, pane_pid, cwd).
+
+    Locks the wire-shape so a future schema/marshal drift cannot drop a
+    documented field.
+    """
+    service = make_service(tmp_path)
+    _seed_two_agents(service)
+    rows = service.list_agents({})["agents"]
+    assert rows, "expected at least one agent"
+    expected = {
+        # Identity (FR-002 + composite pane key)
+        "agent_id",
+        "container_id",
+        "container_name",
+        "container_user",
+        "tmux_socket_path",
+        "tmux_session_name",
+        "tmux_window_index",
+        "tmux_pane_index",
+        "tmux_pane_id",
+        "pane_pid",
+        "cwd",
+        # State (FR-003)
+        "role",
+        "capability",
+        "label",
+        "project_path",
+        "parent_agent_id",
+        "created_at",
+        "last_registered_at",
+        "last_seen_at",
+        "active",
+        # FR-021 derived view
+        "effective_permissions",
+    }
+    actual = set(rows[0].keys())
+    missing = expected - actual
+    assert not missing, f"list-agents row is missing fields: {sorted(missing)}"
+
+
 def test_container_id_in_between_length_rejected(tmp_path: Path) -> None:
     """FR-026 review-pass-2: only the 12-char short or 64-char full id
     is accepted. Lengths in between would otherwise sneak through to the

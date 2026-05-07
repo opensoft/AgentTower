@@ -15,7 +15,11 @@ Two thread-safe per-key registries:
 
 Concurrent calls addressing distinct keys / agent_ids proceed in
 parallel. No LRU eviction at MVP scale; entries live for the daemon
-process lifetime (memory overhead bounded by MVP agent count).
+process lifetime (memory overhead bounded by MVP agent count). On a
+long-running daemon with high agent churn this is a slow leak —
+acceptable now, tracked as a follow-up: when post-MVP scale demands
+it, periodically GC entries whose lock is unlocked AND whose bound
+agent row is no longer present.
 """
 
 from __future__ import annotations

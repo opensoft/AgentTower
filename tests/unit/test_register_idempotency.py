@@ -31,7 +31,10 @@ def test_idempotent_returns_same_agent_id(tmp_path: Path) -> None:
         register_params(role="slave", capability="codex", label="lbl"),
         socket_peer_uid=1000,
     )
-    time.sleep(0.001)
+    # 5 ms sleep is enough margin to keep the strict ``>`` assertion
+    # below stable on fast hardware where two ISO-8601-microsecond
+    # timestamps could otherwise collide (review-pass-6 N34).
+    time.sleep(0.005)
     second = service.register_agent(
         register_params(role="slave", capability="codex", label="lbl"),
         socket_peer_uid=1000,
@@ -82,6 +85,51 @@ def test_omitted_fields_preserve_stored(tmp_path: Path) -> None:
     assert second["capability"] == "codex"
     assert second["label"] == "orig"
     assert second["project_path"] == "/w/a"
+
+
+def test_different_pane_creates_distinct_agent(tmp_path: Path) -> None:
+    """FR-006 / spec edge case line 88 (review-pass-6 N17).
+
+    A second register-self from a *different* composite pane key MUST
+    create a NEW agent rather than rebinding the first one. The old
+    agent stays in the table with whatever ``active`` flag FEAT-004
+    last assigned (here we force it inactive to assert both rows
+    coexist as the spec requires).
+    """
+    from ._agent_test_helpers import CONTAINER_ID
+
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service, tmux_pane_index=0, tmux_pane_id="%0")
+    seed_pane(service, tmux_pane_index=1, tmux_pane_id="%1")
+
+    first = service.register_agent(
+        register_params(role="slave", label="alpha"),
+        socket_peer_uid=1000,
+    )
+    # Force first agent inactive to exercise the "old row stays in
+    # history" half of the spec.
+    conn = service.connection_factory()
+    try:
+        conn.execute(
+            "UPDATE agents SET active = 0 WHERE agent_id = ?",
+            (first["agent_id"],),
+        )
+    finally:
+        conn.close()
+
+    ck1 = (CONTAINER_ID, CK_DEFAULT[1], CK_DEFAULT[2], 0, 1, "%1")
+    second = service.register_agent(
+        register_params(ck1, role="slave", label="beta"),
+        socket_peer_uid=1000,
+    )
+
+    assert second["agent_id"] != first["agent_id"]
+    assert second["created_or_reactivated"] == "created"
+
+    listed = service.list_agents({})["agents"]
+    ids = {a["agent_id"] for a in listed}
+    assert {first["agent_id"], second["agent_id"]} <= ids
 
 
 def test_pane_key_and_created_at_immutable(tmp_path: Path) -> None:

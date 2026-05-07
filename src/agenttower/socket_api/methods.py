@@ -325,8 +325,14 @@ def _dispatch_agent_method(
         else:
             result = method(params)
     except RegistrationError as exc:
+        # Defense in depth: bound the error message length and strip
+        # control bytes even on the closed-code branch (the non-closed
+        # branch already routes through ``_internal_error_message``).
+        # A future contributor whose error message embeds raw user
+        # input shouldn't be able to leak NUL/CR/LF onto the wire.
+        bounded_message, _ = sanitize_text(exc.message, 2048) if exc.message else ("", 0)
         if exc.code in errors.CLOSED_CODE_SET:
-            return errors.make_error(exc.code, exc.message)
+            return errors.make_error(exc.code, bounded_message or exc.code)
         return errors.make_error(
             errors.INTERNAL_ERROR,
             _internal_error_message(exc.message, prefix=method_name),

@@ -83,7 +83,8 @@ free-text bounds; per-field bounds defined in
     "capability": "codex",            // OPTIONAL
     "label": "codex-01",              // OPTIONAL
     "project_path": "/workspace/acme",// OPTIONAL
-    "parent_agent_id": "agt_aaa..."   // OPTIONAL — must equal stored value if present (FR-018a)
+    "parent_agent_id": "agt_aaa...",  // OPTIONAL — must equal stored value if present (FR-018a)
+    "schema_version": 4               // OPTIONAL — FR-040 forward-compat hint
   }
 }
 ```
@@ -93,15 +94,26 @@ six pane composite-key sub-keys are all required when
 `pane_composite_key` is present.
 
 **Optional keys**: `role`, `capability`, `label`, `project_path`,
-`parent_agent_id`. Per Clarifications Q1, the *absence* of a key
-means "leave the stored value unchanged" on idempotent
-re-registration. On first registration of a new pane, the daemon
-applies the same default values the CLI applies (`role="unknown"`,
-`capability="unknown"`, `label=""`, `project_path=""`,
-`parent_agent_id=null`) so the wire contract is symmetric.
+`parent_agent_id`, `schema_version`. Per Clarifications Q1, the
+*absence* of a mutable key means "leave the stored value unchanged"
+on idempotent re-registration. On first registration of a new pane,
+the daemon applies the same default values the CLI applies
+(`role="unknown"`, `capability="unknown"`, `label=""`,
+`project_path=""`, `parent_agent_id=null`) so the wire contract is
+symmetric. `schema_version` is the FR-040 forward-compat hint —
+the CLI advertises the schema version it was built against so the
+daemon can refuse with `schema_version_newer` when its own schema
+has advanced past what the CLI knows. There is no `confirm` field
+on `register_agent` — the master safety boundary is unconditional
+on this method (FR-010), so register_agent audit rows always record
+`confirm_provided: false`.
 
-**Forbidden keys**: any key other than the eight listed above is
-rejected with `bad_request`.
+**Forbidden keys**: any key other than the seven listed above is
+rejected with `bad_request`. In particular, `confirm`,
+`socket_peer_uid`, and `audit_appended` are not accepted on
+`register_agent` — `socket_peer_uid` is plumbed out-of-band from
+the accepted AF_UNIX socket via `SO_PEERCRED` and cannot be
+spoofed via the request body.
 
 **Validation order** (data-model.md §7.3):
 
@@ -302,9 +314,14 @@ is `ok: true` with `agents: []`.
 8. **Atomic re-check inside the transaction** (FR-011 / Clarifications
    session 2026-05-07-continued Q3): re-SELECT `agents.active`
    for the target AND `containers.active` for the agent's bound
-   `container_id`. If either is `0`, `ROLLBACK` and return
+   `container_id`. If `agents.active = 0`, OR if the bound
+   `containers` row is missing (no row, JOIN returned NULL), OR
+   if `containers.active = 0`, `ROLLBACK` and return
    `agent_inactive`; no role mutation, no `effective_permissions`
-   recomputation, no JSONL audit row. SQLite's `BEGIN IMMEDIATE`
+   recomputation, no JSONL audit row. A missing containers row is
+   treated identically to `containers.active = 0` — without an
+   active container backing the agent, role assignment (especially
+   master promotion) MUST be refused. SQLite's `BEGIN IMMEDIATE`
    serializes this re-check against any concurrent FEAT-004
    reconciliation transaction so the validate-then-write window
    is closed at the SQLite level.

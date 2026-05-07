@@ -146,6 +146,33 @@ def test_set_label_round_trip(env_with_fake) -> None:
     assert body["agents"][0]["role"] == "slave"
 
 
+def test_set_capability_round_trip(env_with_fake) -> None:
+    """SC-012 + review-pass-6 N19: set-capability round-trip e2e.
+
+    Symmetric with ``test_set_label_round_trip`` — proves the
+    set-capability CLI path through real socket framing works and that
+    the new value lands on the row visible via ``list-agents``.
+    """
+    env, _home = _setup_env(env_with_fake)
+    agent_id = _seed_one_agent(env)
+    proc = _run_cli(
+        env,
+        "set-capability",
+        "--target", agent_id,
+        "--capability", "claude",
+        "--json",
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    payload = json.loads(proc.stdout)
+    assert payload["result"]["new_value"] == "claude"
+    assert payload["result"]["audit_appended"] is False
+    listed = _run_cli(env, "list-agents", "--json")
+    body = json.loads(listed.stdout)["result"]
+    assert body["agents"][0]["capability"] == "claude"
+    # Role was not changed by set-capability (FR-014 only audits role).
+    assert body["agents"][0]["role"] == "slave"
+
+
 def test_set_role_swarm_text_mode_emits_code_line(env_with_fake) -> None:
     """Review-pass-5: text-mode pre-flight errors carry both ``error:``
     and ``code: <closed-set-token>`` on stderr (matches the established

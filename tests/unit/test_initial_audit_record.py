@@ -25,6 +25,10 @@ from ._agent_test_helpers import (
 
 @pytest.mark.parametrize(
     "role",
+    # ``master`` is intentionally excluded — FR-010 forbids master
+    # via register-self, so the parametrize cannot exercise the
+    # creation-audit path for that role. The set-role test suite
+    # covers the master promotion audit row separately.
     ["slave", "swarm", "test-runner", "shell", "unknown"],
 )
 def test_initial_register_writes_audit_row_with_prior_role_null(
