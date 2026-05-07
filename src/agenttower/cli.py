@@ -1170,12 +1170,9 @@ def _set_role_command(args: argparse.Namespace) -> int:
 
     # Client-side mirror of FR-012 / FR-011 so we fail fast without a
     # round-trip when the operator passed an obviously unsafe combo.
+    # ``--json`` mode is stdout-only: stderr stays quiet so the caller's
+    # pipe of stdout to ``jq`` never picks up incidental human prose.
     if args.role == "swarm":
-        print(
-            "error: set-role --role swarm is rejected; use "
-            "`agenttower register-self --role swarm --parent <agent-id>` instead",
-            file=sys.stderr,
-        )
         if args.json:
             print(
                 json.dumps(
@@ -1188,12 +1185,14 @@ def _set_role_command(args: argparse.Namespace) -> int:
                     }
                 )
             )
+        else:
+            print(
+                "error: set-role --role swarm is rejected; use "
+                "`agenttower register-self --role swarm --parent <agent-id>` instead",
+                file=sys.stderr,
+            )
         return 3
     if args.role == "master" and not args.confirm:
-        print(
-            "error: master role assignment requires --confirm",
-            file=sys.stderr,
-        )
         if args.json:
             print(
                 json.dumps(
@@ -1205,6 +1204,11 @@ def _set_role_command(args: argparse.Namespace) -> int:
                         },
                     }
                 )
+            )
+        else:
+            print(
+                "error: master role assignment requires --confirm",
+                file=sys.stderr,
             )
         return 3
 
@@ -1234,6 +1238,36 @@ def _send_set_command(
     params: dict[str, Any],
     json_mode: bool,
 ) -> int:
+    # Client-side ``--target`` shape gate (R-020 / contracts/cli.md):
+    # set-role/set-label/set-capability all reject anything that isn't
+    # ``agt_<12-hex-lowercase>`` before paying the round-trip. Surfaces
+    # the same closed-set ``value_out_of_set`` code the daemon would
+    # return, so callers see a stable error regardless of where it
+    # was caught.
+    from .agents.identifiers import AGENT_ID_RE
+
+    target = params.get("agent_id")
+    if not isinstance(target, str) or not AGENT_ID_RE.match(target):
+        message = (
+            "--target must match agt_<12-hex-lowercase>; "
+            f"got {target!r}"
+        )
+        if json_mode:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "value_out_of_set",
+                            "message": message,
+                        },
+                    }
+                )
+            )
+        else:
+            print(f"error: {message}", file=sys.stderr)
+            print("code: value_out_of_set", file=sys.stderr)
+        return 3
     try:
         result = send_request(
             socket_path,

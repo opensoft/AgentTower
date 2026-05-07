@@ -39,7 +39,11 @@ VALID_CAPABILITIES: Final[tuple[str, ...]] = (
 LABEL_MAX = 64
 PROJECT_PATH_MAX = 4096
 
-_CONTAINER_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{12,64}$")
+# FR-026: filter accepts the 12-char short-id form OR the full 64-char id.
+# Lengths in between are not part of the documented surface — accepting them
+# here would let arbitrary 13..63-char prefixes silently match via the
+# ``substr(...)`` fallback the daemon uses for short ids.
+_CONTAINER_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{12}([0-9a-f]{52})?$")
 
 
 def validate_role(value: object) -> str:
@@ -138,11 +142,16 @@ def validate_project_path(value: object) -> str:
 
 
 def validate_container_id_filter(value: object) -> str:
-    """Validate ``container_id`` filter shape (FR-026); case-sensitive lowercase hex."""
+    """Validate ``container_id`` filter shape (FR-026); case-sensitive lowercase hex.
+
+    Accepts exactly the 12-char short-id form OR the full 64-char id —
+    no in-between lengths.
+    """
     if not isinstance(value, str) or not _CONTAINER_ID_RE.match(value):
         raise RegistrationError(
             "value_out_of_set",
-            f"container_id must be 12–64-char lowercase hex; got {value!r}",
+            "container_id must be a 12-char short id or a 64-char full id "
+            f"(lowercase hex); got {value!r}",
         )
     return value
 

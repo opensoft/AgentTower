@@ -86,6 +86,23 @@ def test_container_id_full_id_matches(tmp_path: Path) -> None:
     assert len(result["agents"]) == 2
 
 
+def test_container_id_in_between_length_rejected(tmp_path: Path) -> None:
+    """FR-026 review-pass-2: only the 12-char short or 64-char full id
+    is accepted. Lengths in between would otherwise sneak through to the
+    daemon's substr() prefix matcher and silently behave as undocumented
+    arbitrary-length prefix filters.
+    """
+    service = make_service(tmp_path)
+    _seed_two_agents(service)
+    # 13..63 chars MUST be rejected with value_out_of_set.
+    for length in (13, 32, 50, 63):
+        with pytest.raises(RegistrationError) as info:
+            service.list_agents({"container_id": CONTAINER_ID[:length]})
+        assert info.value.code == "value_out_of_set", (
+            f"length={length} should be rejected, got {info.value.code}"
+        )
+
+
 def test_active_only_filters_inactive(tmp_path: Path) -> None:
     service = make_service(tmp_path)
     a, b = _seed_two_agents(service)

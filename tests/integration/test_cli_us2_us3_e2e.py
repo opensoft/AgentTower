@@ -144,3 +144,25 @@ def test_set_label_round_trip(env_with_fake) -> None:
     body = json.loads(listed.stdout)["result"]
     assert body["agents"][0]["label"] == "renamed"
     assert body["agents"][0]["role"] == "slave"
+
+
+def test_set_label_rejects_malformed_target_client_side(env_with_fake) -> None:
+    """Review-pass-2: set-* validate --target locally (R-020 / contracts/cli.md).
+
+    Without the daemon ever being contacted, a malformed --target MUST
+    surface ``value_out_of_set`` and exit 3.
+    """
+    env, _home = _setup_env(env_with_fake)
+    proc = _run_cli(
+        env,
+        "set-label",
+        "--target", "not-an-agent-id",
+        "--label", "anything",
+        "--json",
+    )
+    assert proc.returncode == 3, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    payload = json.loads(proc.stdout)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "value_out_of_set"
+    # --json purity: stderr is empty in JSON mode.
+    assert proc.stderr == "", f"stderr leaked in --json mode: {proc.stderr!r}"

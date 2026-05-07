@@ -430,15 +430,19 @@ class PaneDiscoveryService:
             )
             # FEAT-006 FR-009a / FR-009 / Clarifications Q2: in the same
             # transaction as the pane reconcile, update agents.last_seen_at
-            # for every pane observed active=true and cascade
+            # for every pane observed during the scan and cascade
             # agents.active=0 for every pane that transitioned 1→0. The
             # FEAT-006 register-mutex is NOT acquired here; cross-subsystem
             # ordering with register_agent is via SQLite BEGIN IMMEDIATE.
-            active_keys = [
-                u.composite_key for u in write_set.upserts if u.pane_active
-            ]
+            #
+            # Note: ``upsert.pane_active`` is the tmux *focus* flag (the
+            # single currently-selected pane within a window), not the
+            # FEAT-004 row-existence ``active`` flag. Filtering on it
+            # would have left every non-focused pane's bound agent with
+            # a stale ``last_seen_at`` even while its pane was alive.
+            observed_keys = [u.composite_key for u in write_set.upserts]
             state_agents.update_last_seen_at(
-                self._conn, pane_keys=active_keys, now_iso=started_at
+                self._conn, pane_keys=observed_keys, now_iso=started_at
             )
             state_agents.cascade_agents_active_from_pane(
                 self._conn, pane_keys=write_set.inactivate
