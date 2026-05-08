@@ -231,6 +231,19 @@ def _chunk(items: list[Any], size: int) -> Iterable[list[Any]]:
         yield items[offset : offset + size]
 
 
+def _next_lex_prefix(prefix: str) -> str:
+    """Return the next lexicographic string after *prefix*.
+
+    Used to encode a prefix scan as an index-friendly half-open range
+    ``[prefix, _next_lex_prefix(prefix))``. The last character is bumped
+    to the next codepoint — for hex inputs this works for every digit:
+    ``'9'`` (0x39) → ``':'`` (0x3A) sorts after every hex digit, and
+    ``'f'`` (0x66) → ``'g'`` (0x67) sorts after every hex letter, so
+    no hex value lands at or above the upper bound.
+    """
+    return prefix[:-1] + chr(ord(prefix[-1]) + 1)
+
+
 def update_last_seen_at(
     conn: sqlite3.Connection,
     *,
@@ -402,10 +415,16 @@ def list_agents(
             where.append("container_id = ?")
             params.append(container_id)
         else:
-            # 12-char short prefix match (FR-026).
-            where.append("substr(container_id, 1, ?) = ?")
-            params.append(len(container_id))
+            # 12-char short prefix match (FR-026), encoded as an
+            # index-friendly half-open range so the ``agents_active_order``
+            # index (leading column ``container_id``) stays usable as the
+            # table grows.  Wrapping the column in ``substr(...)``  defeats
+            # any index because the column expression is non-trivial; the
+            # range form is a plain ``container_id >= ? AND container_id < ?``
+            # the planner can satisfy via a single index seek.
+            where.append("container_id >= ? AND container_id < ?")
             params.append(container_id)
+            params.append(_next_lex_prefix(container_id))
     if parent_agent_id is not None:
         where.append("parent_agent_id = ?")
         params.append(parent_agent_id)

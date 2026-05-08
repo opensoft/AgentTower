@@ -1206,9 +1206,12 @@ def _list_agents_full(
             where.append("agents.container_id = ?")
             params.append(container_id)
         else:
-            where.append("substr(agents.container_id, 1, ?) = ?")
-            params.append(len(container_id))
+            # Index-friendly half-open range scan; mirrors the plain
+            # state_agents.list_agents() helper. ``substr(...)`` would
+            # defeat the agents_active_order index.
+            where.append("agents.container_id >= ? AND agents.container_id < ?")
             params.append(container_id)
+            params.append(state_agents._next_lex_prefix(container_id))
     if parent_agent_id is not None:
         where.append("agents.parent_agent_id = ?")
         params.append(parent_agent_id)

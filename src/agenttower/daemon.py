@@ -166,13 +166,19 @@ def _build_pane_service(
     return service, conn
 
 
-def _build_agent_service(paths: Paths) -> AgentService:
+def _build_agent_service(paths: Paths, logger: LifecycleLogger) -> AgentService:
     """Construct the FEAT-006 ``AgentService`` for the daemon.
 
     Each call to a service method opens a fresh SQLite connection via the
     factory so register_agent / list_agents / set_* run without sharing
     a cursor across the accept-thread pool. Mutex registries are
     process-scoped per FR-038 / FR-039.
+
+    The lifecycle *logger* is plumbed in so the FR-014 audit-append
+    failure invariant (see ``agents.service`` module docstring) is
+    operationally observable: post-COMMIT JSONL append failures emit
+    ``audit_append_failed`` events through the daemon's structured
+    logger rather than being silently lost.
     """
     schema_version = _read_schema_version(paths) or 0
     return AgentService(
@@ -183,6 +189,7 @@ def _build_agent_service(paths: Paths) -> AgentService:
         agent_locks=AgentLockMap(),
         events_file=paths.events_file,
         schema_version=schema_version,
+        lifecycle_logger=logger,
     )
 
 
@@ -380,7 +387,7 @@ def _run(args: argparse.Namespace) -> int:
         shutdown_event = threading.Event()
         discovery_service, scan_db_conn = _build_discovery_service(paths, logger)
         pane_service, pane_db_conn = _build_pane_service(paths, logger)
-        agent_service = _build_agent_service(paths)
+        agent_service = _build_agent_service(paths, logger)
         ctx = _build_context(
             paths=paths,
             state_dir=state_dir,
