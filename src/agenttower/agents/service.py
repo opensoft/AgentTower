@@ -166,6 +166,9 @@ class AgentService:
     events_file: Path | None
     schema_version: int
     lifecycle_logger: Any = None
+    # FEAT-007 / US4: when set, register_agent honors an optional
+    # ``attach_log`` envelope (FR-034 / FR-035 atomic two-table commit).
+    log_service: Any = None
 
     def _emit_lifecycle(self, event: str, **kwargs: Any) -> None:
         """Best-effort emit a lifecycle event; swallow logger failures.
@@ -206,6 +209,11 @@ class AgentService:
             "label",
             "project_path",
             "parent_agent_id",
+            # FEAT-007 / FR-035: when present, the daemon ALSO runs the
+            # FEAT-007 attach pipeline atomically with the register call
+            # (FR-034 fail-the-call). The nested object accepts an optional
+            # ``log_path``; absent → canonical FR-005 default.
+            "attach_log",
         }
     )
 
@@ -308,6 +316,8 @@ class AgentService:
                 project_path_in=project_path_in,
                 parent_in=parent_in,
                 socket_peer_uid=socket_peer_uid,
+                attach_log_envelope=params.get("attach_log"),
+                client_schema_version=params.get("schema_version"),
             )
 
     def _register_agent_locked(
@@ -321,6 +331,8 @@ class AgentService:
         project_path_in: object,
         parent_in: object,
         socket_peer_uid: int,
+        attach_log_envelope: Any = None,
+        client_schema_version: Any = None,
     ) -> dict[str, Any]:
         """Execute the register_agent write inside a single BEGIN IMMEDIATE.
 
@@ -483,12 +495,58 @@ class AgentService:
                 final_record, created_or_reactivated=created_or_reactivated
             )
 
-            # Audit row append happens AFTER COMMIT (FR-014). On failure
-            # the role mutation is already committed; emit a lifecycle
-            # event and return success — see module-docstring invariant.
-            # ``confirm_provided`` is hardcoded ``False`` for register_agent
-            # because there is no meaningful confirm at register-self
-            # (FR-010 makes the master boundary unconditional).
+            # FEAT-007 US4 / FR-034 / FR-035: if the wire envelope carried
+            # ``attach_log``, run the FEAT-007 attach pipeline NOW. The
+            # register transaction has already committed; we run attach in
+            # its own BEGIN IMMEDIATE with ``defer_audit=True`` so the
+            # FEAT-007 audit append is staged rather than emitted. After
+            # both writes succeed, we append both audit rows in the
+            # FR-035 order: FEAT-006 ``agent_role_change`` FIRST,
+            # FEAT-007 ``log_attachment_change`` SECOND. On FEAT-007
+            # failure we DELETE the just-created agent row to satisfy
+            # FR-034 fail-the-call.
+            attach_log_outcome: dict[str, Any] | None = None
+            deferred_attach_audit: dict[str, Any] | None = None
+            if attach_log_envelope is not None:
+                if not isinstance(attach_log_envelope, dict):
+                    if created_or_reactivated == "created":
+                        self._cleanup_agent_row(final_record.agent.agent_id)
+                    raise RegistrationError(
+                        "bad_request",
+                        "params.attach_log must be an object",
+                    )
+                if self.log_service is None:
+                    if created_or_reactivated == "created":
+                        self._cleanup_agent_row(final_record.agent.agent_id)
+                    raise RegistrationError(
+                        "internal_error",
+                        "log service is not wired into the daemon",
+                    )
+                attach_params: dict[str, Any] = {
+                    "agent_id": final_record.agent.agent_id,
+                }
+                if "log_path" in attach_log_envelope:
+                    attach_params["log_path"] = attach_log_envelope["log_path"]
+                if client_schema_version is not None:
+                    attach_params["schema_version"] = client_schema_version
+                try:
+                    attach_result = self.log_service.attach_log(
+                        attach_params,
+                        socket_peer_uid=socket_peer_uid,
+                        source="register_self",
+                        defer_audit=True,
+                    )
+                except RegistrationError:
+                    # FR-034 fail-the-call: cleanup the agent row.
+                    if created_or_reactivated == "created":
+                        self._cleanup_agent_row(final_record.agent.agent_id)
+                    raise
+                deferred_attach_audit = attach_result.pop(
+                    "__deferred_audit__", None
+                )
+                attach_log_outcome = attach_result
+
+            # FR-035: append FEAT-006 audit row FIRST.
             if audit_event is not None:
                 self._safe_append_audit(
                     method_name="register_agent",
@@ -496,6 +554,24 @@ class AgentService:
                     confirm_provided=False,
                     **audit_event,
                 )
+            # FR-035: append FEAT-007 audit row SECOND (deferred from
+            # the LogService.attach_log call above).
+            if deferred_attach_audit is not None:
+                from ..logs import audit as logs_audit
+
+                try:
+                    logs_audit.append_log_attachment_change(
+                        self.log_service.events_file,
+                        **deferred_attach_audit,
+                    )
+                except Exception:  # pragma: no cover — defensive
+                    self._emit_lifecycle(
+                        "audit_append_failed",
+                        method="register_agent.attach_log",
+                        agent_id=final_record.agent.agent_id,
+                    )
+            if attach_log_outcome is not None:
+                outcome["attach_log"] = attach_log_outcome
             return outcome
         finally:
             try:
@@ -575,6 +651,37 @@ class AgentService:
             "internal_error",
             f"agent_id PK collision retry budget exhausted ({_AGENT_ID_RETRY_LIMIT})",
         ) from last_exc
+
+    def _cleanup_agent_row(self, agent_id: str) -> None:
+        """FR-034 fail-the-call: delete the just-created agent row.
+
+        Called after a register transaction has already committed and the
+        downstream FEAT-007 attach raised. We open a fresh ``BEGIN
+        IMMEDIATE`` and DELETE the row by primary key. Failures here are
+        swallowed-and-logged because we are already on the error path
+        and cannot meaningfully roll back further.
+        """
+        conn = self.connection_factory()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM agents WHERE agent_id = ?", (agent_id,))
+            conn.execute("COMMIT")
+        except Exception:  # pragma: no cover — defensive
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            self._emit_lifecycle(
+                "audit_append_failed",
+                method="register_agent.cleanup",
+                agent_id=agent_id,
+                reason="cleanup-rollback failed",
+            )
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _safe_append_audit(
         self,

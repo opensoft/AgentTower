@@ -60,8 +60,50 @@ class _RequestHandler(socketserver.StreamRequestHandler):
     server: "ControlServer"  # type: ignore[assignment]
 
     def handle(self) -> None:  # noqa: D401 — name mandated by socketserver
+        # FR-058 (FEAT-007): defense-in-depth peer-uid match. The 0600 socket
+        # inode mode (FEAT-002) is the primary control; this check refuses
+        # any connection whose SO_PEERCRED uid disagrees with the daemon's
+        # effective uid. ``-1`` means SO_PEERCRED was unavailable (e.g. unit
+        # tests) — we tolerate the sentinel and rely on the inode mode
+        # boundary in that case.
+        connection = getattr(self, "connection", None)
+        observed_uid = (
+            _peer_uid_from_socket(connection) if connection is not None else _NO_PEER_UID
+        )
+        if observed_uid != _NO_PEER_UID:
+            try:
+                expected_uid = os.geteuid()
+            except OSError:
+                expected_uid = -1
+            if expected_uid >= 0 and observed_uid != expected_uid:
+                # Emit lifecycle event and refuse without dispatching.
+                self._emit_uid_mismatch(observed_uid=observed_uid, expected_uid=expected_uid)
+                envelope = errors.make_error(
+                    errors.INTERNAL_ERROR,
+                    "socket peer uid mismatch; connection refused",
+                )
+                self._write_response(envelope)
+                return
+
         envelope = self._read_and_dispatch()
         self._write_response(envelope)
+
+    def _emit_uid_mismatch(self, *, observed_uid: int, expected_uid: int) -> None:
+        """Best-effort emit of ``socket_peer_uid_mismatch``; never crashes dispatch."""
+        ctx = getattr(self.server, "context", None)
+        logger = getattr(ctx, "lifecycle_logger", None) if ctx is not None else None
+        if logger is None:
+            return
+        try:
+            from ..logs import lifecycle as logs_lifecycle
+
+            logs_lifecycle.emit_socket_peer_uid_mismatch(
+                logger,
+                observed_uid=int(observed_uid),
+                expected_uid=int(expected_uid),
+            )
+        except Exception:  # pragma: no cover — defensive
+            pass
 
     def _read_and_dispatch(self) -> dict[str, Any]:
         try:

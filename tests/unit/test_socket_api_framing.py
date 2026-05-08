@@ -9,7 +9,7 @@ import pytest
 from agenttower.socket_api import errors
 
 
-def test_closed_code_set_contains_feat002_through_feat006_codes() -> None:
+def test_closed_code_set_contains_feat002_through_feat007_codes() -> None:
     # FEAT-002 codes (FR-022 backward-compat).
     feat002 = {
         errors.BAD_JSON,
@@ -66,8 +66,18 @@ def test_closed_code_set_contains_feat002_through_feat006_codes() -> None:
         errors.SCHEMA_VERSION_NEWER,
     }
     assert feat006 <= errors.CLOSED_CODE_SET
+    # FEAT-007 additions (FR-038).
+    feat007 = {
+        errors.LOG_PATH_INVALID,
+        errors.LOG_PATH_NOT_HOST_VISIBLE,
+        errors.LOG_PATH_IN_USE,
+        errors.PIPE_PANE_FAILED,
+        errors.ATTACHMENT_NOT_FOUND,
+        errors.LOG_FILE_MISSING,
+    }
+    assert feat007 <= errors.CLOSED_CODE_SET
     # No surprise codes beyond the documented sets.
-    assert errors.CLOSED_CODE_SET == feat002 | feat003 | feat004 | feat006
+    assert errors.CLOSED_CODE_SET == feat002 | feat003 | feat004 | feat006 | feat007
 
 
 @pytest.mark.parametrize(

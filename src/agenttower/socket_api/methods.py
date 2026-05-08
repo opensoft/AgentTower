@@ -48,6 +48,7 @@ class DaemonContext:
     discovery_service: "DiscoveryService | None" = None
     pane_service: "PaneDiscoveryService | None" = None
     agent_service: Any = None
+    log_service: Any = None
     events_file: Path | None = None
     lifecycle_logger: Any = None
 
@@ -388,8 +389,84 @@ def _set_capability(
     )
 
 
+# ---------------------------------------------------------------------------
+# FEAT-007 dispatch (FR-031, FR-032, FR-033, FR-037a)
+# ---------------------------------------------------------------------------
+
+
+def _log_service_or_error(ctx: DaemonContext) -> tuple[Any, dict[str, Any] | None]:
+    service = getattr(ctx, "log_service", None)
+    if service is None:
+        return None, errors.make_error(
+            errors.INTERNAL_ERROR, "log service unavailable"
+        )
+    return service, None
+
+
+def _dispatch_log_method(
+    ctx: DaemonContext,
+    params: dict[str, Any],
+    peer_uid: int,
+    *,
+    method_name: str,
+) -> dict[str, Any]:
+    service, err = _log_service_or_error(ctx)
+    if err is not None:
+        return err
+    from ..agents.errors import RegistrationError
+
+    if not isinstance(params, dict):
+        return errors.make_error(errors.BAD_REQUEST, "params must be an object")
+
+    method = getattr(service, method_name)
+    try:
+        result = method(params, socket_peer_uid=int(peer_uid))
+    except RegistrationError as exc:
+        bounded_message, _ = sanitize_text(exc.message, 2048) if exc.message else ("", 0)
+        if exc.code in errors.CLOSED_CODE_SET:
+            return errors.make_error(exc.code, bounded_message or exc.code)
+        return errors.make_error(
+            errors.INTERNAL_ERROR,
+            _internal_error_message(exc.message, prefix=method_name),
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        return errors.make_error(
+            errors.INTERNAL_ERROR,
+            _internal_error_message(str(exc), prefix=method_name),
+        )
+    return errors.make_ok(result)
+
+
+def _attach_log(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    return _dispatch_log_method(ctx, params, peer_uid, method_name="attach_log")
+
+
+def _detach_log(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    return _dispatch_log_method(ctx, params, peer_uid, method_name="detach_log")
+
+
+def _attach_log_status(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    return _dispatch_log_method(
+        ctx, params, peer_uid, method_name="attach_log_status"
+    )
+
+
+def _attach_log_preview(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    return _dispatch_log_method(
+        ctx, params, peer_uid, method_name="attach_log_preview"
+    )
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
-# FEAT-003's two, FEAT-004's two, and FEAT-006's five new entries.
+# FEAT-003's two, FEAT-004's two, FEAT-006's five, and FEAT-007's four.
 # FEAT-002 keys retain insertion order (FR-022).
 DISPATCH: dict[str, Handler] = {
     "ping": _ping,
@@ -404,4 +481,8 @@ DISPATCH: dict[str, Handler] = {
     "set_role": _set_role,
     "set_label": _set_label,
     "set_capability": _set_capability,
+    "attach_log": _attach_log,
+    "detach_log": _detach_log,
+    "attach_log_status": _attach_log_status,
+    "attach_log_preview": _attach_log_preview,
 }

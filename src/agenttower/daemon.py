@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import __version__
 from .agents.mutex import AgentLockMap, RegisterLockMap
@@ -17,6 +18,10 @@ from .config import load_containers_block
 from .discovery.pane_service import PaneDiscoveryService
 from .discovery.service import DiscoveryService
 from .docker import FakeDockerAdapter
+from .logs.docker_exec import resolve_docker_exec_runner
+from .logs.mutex import LogPathLockMap
+from .logs.orphan_recovery import detect_orphans
+from .logs.service import LogService
 from .tmux import FakeTmuxAdapter, SubprocessTmuxAdapter, TmuxAdapter
 from .paths import Paths, resolve_paths
 from .socket_api import lifecycle
@@ -166,6 +171,32 @@ def _build_pane_service(
     return service, conn
 
 
+def _build_log_service(
+    paths: Paths, logger: LifecycleLogger, agent_locks: AgentLockMap
+) -> LogService:
+    """Construct the FEAT-007 :class:`LogService` for the daemon.
+
+    Reuses the ``AgentLockMap`` instance from the AgentService so per-agent
+    serialization spans both FEAT-006 set_* and FEAT-007 attach/detach
+    (FR-040). Wires the production docker-exec runner (or its fake under
+    ``AGENTTOWER_TEST_PIPE_PANE_FAKE``).
+    """
+    schema_version = _read_schema_version(paths) or 0
+    daemon_home = os.path.expanduser("~")
+    return LogService(
+        connection_factory=lambda: sqlite3.connect(
+            str(paths.state_db), isolation_level=None
+        ),
+        agent_locks=agent_locks,
+        log_path_locks=LogPathLockMap(),
+        events_file=paths.events_file,
+        schema_version=schema_version,
+        daemon_home=Path(daemon_home) if not isinstance(daemon_home, Path) else daemon_home,
+        docker_exec_runner=resolve_docker_exec_runner(),
+        lifecycle_logger=logger,
+    )
+
+
 def _build_agent_service(paths: Paths, logger: LifecycleLogger) -> AgentService:
     """Construct the FEAT-006 ``AgentService`` for the daemon.
 
@@ -201,6 +232,7 @@ def _build_context(
     discovery_service: DiscoveryService | None,
     pane_service: PaneDiscoveryService | None,
     agent_service: AgentService | None,
+    log_service: LogService | None,
     logger: LifecycleLogger,
 ) -> DaemonContext:
     return DaemonContext(
@@ -214,6 +246,7 @@ def _build_context(
         discovery_service=discovery_service,
         pane_service=pane_service,
         agent_service=agent_service,
+        log_service=log_service,
         events_file=paths.events_file,
         lifecycle_logger=logger,
     )
@@ -388,6 +421,28 @@ def _run(args: argparse.Namespace) -> int:
         discovery_service, scan_db_conn = _build_discovery_service(paths, logger)
         pane_service, pane_db_conn = _build_pane_service(paths, logger)
         agent_service = _build_agent_service(paths, logger)
+        log_service = _build_log_service(paths, logger, agent_service.agent_locks)
+        # Wire the log_service back into the agent_service so register-self
+        # --attach-log (FR-034 / FR-035) can run the FEAT-007 attach atomically.
+        agent_service.log_service = log_service
+
+        # FR-043: orphan-recovery startup pass. Runs AFTER schema migration
+        # (open_registry already triggered _apply_pending_migrations under
+        # _build_log_service via _read_schema_version) and BEFORE the socket
+        # listener starts accepting connections. Best-effort; never blocks
+        # daemon startup on tmux/docker errors.
+        try:
+            detect_orphans(
+                connection_factory=lambda: sqlite3.connect(
+                    str(paths.state_db), isolation_level=None
+                ),
+                docker_exec_runner=log_service.docker_exec_runner,
+                daemon_home=Path(os.path.expanduser("~")),
+                lifecycle_logger=logger,
+            )
+        except Exception:  # pragma: no cover — defensive; orphan detection is best-effort
+            pass
+
         ctx = _build_context(
             paths=paths,
             state_dir=state_dir,
@@ -395,6 +450,7 @@ def _run(args: argparse.Namespace) -> int:
             discovery_service=discovery_service,
             pane_service=pane_service,
             agent_service=agent_service,
+            log_service=log_service,
             logger=logger,
         )
 

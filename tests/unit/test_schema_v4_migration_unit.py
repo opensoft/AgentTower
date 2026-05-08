@@ -76,17 +76,19 @@ def _sqlite_master_snapshot_for(
         conn.close()
 
 
-def test_current_schema_version_is_4() -> None:
-    assert schema.CURRENT_SCHEMA_VERSION == 4
+def test_current_schema_version_is_at_least_4() -> None:
+    """The v3→v4 migration entry MUST exist; later FEATs may bump CURRENT_SCHEMA_VERSION higher."""
+    assert schema.CURRENT_SCHEMA_VERSION >= 4
+    assert 4 in schema._MIGRATIONS
 
 
-def test_fresh_db_lands_at_v4_with_agents_table(tmp_path: Path) -> None:
+def test_fresh_db_lands_at_current_with_agents_table(tmp_path: Path) -> None:
     state_db = _make_state_db(tmp_path)
     conn, status = _open(state_db)
     try:
         assert status == "created"
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 4
+        assert version == schema.CURRENT_SCHEMA_VERSION
         tables = _table_names(conn)
         assert {
             "containers",
@@ -105,29 +107,44 @@ def test_fresh_db_lands_at_v4_with_agents_table(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_v3_to_v4_preserves_feat001_through_feat004_tables(tmp_path: Path) -> None:
-    """SC-010: v3-only DB upgrades to v4 cleanly; pre-existing tables are
+def test_v3_to_current_preserves_feat001_through_feat004_tables(tmp_path: Path) -> None:
+    """SC-010: v3-only DB upgrades to current cleanly; FEAT-001..004 tables are
     byte-identical."""
     state_db = _make_state_db(tmp_path)
     _seed_v3(state_db)
 
-    before = _sqlite_master_snapshot_for(
-        state_db, "name NOT IN ('agents','agents_active_order','agents_parent_lookup','agents_pane_lookup','schema_version')"
+    # Exclude every later-FEAT artifact from the byte-identity check.
+    later_artifacts = (
+        "agents",
+        "agents_active_order",
+        "agents_parent_lookup",
+        "agents_pane_lookup",
+        "log_attachments",
+        "log_attachments_active_log_path",
+        "log_attachments_agent_status",
+        "log_attachments_pane_status",
+        "log_offsets",
+        "log_offsets_agent",
+        "schema_version",
     )
+    name_filter = (
+        "name NOT IN ("
+        + ",".join(f"'{n}'" for n in later_artifacts)
+        + ")"
+    )
+    before = _sqlite_master_snapshot_for(state_db, name_filter)
 
     conn, _ = _open(state_db)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 4
+        assert version == schema.CURRENT_SCHEMA_VERSION
         assert "agents" in _table_names(conn)
     finally:
         conn.close()
 
-    after = _sqlite_master_snapshot_for(
-        state_db, "name NOT IN ('agents','agents_active_order','agents_parent_lookup','agents_pane_lookup','schema_version')"
-    )
+    after = _sqlite_master_snapshot_for(state_db, name_filter)
     assert before == after, (
-        "v3 → v4 migration mutated FEAT-001..004 schema rows.\n"
+        "v3 → current migration mutated FEAT-001..004 schema rows.\n"
         f"before: {before!r}\n"
         f"after:  {after!r}"
     )
@@ -146,8 +163,8 @@ def test_apply_migration_v4_is_idempotent(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_v4_reopen_is_a_noop(tmp_path: Path) -> None:
-    """SC-010: re-opening a v4 DB is a clean no-op (defensive migration call)."""
+def test_current_reopen_is_a_noop(tmp_path: Path) -> None:
+    """SC-010: re-opening an already-current DB is a clean no-op (defensive migration call)."""
     state_db = _make_state_db(tmp_path)
     _open(state_db)[0].close()
 
@@ -156,7 +173,7 @@ def test_v4_reopen_is_a_noop(tmp_path: Path) -> None:
     conn, _ = _open(state_db)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 4
+        assert version == schema.CURRENT_SCHEMA_VERSION
     finally:
         conn.close()
 
