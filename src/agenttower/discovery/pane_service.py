@@ -183,7 +183,11 @@ class PaneDiscoveryService:
     # -- scan_panes (acquires mutex; runs subprocess + reconcile + commit) ----
 
     def scan(self) -> PaneScanResult:
-        """Run one pane scan, serialized via the in-process pane mutex (FR-017)."""
+        """Run one pane scan across all active containers."""
+        return self.scan_for_container(container_id=None)
+
+    def scan_for_container(self, *, container_id: str | None) -> PaneScanResult:
+        """Run one pane scan, optionally scoped to a single active container."""
         with self._scan_mutex:
             scan_id = str(uuid.uuid4())
             started_at = _now_iso()
@@ -197,7 +201,11 @@ class PaneDiscoveryService:
                     message=_bound(f"pane_scan_started emit failed: {exc}"),
                 ) from exc
             try:
-                return self._scan_locked(scan_id=scan_id, started_at=started_at)
+                return self._scan_locked(
+                    scan_id=scan_id,
+                    started_at=started_at,
+                    container_filter=container_id,
+                )
             except TmuxError as exc:
                 if exc.code == _errors.DOCKER_UNAVAILABLE:
                     self._handle_docker_unavailable(
@@ -207,9 +215,19 @@ class PaneDiscoveryService:
 
     # -- Internals ------------------------------------------------------------
 
-    def _scan_locked(self, *, scan_id: str, started_at: str) -> PaneScanResult:
+    def _scan_locked(
+        self,
+        *,
+        scan_id: str,
+        started_at: str,
+        container_filter: str | None,
+    ) -> PaneScanResult:
         active_rows = state_containers.select_active_containers_with_user(self._conn)
+        if container_filter is not None:
+            active_rows = [r for r in active_rows if r.container_id == container_filter]
         cascade_ids = state_containers.select_inactive_container_ids_with_panes(self._conn)
+        if container_filter is not None:
+            cascade_ids = [cid for cid in cascade_ids if cid == container_filter]
         prior_panes = state_panes.select_all_panes(self._conn)
 
         per_container: list[_ContainerScanState] = []

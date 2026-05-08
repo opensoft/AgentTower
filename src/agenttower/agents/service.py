@@ -336,6 +336,7 @@ class AgentService:
 
             conn.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_bound_pane_is_active(conn, pane_key=pane_key)
                 existing = state_agents.select_agent_by_pane_key(
                     conn, pane_key=pane_key
                 )
@@ -404,11 +405,21 @@ class AgentService:
                     resolved_role = (
                         role_in if role_in is not _UNSET else existing.role
                     )
-                    if resolved_role == "master":
+                    resolved_parent = (
+                        parent_in
+                        if parent_in is not _UNSET
+                        else existing.parent_agent_id
+                    )
+                    if role_in is not _UNSET and resolved_role == "master":
                         # Even on re-registration, register-self never assigns master.
                         raise RegistrationError(
                             "master_via_register_self_rejected",
                             "register-self cannot assign role=master",
+                        )
+                    if resolved_parent is not None and resolved_role != "swarm":
+                        raise RegistrationError(
+                            "parent_role_mismatch",
+                            "--parent only valid with --role swarm",
                         )
                     resolved_capability = (
                         capability_in
@@ -594,6 +605,31 @@ class AgentService:
                 new_role=new_role,
                 error=type(exc).__name__,
                 error_message=sanitize_text(str(exc), 512)[0],
+            )
+
+    def _validate_bound_pane_is_active(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        pane_key: PaneCompositeKey,
+    ) -> None:
+        """Refuse register_agent if the resolved FEAT-004 pane is gone/inactive.
+
+        The client-side resolve step may race a concurrent FEAT-004
+        reconciliation. Re-checking inside the same ``BEGIN IMMEDIATE``
+        transaction closes that window before we create/reactivate an agent row.
+        """
+        state = state_agents.select_active_for_bound_pane(conn, pane_key=pane_key)
+        if state is None:
+            raise RegistrationError(
+                "pane_unknown_to_daemon",
+                "resolved pane is no longer present in the daemon registry; rerun pane scan",
+            )
+        pane_active, container_active = state
+        if not pane_active or not container_active:
+            raise RegistrationError(
+                "pane_unknown_to_daemon",
+                "resolved pane is inactive or its container is inactive; rerun pane scan",
             )
 
     def _validate_parent_for_swarm(

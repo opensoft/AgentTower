@@ -388,4 +388,4 @@ classification (the daemon never received the call).
 | `set-role --role swarm` exits `3` with `swarm_role_via_set_role_rejected` | Swarm role assignment requires `register-self --role swarm --parent <id>` |
 | `register-self --role swarm` exits `3` with `swarm_parent_required` | Forgot `--parent <agent-id>` |
 | `register-self --parent <id>` exits `3` with `parent_role_mismatch` | `--parent` requires `--role swarm` |
-| Any CLI exits `3` with `schema_version_newer` | Daemon is newer than this CLI build; upgrade the CLI | |
+| Any CLI exits `3` with `schema_version_newer` | Daemon is newer than this CLI build; upgrade the CLI |

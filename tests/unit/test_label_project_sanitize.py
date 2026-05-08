@@ -95,3 +95,7 @@ def test_project_path_at_bound_accepted() -> None:
     s = "/" + "x" * (PROJECT_PATH_MAX - 1)
     assert validate_project_path(s) == s
     assert len(s) == PROJECT_PATH_MAX
+
+
+def test_project_path_control_bytes_are_sanitized() -> None:
+    assert validate_project_path("/workspace/\tacme\n\r") == "/workspace/acme"

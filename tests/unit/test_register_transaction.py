@@ -54,3 +54,33 @@ def test_register_failure_rolls_back_and_skips_audit(
     assert count == 0
     # No audit row was appended.
     assert read_events(service) == []
+
+
+def test_register_fails_when_bound_pane_is_inactive_at_commit_time(
+    tmp_path: Path,
+) -> None:
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service, active=False)
+
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(
+            register_params(role="slave"), socket_peer_uid=1000
+        )
+
+    assert info.value.code == "pane_unknown_to_daemon"
+
+
+def test_register_fails_when_bound_container_is_inactive_at_commit_time(
+    tmp_path: Path,
+) -> None:
+    service = make_service(tmp_path)
+    seed_container(service, active=False)
+    seed_pane(service, active=True)
+
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(
+            register_params(role="slave"), socket_peer_uid=1000
+        )
+
+    assert info.value.code == "pane_unknown_to_daemon"

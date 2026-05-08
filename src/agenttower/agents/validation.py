@@ -109,15 +109,16 @@ def validate_project_path(value: object) -> str:
             "project_path_invalid",
             f"project_path must be a string; got {type(value).__name__}",
         )
-    if value == "":
-        raise RegistrationError(
-            "project_path_invalid",
-            "project_path must be a non-empty absolute path",
-        )
     if "\x00" in value:
         raise RegistrationError(
             "project_path_invalid",
             "project_path must not contain NUL bytes",
+        )
+    value = "".join(ch for ch in value if ord(ch) >= 0x20 and ord(ch) != 0x7F)
+    if value == "":
+        raise RegistrationError(
+            "project_path_invalid",
+            "project_path must be a non-empty absolute path",
         )
     if not value.startswith("/"):
         raise RegistrationError(

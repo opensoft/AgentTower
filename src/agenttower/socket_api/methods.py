@@ -226,9 +226,14 @@ def _scan_panes(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_
     if ctx.pane_service is None:
         return errors.make_error(errors.INTERNAL_ERROR, "pane service unavailable")
     from ..tmux.adapter import TmuxError  # local import: avoid cycles
+    container_filter = params.get("container")
+    if container_filter is not None and not isinstance(container_filter, str):
+        return errors.make_error(
+            errors.BAD_REQUEST, "params.container must be a string or null"
+        )
 
     try:
-        result = ctx.pane_service.scan()
+        result = ctx.pane_service.scan_for_container(container_id=container_filter)
     except TmuxError as exc:
         if exc.code in errors.CLOSED_CODE_SET:
             return errors.make_error(exc.code, exc.message)
