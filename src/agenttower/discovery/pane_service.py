@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover — POSIX only
 
 from ..events import writer as events_writer
 from ..socket_api import errors as _errors
+from ..state import agents as state_agents
 from ..state import containers as state_containers
 from ..state import panes as state_panes
 from ..state.panes import (
@@ -182,7 +183,11 @@ class PaneDiscoveryService:
     # -- scan_panes (acquires mutex; runs subprocess + reconcile + commit) ----
 
     def scan(self) -> PaneScanResult:
-        """Run one pane scan, serialized via the in-process pane mutex (FR-017)."""
+        """Run one pane scan across all active containers."""
+        return self.scan_for_container(container_id=None)
+
+    def scan_for_container(self, *, container_id: str | None) -> PaneScanResult:
+        """Run one pane scan, optionally scoped to a single active container."""
         with self._scan_mutex:
             scan_id = str(uuid.uuid4())
             started_at = _now_iso()
@@ -196,7 +201,11 @@ class PaneDiscoveryService:
                     message=_bound(f"pane_scan_started emit failed: {exc}"),
                 ) from exc
             try:
-                return self._scan_locked(scan_id=scan_id, started_at=started_at)
+                return self._scan_locked(
+                    scan_id=scan_id,
+                    started_at=started_at,
+                    container_filter=container_id,
+                )
             except TmuxError as exc:
                 if exc.code == _errors.DOCKER_UNAVAILABLE:
                     self._handle_docker_unavailable(
@@ -206,9 +215,23 @@ class PaneDiscoveryService:
 
     # -- Internals ------------------------------------------------------------
 
-    def _scan_locked(self, *, scan_id: str, started_at: str) -> PaneScanResult:
+    def _scan_locked(
+        self,
+        *,
+        scan_id: str,
+        started_at: str,
+        container_filter: str | None,
+    ) -> PaneScanResult:
         active_rows = state_containers.select_active_containers_with_user(self._conn)
+        if container_filter is not None:
+            active_rows = [row for row in active_rows if row[0] == container_filter]
         cascade_ids = state_containers.select_inactive_container_ids_with_panes(self._conn)
+        if container_filter is not None:
+            cascade_ids = {
+                container_id
+                for container_id in cascade_ids
+                if container_id == container_filter
+            }
         prior_panes = state_panes.select_all_panes(self._conn)
 
         per_container: list[_ContainerScanState] = []
@@ -426,6 +449,25 @@ class PaneDiscoveryService:
         try:
             state_panes.apply_pane_reconcile_writeset(
                 self._conn, write_set=write_set, now_iso=started_at
+            )
+            # FEAT-006 FR-009a / FR-009 / Clarifications Q2: in the same
+            # transaction as the pane reconcile, update agents.last_seen_at
+            # for every pane observed during the scan and cascade
+            # agents.active=0 for every pane that transitioned 1→0. The
+            # FEAT-006 register-mutex is NOT acquired here; cross-subsystem
+            # ordering with register_agent is via SQLite BEGIN IMMEDIATE.
+            #
+            # Note: ``upsert.pane_active`` is the tmux *focus* flag (the
+            # single currently-selected pane within a window), not the
+            # FEAT-004 row-existence ``active`` flag. Filtering on it
+            # would have left every non-focused pane's bound agent with
+            # a stale ``last_seen_at`` even while its pane was alive.
+            observed_keys = [u.composite_key for u in write_set.upserts]
+            state_agents.update_last_seen_at(
+                self._conn, pane_keys=observed_keys, now_iso=started_at
+            )
+            state_agents.cascade_agents_active_from_pane(
+                self._conn, pane_keys=write_set.inactivate
             )
             completed_at = _now_iso()
             state_panes.insert_pane_scan(

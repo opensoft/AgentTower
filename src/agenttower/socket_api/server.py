@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import socket as _socket
 import socketserver
 import stat
+import struct
 import threading
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,30 @@ from . import errors
 from .methods import DISPATCH, DaemonContext
 
 MAX_REQUEST_BYTES = 65536  # 64 KiB; FR-029 / R-006.
+
+# Linux ucred is "{ pid_t pid; uid_t uid; gid_t gid; }" — three 32-bit ints.
+_UCRED_STRUCT = struct.Struct("iII")
+_NO_PEER_UID = -1
+
+
+def _peer_uid_from_socket(conn: _socket.socket) -> int:
+    """Return the peer's uid from ``SO_PEERCRED`` or ``-1`` on failure.
+
+    The uid is injected out-of-band into method dispatch so a request
+    body cannot spoof it. Failures (non-Linux kernel, connection torn
+    down before getsockopt, etc.) degrade to the sentinel ``-1`` —
+    audit rows then record ``-1`` rather than dropping the request.
+    """
+    try:
+        raw = conn.getsockopt(
+            _socket.SOL_SOCKET, _socket.SO_PEERCRED, _UCRED_STRUCT.size
+        )
+    except (OSError, AttributeError):
+        return _NO_PEER_UID
+    if len(raw) < _UCRED_STRUCT.size:
+        return _NO_PEER_UID
+    _pid, uid, _gid = _UCRED_STRUCT.unpack(raw)
+    return int(uid)
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +109,15 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         if handler is None:
             return errors.make_error(errors.UNKNOWN_METHOD, f"unknown method: {method}")
 
+        # ``self.connection`` is set by ``StreamRequestHandler.setup``; tests
+        # that synthesize a handler via ``__new__`` skip setup, so fall back
+        # to the sentinel rather than crashing dispatch on a missing attr.
+        connection = getattr(self, "connection", None)
+        peer_uid = (
+            _peer_uid_from_socket(connection) if connection is not None else _NO_PEER_UID
+        )
         try:
-            return handler(self.server.context, params)
+            return handler(self.server.context, params, peer_uid)
         except Exception as exc:  # noqa: BLE001 — never crash the daemon (FR-021).
             return errors.make_error(errors.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
 

@@ -33,6 +33,29 @@ DOCKER_EXEC_TIMEOUT: Final[str] = "docker_exec_timeout"
 OUTPUT_MALFORMED: Final[str] = "output_malformed"
 BENCH_USER_UNRESOLVED: Final[str] = "bench_user_unresolved"
 
+# FEAT-006 additions (research R-010 / FR-040).
+HOST_CONTEXT_UNSUPPORTED: Final[str] = "host_context_unsupported"
+CONTAINER_UNRESOLVED: Final[str] = "container_unresolved"
+NOT_IN_TMUX: Final[str] = "not_in_tmux"
+TMUX_PANE_MALFORMED: Final[str] = "tmux_pane_malformed"
+PANE_UNKNOWN_TO_DAEMON: Final[str] = "pane_unknown_to_daemon"
+AGENT_NOT_FOUND: Final[str] = "agent_not_found"
+AGENT_INACTIVE: Final[str] = "agent_inactive"
+PARENT_NOT_FOUND: Final[str] = "parent_not_found"
+PARENT_INACTIVE: Final[str] = "parent_inactive"
+PARENT_ROLE_INVALID: Final[str] = "parent_role_invalid"
+PARENT_ROLE_MISMATCH: Final[str] = "parent_role_mismatch"
+PARENT_IMMUTABLE: Final[str] = "parent_immutable"
+SWARM_PARENT_REQUIRED: Final[str] = "swarm_parent_required"
+SWARM_ROLE_VIA_SET_ROLE_REJECTED: Final[str] = "swarm_role_via_set_role_rejected"
+MASTER_VIA_REGISTER_SELF_REJECTED: Final[str] = "master_via_register_self_rejected"
+MASTER_CONFIRM_REQUIRED: Final[str] = "master_confirm_required"
+VALUE_OUT_OF_SET: Final[str] = "value_out_of_set"
+FIELD_TOO_LONG: Final[str] = "field_too_long"
+PROJECT_PATH_INVALID: Final[str] = "project_path_invalid"
+UNKNOWN_FILTER: Final[str] = "unknown_filter"
+SCHEMA_VERSION_NEWER: Final[str] = "schema_version_newer"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
     {
         BAD_JSON,
@@ -54,6 +77,27 @@ CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
         DOCKER_EXEC_TIMEOUT,
         OUTPUT_MALFORMED,
         BENCH_USER_UNRESOLVED,
+        HOST_CONTEXT_UNSUPPORTED,
+        CONTAINER_UNRESOLVED,
+        NOT_IN_TMUX,
+        TMUX_PANE_MALFORMED,
+        PANE_UNKNOWN_TO_DAEMON,
+        AGENT_NOT_FOUND,
+        AGENT_INACTIVE,
+        PARENT_NOT_FOUND,
+        PARENT_INACTIVE,
+        PARENT_ROLE_INVALID,
+        PARENT_ROLE_MISMATCH,
+        PARENT_IMMUTABLE,
+        SWARM_PARENT_REQUIRED,
+        SWARM_ROLE_VIA_SET_ROLE_REJECTED,
+        MASTER_VIA_REGISTER_SELF_REJECTED,
+        MASTER_CONFIRM_REQUIRED,
+        VALUE_OUT_OF_SET,
+        FIELD_TOO_LONG,
+        PROJECT_PATH_INVALID,
+        UNKNOWN_FILTER,
+        SCHEMA_VERSION_NEWER,
     }
 )
 

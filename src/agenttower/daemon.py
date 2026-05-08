@@ -11,6 +11,8 @@ import threading
 from datetime import datetime, timezone
 
 from . import __version__
+from .agents.mutex import AgentLockMap, RegisterLockMap
+from .agents.service import AgentService
 from .config import load_containers_block
 from .discovery.pane_service import PaneDiscoveryService
 from .discovery.service import DiscoveryService
@@ -164,6 +166,33 @@ def _build_pane_service(
     return service, conn
 
 
+def _build_agent_service(paths: Paths, logger: LifecycleLogger) -> AgentService:
+    """Construct the FEAT-006 ``AgentService`` for the daemon.
+
+    Each call to a service method opens a fresh SQLite connection via the
+    factory so register_agent / list_agents / set_* run without sharing
+    a cursor across the accept-thread pool. Mutex registries are
+    process-scoped per FR-038 / FR-039.
+
+    The lifecycle *logger* is plumbed in so the FR-014 audit-append
+    failure invariant (see ``agents.service`` module docstring) is
+    operationally observable: post-COMMIT JSONL append failures emit
+    ``audit_append_failed`` events through the daemon's structured
+    logger rather than being silently lost.
+    """
+    schema_version = _read_schema_version(paths) or 0
+    return AgentService(
+        connection_factory=lambda: sqlite3.connect(
+            str(paths.state_db), isolation_level=None
+        ),
+        register_locks=RegisterLockMap(),
+        agent_locks=AgentLockMap(),
+        events_file=paths.events_file,
+        schema_version=schema_version,
+        lifecycle_logger=logger,
+    )
+
+
 def _build_context(
     *,
     paths: Paths,
@@ -171,6 +200,7 @@ def _build_context(
     shutdown_event: threading.Event,
     discovery_service: DiscoveryService | None,
     pane_service: PaneDiscoveryService | None,
+    agent_service: AgentService | None,
     logger: LifecycleLogger,
 ) -> DaemonContext:
     return DaemonContext(
@@ -183,6 +213,7 @@ def _build_context(
         shutdown_requested=shutdown_event,
         discovery_service=discovery_service,
         pane_service=pane_service,
+        agent_service=agent_service,
         events_file=paths.events_file,
         lifecycle_logger=logger,
     )
@@ -356,12 +387,14 @@ def _run(args: argparse.Namespace) -> int:
         shutdown_event = threading.Event()
         discovery_service, scan_db_conn = _build_discovery_service(paths, logger)
         pane_service, pane_db_conn = _build_pane_service(paths, logger)
+        agent_service = _build_agent_service(paths, logger)
         ctx = _build_context(
             paths=paths,
             state_dir=state_dir,
             shutdown_event=shutdown_event,
             discovery_service=discovery_service,
             pane_service=pane_service,
+            agent_service=agent_service,
             logger=logger,
         )
 

@@ -15,14 +15,16 @@ from __future__ import annotations
 
 class TestDispatchTableCardinality:
     def test_dispatch_table_method_count_unchanged(self):
-        """FR-022 forbids any new socket method. Pre-FEAT-005 the table had
-        exactly 7 entries (ping, status, shutdown, scan_containers,
-        list_containers, scan_panes, list_panes). Asserts the count and the
-        exact method names so a new entry cannot sneak in."""
+        """FEAT-005 FR-022 forbade any new socket method through FEAT-005.
+
+        FEAT-006 explicitly adds 5 methods (FR-023): ``register_agent``,
+        ``list_agents``, ``set_role``, ``set_label``, ``set_capability``.
+        This test now pins the closed FEAT-001..006 set so an accidental
+        extra method cannot sneak in beyond the spec'd surface.
+        """
         from agenttower.socket_api import methods as methods_module
 
-        # The dispatch table is `DISPATCH` per the FEAT-002 / 003 / 004 builds.
-        # We do not import a name we don't know exists — we discover it.
+        # The dispatch table is `DISPATCH` per the FEAT-002 / 003 / 004 / 006 builds.
         dispatch = getattr(methods_module, "DISPATCH", None)
         assert dispatch is not None, "expected DISPATCH dict in socket_api/methods.py"
         assert isinstance(dispatch, dict)
@@ -34,8 +36,13 @@ class TestDispatchTableCardinality:
             "list_containers",
             "scan_panes",
             "list_panes",
+            "register_agent",
+            "list_agents",
+            "set_role",
+            "set_label",
+            "set_capability",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 7
+        assert len(dispatch) == 12
 
 
 # ---------------------------------------------------------------------------

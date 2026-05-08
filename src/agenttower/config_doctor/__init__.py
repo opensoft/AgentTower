@@ -8,7 +8,7 @@ client and FEAT-003 / FEAT-004 socket methods (FR-022, FR-026).
 
 from __future__ import annotations
 
-MAX_SUPPORTED_SCHEMA_VERSION = 3
+MAX_SUPPORTED_SCHEMA_VERSION = 4
 """Highest SQLite schema_version this CLI build understands (R-010)."""
 
 # Re-exports — see plan §Structure Decision. These are imported lazily inside

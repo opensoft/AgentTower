@@ -9,7 +9,7 @@ import pytest
 from agenttower.socket_api import errors
 
 
-def test_closed_code_set_contains_feat002_through_feat004_codes() -> None:
+def test_closed_code_set_contains_feat002_through_feat006_codes() -> None:
     # FEAT-002 codes (FR-022 backward-compat).
     feat002 = {
         errors.BAD_JSON,
@@ -41,8 +41,33 @@ def test_closed_code_set_contains_feat002_through_feat004_codes() -> None:
         errors.BENCH_USER_UNRESOLVED,
     }
     assert feat004 <= errors.CLOSED_CODE_SET
+    # FEAT-006 additions (research R-010 / FR-040).
+    feat006 = {
+        errors.HOST_CONTEXT_UNSUPPORTED,
+        errors.CONTAINER_UNRESOLVED,
+        errors.NOT_IN_TMUX,
+        errors.TMUX_PANE_MALFORMED,
+        errors.PANE_UNKNOWN_TO_DAEMON,
+        errors.AGENT_NOT_FOUND,
+        errors.AGENT_INACTIVE,
+        errors.PARENT_NOT_FOUND,
+        errors.PARENT_INACTIVE,
+        errors.PARENT_ROLE_INVALID,
+        errors.PARENT_ROLE_MISMATCH,
+        errors.PARENT_IMMUTABLE,
+        errors.SWARM_PARENT_REQUIRED,
+        errors.SWARM_ROLE_VIA_SET_ROLE_REJECTED,
+        errors.MASTER_VIA_REGISTER_SELF_REJECTED,
+        errors.MASTER_CONFIRM_REQUIRED,
+        errors.VALUE_OUT_OF_SET,
+        errors.FIELD_TOO_LONG,
+        errors.PROJECT_PATH_INVALID,
+        errors.UNKNOWN_FILTER,
+        errors.SCHEMA_VERSION_NEWER,
+    }
+    assert feat006 <= errors.CLOSED_CODE_SET
     # No surprise codes beyond the documented sets.
-    assert errors.CLOSED_CODE_SET == feat002 | feat003 | feat004
+    assert errors.CLOSED_CODE_SET == feat002 | feat003 | feat004 | feat006
 
 
 @pytest.mark.parametrize(
@@ -179,7 +204,7 @@ def test_dispatch_accepts_valid_ping() -> None:
 def test_dispatch_handles_internal_exception_gracefully() -> None:
     handler, _ = _make_handler(b'{"method": "ping"}\n')
 
-    def boom(ctx, params):  # noqa: ANN001
+    def boom(ctx, params, peer_uid=-1):  # noqa: ANN001
         raise RuntimeError("kaboom")
 
     from agenttower.socket_api.methods import DISPATCH

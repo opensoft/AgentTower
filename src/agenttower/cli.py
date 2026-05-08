@@ -11,7 +11,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .agents.errors import RegistrationError
 
 from . import __version__
 from .config import _DIR_MODE, _ensure_dir_chain, write_default_config
@@ -667,6 +670,135 @@ def _build_parser() -> argparse.ArgumentParser:
     list_panes.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     list_panes.set_defaults(_handler=_list_panes_command)
 
+    # ------------------------------------------------------------------
+    # FEAT-006 — register-self / list-agents / set-* subparsers.
+    #
+    # Per Clarifications Q1 / FR-007 the CLI MUST NOT transmit
+    # argparse-style defaults on idempotent re-registration of an
+    # existing pane: omitted flags are absent in the parsed Namespace
+    # so the daemon leaves stored values unchanged. We use
+    # ``argparse.SUPPRESS`` as the per-flag default so omitted flags
+    # never appear in the Namespace at all (research R-002).
+    # ------------------------------------------------------------------
+
+    from .agents.validation import VALID_CAPABILITIES, VALID_ROLES
+
+    _ROLES_LIST = ", ".join(VALID_ROLES)
+    _CAPS_LIST = ", ".join(VALID_CAPABILITIES)
+    _AGENT_ID_HELP = "target agent_id (matches agt_<12-hex-lowercase>)"
+
+    register_self = subparsers.add_parser(
+        "register-self",
+        help="register the current tmux pane as an AgentTower agent",
+        description="register the current tmux pane as an AgentTower agent",
+    )
+    register_self.add_argument(
+        "--role",
+        default=argparse.SUPPRESS,
+        help=f"role to assign on first registration (one of: {_ROLES_LIST}). "
+        "register-self never accepts master; use set-role for promotion (FR-010).",
+    )
+    register_self.add_argument(
+        "--capability",
+        default=argparse.SUPPRESS,
+        help=f"capability descriptor (one of: {_CAPS_LIST}).",
+    )
+    register_self.add_argument(
+        "--label",
+        default=argparse.SUPPRESS,
+        help="free-text label, sanitized + bounded to 64 chars.",
+    )
+    register_self.add_argument(
+        "--project",
+        default=argparse.SUPPRESS,
+        help="absolute path inside the container (no '..' segments, "
+        "no NUL, ≤ 4096 chars).",
+    )
+    register_self.add_argument(
+        "--parent",
+        default=argparse.SUPPRESS,
+        help="parent agent_id when --role swarm (immutable after creation).",
+    )
+    register_self.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    register_self.set_defaults(_handler=_register_self_command)
+
+    list_agents = subparsers.add_parser(
+        "list-agents",
+        help="list registered AgentTower agents",
+        description="list registered AgentTower agents",
+    )
+    list_agents.add_argument(
+        "--role",
+        action="append",
+        default=None,
+        help="filter by role (repeatable to OR multiple roles)",
+    )
+    list_agents.add_argument(
+        "--container",
+        default=None,
+        help="filter by exact container id, 12-char short prefix, or 64-char hex",
+    )
+    list_agents.add_argument(
+        "--active-only",
+        action="store_true",
+        help="only return currently-active agents",
+    )
+    list_agents.add_argument(
+        "--parent",
+        default=None,
+        help="filter swarm children of the given parent agent_id",
+    )
+    list_agents.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    list_agents.set_defaults(_handler=_list_agents_command)
+
+    set_role = subparsers.add_parser(
+        "set-role",
+        help="change an agent's role (master requires --confirm)",
+        description="change an agent's role (master requires --confirm)",
+    )
+    set_role.add_argument("--target", required=True, help=_AGENT_ID_HELP)
+    set_role.add_argument(
+        "--role",
+        required=True,
+        help=f"new role (one of: {_ROLES_LIST}). "
+        "swarm rejected (use register-self); master requires --confirm.",
+    )
+    set_role.add_argument(
+        "--confirm",
+        action="store_true",
+        help="required when --role master (FR-011).",
+    )
+    set_role.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    set_role.set_defaults(_handler=_set_role_command)
+
+    set_label = subparsers.add_parser(
+        "set-label",
+        help="change an agent's free-text label",
+        description="change an agent's free-text label",
+    )
+    set_label.add_argument("--target", required=True, help=_AGENT_ID_HELP)
+    set_label.add_argument(
+        "--label",
+        required=True,
+        help="new label (sanitized + bounded to 64 chars).",
+    )
+    set_label.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    set_label.set_defaults(_handler=_set_label_command)
+
+    set_capability = subparsers.add_parser(
+        "set-capability",
+        help="change an agent's capability descriptor",
+        description="change an agent's capability descriptor",
+    )
+    set_capability.add_argument("--target", required=True, help=_AGENT_ID_HELP)
+    set_capability.add_argument(
+        "--capability",
+        required=True,
+        help=f"new capability (one of: {_CAPS_LIST}).",
+    )
+    set_capability.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    set_capability.set_defaults(_handler=_set_capability_command)
+
     return parser
 
 
@@ -927,6 +1059,394 @@ def _list_panes_command(args: argparse.Namespace) -> int:
             )
         )
     return 0
+
+
+# ---------------------------------------------------------------------------
+# FEAT-006 — register-self / list-agents / set-* command handlers.
+# ---------------------------------------------------------------------------
+
+# Keys we look for on the parsed argparse.Namespace for the supplied-vs-default
+# wire contract (Clarifications Q1). Using ``argparse.SUPPRESS`` as the default
+# means absent flags are NOT attributes on the Namespace.
+_REGISTER_SELF_OPTIONAL = (
+    ("role", "role"),
+    ("capability", "capability"),
+    ("label", "label"),
+    ("project", "project_path"),
+    ("parent", "parent_agent_id"),
+)
+
+
+def _register_self_command(args: argparse.Namespace) -> int:
+    """Resolve identity, build the request envelope, and call register_agent."""
+    from .agents.client_resolve import resolve_pane_composite_key
+    from .agents.errors import RegistrationError
+
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    # Client-side mirror of FR-010 (review-pass-6 N13). Rejecting
+    # ``--role master`` before the multi-call resolve_pane_composite_key
+    # round-trip is symmetric with the set-role swarm gate: we save the
+    # operator several Docker/tmux scans on a known-bad combo.
+    if hasattr(args, "role") and args.role == "master":
+        _emit_local_error(
+            "master_via_register_self_rejected",
+            "register-self cannot assign role=master; register first, "
+            "then run `agenttower set-role --role master --confirm`",
+            args.json,
+        )
+        return 3
+
+    try:
+        target = resolve_pane_composite_key(
+            socket_path=socket_path,
+            env=os.environ,
+            proc_root=os.environ.get("AGENTTOWER_TEST_PROC_ROOT"),
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except RegistrationError as exc:
+        return _emit_register_error(exc, args.json)
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    # Forward-compat handshake (FR-040 / edge case line 79). The CLI
+    # advertises the schema version it was built against so the daemon
+    # can refuse with ``schema_version_newer`` when its own schema has
+    # advanced past what the CLI knows. Without this hint the server
+    # cannot detect a stale CLI calling a newer daemon.
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    params: dict[str, Any] = {
+        "schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION),
+        "container_id": target.container_id,
+        "pane_composite_key": {
+            "container_id": target.pane_key[0],
+            "tmux_socket_path": target.pane_key[1],
+            "tmux_session_name": target.pane_key[2],
+            "tmux_window_index": target.pane_key[3],
+            "tmux_pane_index": target.pane_key[4],
+            "tmux_pane_id": target.pane_key[5],
+        },
+    }
+    # Only-supplied-fields-overwrite (Clarifications Q1): we include each
+    # mutable field iff the user passed the flag. argparse.SUPPRESS made
+    # omitted flags absent from the Namespace, so a hasattr/getattr probe
+    # is sufficient to distinguish "supplied" from "not supplied".
+    for ns_attr, wire_key in _REGISTER_SELF_OPTIONAL:
+        if hasattr(args, ns_attr):
+            params[wire_key] = getattr(args, ns_attr)
+
+    try:
+        result = send_request(
+            socket_path,
+            "register_agent",
+            params,
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        # Defensive scrubbing on free-text fields: daemon-side sanitization
+        # already strips C0 controls, but applying _scrub_for_tsv here
+        # keeps the one-line-per-key shape robust if a future schema
+        # ever loosens that guarantee.
+        print(f"agent_id={result.get('agent_id')}")
+        print(f"role={result.get('role')}")
+        print(f"capability={result.get('capability')}")
+        print(f"label={_scrub_for_tsv(result.get('label', ''))}")
+        print(f"project_path={_scrub_for_tsv(result.get('project_path', ''))}")
+        print(f"parent_agent_id={result.get('parent_agent_id') or '-'}")
+        print(f"created_or_reactivated={result.get('created_or_reactivated')}")
+    return 0
+
+
+def _list_agents_command(args: argparse.Namespace) -> int:
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    # Every FEAT-006 CLI request advertises the schema version it was
+    # built against so the daemon can refuse with ``schema_version_newer``
+    # when its own schema has advanced past what the CLI knows
+    # (FR-040 / review-pass-6 K1+N14). Without this hint, the daemon-side
+    # forward-compat gate is unreachable for list-agents and set-*.
+    params: dict[str, Any] = {"schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION)}
+    if args.role:
+        params["role"] = args.role
+    if args.container is not None:
+        params["container_id"] = args.container
+    if args.active_only:
+        params["active_only"] = True
+    if args.parent is not None:
+        params["parent_agent_id"] = args.parent
+
+    try:
+        result = send_request(
+            socket_path,
+            "list_agents",
+            params,
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+        return 0
+    # FR-029 locked TSV column schema with required header row.
+    print(
+        "AGENT_ID\tLABEL\tROLE\tCAPABILITY\tCONTAINER\tPANE\tPROJECT\tPARENT\tACTIVE"
+    )
+    for agent in result.get("agents", []):
+        agent_id = agent.get("agent_id", "")
+        label = _scrub_for_tsv(agent.get("label", ""))
+        role = agent.get("role", "")
+        capability = agent.get("capability", "")
+        container_short = (agent.get("container_id") or "")[:12]
+        # Defensive int coercion: schema stores tmux_window_index /
+        # tmux_pane_index as NOT NULL ints, but a future schema drift
+        # or test fixture sending null would otherwise render
+        # "main:None.0". Fall back to 0 (which is a real pane index
+        # so still readable) rather than emitting "None".
+        window_idx = agent.get("tmux_window_index")
+        pane_idx = agent.get("tmux_pane_index")
+        pane = (
+            f"{_scrub_for_tsv(agent.get('tmux_session_name', ''))}:"
+            f"{int(window_idx) if window_idx is not None else 0}."
+            f"{int(pane_idx) if pane_idx is not None else 0}"
+        )
+        project = _scrub_for_tsv(agent.get("project_path", ""))
+        parent_full = agent.get("parent_agent_id")
+        parent = parent_full if parent_full else "-"
+        active = "true" if agent.get("active") else "false"
+        print(
+            f"{agent_id}\t{label}\t{role}\t{capability}\t"
+            f"{container_short}\t{pane}\t{project}\t{parent}\t{active}"
+        )
+    return 0
+
+
+def _validate_target_shape(target: Any, json_mode: bool) -> int | None:
+    """Validate a ``--target`` arg against ``agt_<12-hex-lowercase>``.
+
+    Returns ``None`` if the target is well-formed; otherwise emits a
+    ``value_out_of_set`` error via the shared helper and returns the
+    CLI exit code (3). Centralizing the gate lets each set-* command
+    fail fast on a bad target before any role/label/capability gate
+    runs (R-020 / contracts/cli.md), so a single invocation surfaces
+    the most actionable error rather than ping-ponging the user
+    between rejections.
+    """
+    from .agents.identifiers import AGENT_ID_RE
+
+    if not isinstance(target, str) or not AGENT_ID_RE.match(target):
+        _emit_local_error(
+            "value_out_of_set",
+            f"--target must match agt_<12-hex-lowercase>; got {target!r}",
+            json_mode,
+        )
+        return 3
+    return None
+
+
+def _set_role_command(args: argparse.Namespace) -> int:
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    # Target-shape gate first so a malformed --target surfaces before
+    # any role-specific rejection (review-pass-6 N32).
+    target_err = _validate_target_shape(args.target, args.json)
+    if target_err is not None:
+        return target_err
+
+    # Client-side mirror of FR-012 / FR-011 so we fail fast without a
+    # round-trip when the operator passed an obviously unsafe combo.
+    # The shared ``_emit_local_error`` helper enforces the ``--json``
+    # purity contract AND the established ``error: <msg>`` /
+    # ``code: <token>`` text-mode shape so both branches stay aligned.
+    if args.role == "swarm":
+        _emit_local_error(
+            "swarm_role_via_set_role_rejected",
+            # Single actionable message in both formats — JSON consumers
+            # shouldn't have to round-trip back to docs for the recovery
+            # step.
+            "set-role --role swarm is rejected; use "
+            "`agenttower register-self --role swarm --parent <agent-id>` instead",
+            args.json,
+        )
+        return 3
+    if args.role == "master" and not args.confirm:
+        _emit_local_error(
+            "master_confirm_required",
+            "master role assignment requires --confirm",
+            args.json,
+        )
+        return 3
+
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    params = {
+        "schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION),
+        "agent_id": args.target,
+        "role": args.role,
+        "confirm": bool(args.confirm),
+    }
+    return _send_set_command(socket_path, "set_role", params, args.json)
+
+
+def _set_label_command(args: argparse.Namespace) -> int:
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    target_err = _validate_target_shape(args.target, args.json)
+    if target_err is not None:
+        return target_err
+    _, resolved = _resolve_socket_with_paths()
+    params = {
+        "schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION),
+        "agent_id": args.target,
+        "label": args.label,
+    }
+    return _send_set_command(resolved.path, "set_label", params, args.json)
+
+
+def _set_capability_command(args: argparse.Namespace) -> int:
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    target_err = _validate_target_shape(args.target, args.json)
+    if target_err is not None:
+        return target_err
+    _, resolved = _resolve_socket_with_paths()
+    params = {
+        "schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION),
+        "agent_id": args.target,
+        "capability": args.capability,
+    }
+    return _send_set_command(resolved.path, "set_capability", params, args.json)
+
+
+def _send_set_command(
+    socket_path: Path,
+    method: str,
+    params: dict[str, Any],
+    json_mode: bool,
+) -> int:
+    # Each ``set-*`` command pre-validates ``--target`` via
+    # :func:`_validate_target_shape` before reaching this transport
+    # helper, so the AGENT_ID_RE gate doesn't repeat here.
+    try:
+        result = send_request(
+            socket_path,
+            method,
+            params,
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, json_mode)
+    if json_mode:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        print(f"agent_id={result.get('agent_id')}")
+        print(f"field={result.get('field')}")
+        print(f"prior_value={result.get('prior_value')}")
+        print(f"new_value={result.get('new_value')}")
+        print(f"audit_appended={str(result.get('audit_appended', False)).lower()}")
+    return 0
+
+
+def _emit_local_error(code: str, message: str, json_mode: bool) -> None:
+    """Emit a local (pre-flight, client-side) closed-set error.
+
+    Centralizes the ``--json`` purity contract and the established
+    ``error: <msg>`` / ``code: <token>`` text-mode shape so every
+    pre-flight rejection stays consistent regardless of where it
+    originates. Caller picks the exit code so this helper is reusable
+    for both ``host_context_unsupported`` (exit 1) and the closed-set
+    daemon-error mirror (exit 3) cases.
+    """
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {"code": code, "message": message},
+                }
+            )
+        )
+    else:
+        print(f"error: {message}", file=sys.stderr)
+        print(f"code: {code}", file=sys.stderr)
+
+
+def _exit_code_for(code: str) -> int:
+    """Map a closed-set error code to its CLI exit code (FR-032 / FR-040).
+
+    ``host_context_unsupported`` is exit 1 (client-side context error —
+    the operator is on the host shell, not in a bench container).
+    Every other closed-set code is exit 3 (FEAT-002 / FEAT-005
+    daemon-error convention).  ``daemon_unavailable`` is handled by
+    callers (exit 2) before any error code is even raised.
+    """
+    if code == "host_context_unsupported":
+        return 1
+    return 3
+
+
+def _emit_register_error(exc: "RegistrationError", json_mode: bool) -> int:
+    """Map a client-side ``RegistrationError`` to the CLI exit-code surface.
+
+    Closed-set wire codes are surfaced verbatim via the shared
+    ``_emit_local_error`` helper so JSON purity / text-mode shape stay
+    aligned with every other pre-flight emitter.
+    """
+    _emit_local_error(exc.code, exc.message, json_mode)
+    return _exit_code_for(exc.code)
+
+
+def _emit_daemon_error(exc: DaemonError, json_mode: bool) -> int:
+    """Map a daemon-side ``DaemonError`` to the CLI exit-code surface.
+
+    Routed through the same exit-code mapper as ``_emit_register_error``
+    so a daemon-emitted ``host_context_unsupported`` (in principle
+    raisable any time daemon code surfaces it) exits 1, matching the
+    client-side mapping. Without this symmetry, the same closed-set
+    code would map to different exit codes depending on which side
+    raised it.
+    """
+    _emit_local_error(exc.code, exc.message, json_mode)
+    return _exit_code_for(exc.code)
+
+
+def _scrub_for_tsv(value: str) -> str:
+    """Replace embedded ``\\t`` and ``\\n`` with single spaces.
+
+    FR-029 / FR-033: free-text fields are sanitized at write time, but
+    we apply the same byte class here defensively so the TSV layout
+    can't be broken by a label that happened to contain a tab.
+    """
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\t", " ").replace("\n", " ")
 
 
 def main(argv: list[str] | None = None) -> int:
