@@ -98,7 +98,13 @@ def validate_project_path(value: object) -> str:
 
     - non-empty, absolute path (starts with ``/``)
     - no NUL byte
-    - no ``..`` segment after :func:`os.path.normpath`
+    - no C0 control bytes (stripped before any other check; if stripping
+      pushes the path past ``PROJECT_PATH_MAX`` the input is rejected
+      with ``field_too_long``)
+    - no ``..`` segment in the *supplied* path. We deliberately do NOT
+      call ``os.path.normpath`` first — a normpath collapse would turn
+      ``/a/../b`` into ``/b`` and silently accept the social-engineered
+      value, defeating spec edge case line 99 + FR-034.
     - ≤ 4096 chars (FR-033)
 
     Existence on the host filesystem is NOT checked (the path is observed
