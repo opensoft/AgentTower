@@ -88,6 +88,21 @@ def test_set_role_master_with_confirm_succeeds(tmp_path: Path) -> None:
     assert result["audit_appended"] is True
 
 
+def test_set_role_master_with_non_boolean_confirm_rejected(tmp_path: Path) -> None:
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service)
+    first = service.register_agent(
+        register_params(role="slave"), socket_peer_uid=1000
+    )
+    with pytest.raises(RegistrationError) as info:
+        service.set_role(
+            {"agent_id": first["agent_id"], "role": "master", "confirm": "false"},
+            socket_peer_uid=1000,
+        )
+    assert info.value.code == "bad_request"
+
+
 def test_set_role_swarm_rejected(tmp_path: Path) -> None:
     service = make_service(tmp_path)
     seed_container(service)

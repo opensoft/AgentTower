@@ -218,6 +218,57 @@ def test_register_agent_ignores_params_socket_peer_uid_field(tmp_path: Path) -> 
     assert service.calls[0][2] == 1000
 
 
+class _RecordingPaneService:
+    def __init__(self) -> None:
+        self.calls: list[str | None] = []
+
+    def scan_for_container(self, *, container_id: str | None):  # noqa: ANN001
+        self.calls.append(container_id)
+        return type(
+            "PaneScanResultStub",
+            (),
+            {
+                "scan_id": "scan-1",
+                "started_at": "2026-05-07T00:00:00.000000+00:00",
+                "completed_at": "2026-05-07T00:00:01.000000+00:00",
+                "status": "ok",
+                "containers_scanned": 1,
+                "sockets_scanned": 1,
+                "panes_seen": 1,
+                "panes_newly_active": 0,
+                "panes_reconciled_inactive": 0,
+                "containers_skipped_inactive": 0,
+                "containers_tmux_unavailable": 0,
+                "error_code": None,
+                "error_message": None,
+                "error_details": (),
+            },
+        )()
+
+
+def test_scan_panes_honors_optional_container_scope(tmp_path: Path) -> None:
+    service = _RecordingPaneService()
+    ctx = _ctx(tmp_path)
+    ctx.pane_service = service
+
+    envelope = DISPATCH["scan_panes"](ctx, {"container": "a" * 64})
+
+    assert envelope["ok"] is True
+    assert service.calls == ["a" * 64]
+
+
+def test_scan_panes_rejects_non_string_container_scope(tmp_path: Path) -> None:
+    service = _RecordingPaneService()
+    ctx = _ctx(tmp_path)
+    ctx.pane_service = service
+
+    envelope = DISPATCH["scan_panes"](ctx, {"container": 123})
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "bad_request"
+    assert service.calls == []
+
+
 def test_register_agent_default_peer_uid_when_called_without_third_arg(
     tmp_path: Path,
 ) -> None:
@@ -237,52 +288,3 @@ def test_set_role_uses_third_arg_peer_uid(tmp_path: Path) -> None:
         {"agent_id": "agt_x", "role": "slave"},
         1000,
     )
-
-
-class _RecordingPaneService:
-    def __init__(self) -> None:
-        self.container_ids: list[str | None] = []
-
-    def scan_for_container(self, *, container_id: str | None):  # noqa: ANN001
-        self.container_ids.append(container_id)
-        return type(
-            "PaneScanResultStub",
-            (),
-            {
-                "scan_id": "scan-1",
-                "started_at": "2026-05-08T00:00:00+00:00",
-                "completed_at": "2026-05-08T00:00:01+00:00",
-                "status": "ok",
-                "containers_scanned": 1,
-                "sockets_scanned": 1,
-                "panes_seen": 1,
-                "panes_newly_active": 1,
-                "panes_reconciled_inactive": 0,
-                "containers_skipped_inactive": 0,
-                "containers_tmux_unavailable": 0,
-                "error_code": None,
-                "error_message": None,
-                "error_details": (),
-            },
-        )()
-
-
-def test_scan_panes_honors_optional_container_scope(tmp_path: Path) -> None:
-    ctx = _ctx(tmp_path)
-    pane_service = _RecordingPaneService()
-    ctx.pane_service = pane_service
-
-    envelope = DISPATCH["scan_panes"](ctx, {"container": "abc123def456"})
-
-    assert envelope["ok"] is True
-    assert pane_service.container_ids == ["abc123def456"]
-
-
-def test_scan_panes_rejects_non_string_container_scope(tmp_path: Path) -> None:
-    ctx = _ctx(tmp_path)
-    ctx.pane_service = _RecordingPaneService()
-
-    envelope = DISPATCH["scan_panes"](ctx, {"container": 123})
-
-    assert envelope["ok"] is False
-    assert envelope["error"]["code"] == "bad_request"

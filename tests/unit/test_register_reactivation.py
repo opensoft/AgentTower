@@ -66,3 +66,28 @@ def test_reactivation_with_mutable_field_changes(tmp_path: Path) -> None:
     assert second["role"] == "slave"
     assert second["capability"] == "codex"
     assert second["active"] is True
+
+
+def test_reactivation_of_existing_master_without_role_flag_preserves_master(
+    tmp_path: Path,
+) -> None:
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service)
+
+    first = service.register_agent(
+        register_params(role="slave"), socket_peer_uid=1000
+    )
+    service.set_role(
+        {"agent_id": first["agent_id"], "role": "master", "confirm": True},
+        socket_peer_uid=1000,
+    )
+    _force_inactive(service, first["agent_id"])
+
+    second = service.register_agent(
+        register_params(label="master-revive"), socket_peer_uid=1000
+    )
+
+    assert second["agent_id"] == first["agent_id"]
+    assert second["role"] == "master"
+    assert second["label"] == "master-revive"

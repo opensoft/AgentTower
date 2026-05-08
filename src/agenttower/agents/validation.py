@@ -114,7 +114,14 @@ def validate_project_path(value: object) -> str:
             "project_path_invalid",
             "project_path must not contain NUL bytes",
         )
-    value = "".join(ch for ch in value if ord(ch) >= 0x20 and ord(ch) != 0x7F)
+    cleaned = "".join(ch for ch in value if ord(ch) >= 0x20 and ord(ch) != 0x7F)
+    truncated = len(cleaned) > PROJECT_PATH_MAX
+    if truncated:
+        raise RegistrationError(
+            "field_too_long",
+            f"project_path exceeds maximum length {PROJECT_PATH_MAX}",
+        )
+    value = cleaned
     if value == "":
         raise RegistrationError(
             "project_path_invalid",
@@ -132,11 +139,6 @@ def validate_project_path(value: object) -> str:
         raise RegistrationError(
             "project_path_invalid",
             f"project_path must not contain '..' segment; got {value!r}",
-        )
-    if len(value) > PROJECT_PATH_MAX:
-        raise RegistrationError(
-            "field_too_long",
-            f"project_path exceeds maximum length {PROJECT_PATH_MAX}",
         )
     return value
 

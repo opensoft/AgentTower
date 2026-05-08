@@ -99,3 +99,29 @@ def test_register_agent_rejects_attempted_socket_peer_uid_spoof(
         service.register_agent(params, socket_peer_uid=1000)
     assert info.value.code == "bad_request"
     assert "socket_peer_uid" in info.value.message
+
+
+def test_register_agent_rejects_missing_container_id_as_bad_request(
+    tmp_path: Path,
+) -> None:
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service)
+    params = register_params(role="slave")
+    del params["container_id"]
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(params, socket_peer_uid=1000)
+    assert info.value.code == "bad_request"
+
+
+def test_register_agent_rejects_missing_pane_key_field_as_bad_request(
+    tmp_path: Path,
+) -> None:
+    service = make_service(tmp_path)
+    seed_container(service)
+    seed_pane(service)
+    params = register_params(role="slave")
+    del params["pane_composite_key"]["tmux_pane_id"]
+    with pytest.raises(RegistrationError) as info:
+        service.register_agent(params, socket_peer_uid=1000)
+    assert info.value.code == "bad_request"

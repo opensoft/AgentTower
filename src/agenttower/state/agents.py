@@ -305,36 +305,6 @@ def select_agent_by_pane_key(
     return _row_to_agent(row) if row is not None else None
 
 
-def select_active_for_bound_pane(
-    conn: sqlite3.Connection,
-    *,
-    pane_key: PaneCompositeKey,
-) -> tuple[bool, bool] | None:
-    """Return active flags for the pane-bound agent and its container.
-
-    Used by ``register_agent`` inside its ``BEGIN IMMEDIATE`` transaction to
-    verify the resolved FEAT-004 pane still exists and is still active at the
-    moment the row is created/reactivated.
-    """
-    row = conn.execute(
-        """
-        SELECT panes.active, COALESCE(containers.active, 0)
-        FROM panes
-        LEFT JOIN containers ON containers.container_id = panes.container_id
-        WHERE panes.container_id = ?
-          AND panes.tmux_socket_path = ?
-          AND panes.tmux_session_name = ?
-          AND panes.tmux_window_index = ?
-          AND panes.tmux_pane_index = ?
-          AND panes.tmux_pane_id = ?
-        """,
-        pane_key,
-    ).fetchone()
-    if row is None:
-        return None
-    return (bool(row[0]), bool(row[1]))
-
-
 def select_active_for_role_and_container(
     conn: sqlite3.Connection,
     *,
@@ -363,6 +333,35 @@ def select_active_for_role_and_container(
     if row[1] is not None:
         container_active = bool(row[1])
     return (agent_active, container_active)
+
+
+def select_active_for_bound_pane(
+    conn: sqlite3.Connection,
+    *,
+    pane_key: PaneCompositeKey,
+) -> tuple[bool, bool] | None:
+    """Return ``(pane_active, container_active)`` for a FEAT-004 pane key.
+
+    Returns ``None`` when the panes row is absent. Missing containers rows
+    are treated as inactive by returning ``container_active=False``.
+    """
+    row = conn.execute(
+        """
+        SELECT panes.active, containers.active
+        FROM panes
+        LEFT JOIN containers ON containers.container_id = panes.container_id
+        WHERE panes.container_id = ?
+          AND panes.tmux_socket_path = ?
+          AND panes.tmux_session_name = ?
+          AND panes.tmux_window_index = ?
+          AND panes.tmux_pane_index = ?
+          AND panes.tmux_pane_id = ?
+        """,
+        pane_key,
+    ).fetchone()
+    if row is None:
+        return None
+    return (bool(row[0]), bool(row[1]) if row[1] is not None else False)
 
 
 # Mirror the column list of the agents_active_order index exactly so the

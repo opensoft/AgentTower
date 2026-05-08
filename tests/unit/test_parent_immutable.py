@@ -165,7 +165,6 @@ def test_existing_swarm_cannot_reregister_to_non_swarm_while_parent_retained(
     seed_container(service)
     seed_pane(service, tmux_pane_index=0, tmux_pane_id="%0")
     seed_pane(service, tmux_pane_index=1, tmux_pane_id="%1")
-
     parent = service.register_agent(
         register_params(role="slave"), socket_peer_uid=1000
     )
@@ -175,9 +174,6 @@ def test_existing_swarm_cannot_reregister_to_non_swarm_while_parent_retained(
     )
 
     with pytest.raises(RegistrationError) as info:
-        service.register_agent(
-            register_params(_ck1(), role="slave"),
-            socket_peer_uid=1000,
-        )
+        service.register_agent(register_params(_ck1(), role="slave"), socket_peer_uid=1000)
 
     assert info.value.code == "parent_role_mismatch"

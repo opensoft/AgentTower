@@ -15,30 +15,41 @@ from agenttower.socket_api.methods import DISPATCH, DaemonContext
 class _FakePaneService:
     def __init__(self, *, list_rows: list[Any] | None = None) -> None:
         self.scan_called = 0
+        self.scan_container_filters: list[str | None] = []
         self.list_called = 0
         self._list_rows = list_rows or []
         self._mutex = threading.Lock()
 
-    def scan(self) -> Any:
+    def _build_result(self) -> Any:
         from agenttower.discovery.pane_service import PaneScanResult
 
+        return PaneScanResult(
+            scan_id="abc",
+            started_at="2026-05-06T10:00:00.000000+00:00",
+            completed_at="2026-05-06T10:00:00.500000+00:00",
+            status="ok",
+            containers_scanned=1,
+            sockets_scanned=1,
+            panes_seen=1,
+            panes_newly_active=1,
+            panes_reconciled_inactive=0,
+            containers_skipped_inactive=0,
+            containers_tmux_unavailable=0,
+            error_code=None,
+            error_message=None,
+        )
+
+    def scan(self) -> Any:
         with self._mutex:
             self.scan_called += 1
-            return PaneScanResult(
-                scan_id="abc",
-                started_at="2026-05-06T10:00:00.000000+00:00",
-                completed_at="2026-05-06T10:00:00.500000+00:00",
-                status="ok",
-                containers_scanned=1,
-                sockets_scanned=1,
-                panes_seen=1,
-                panes_newly_active=1,
-                panes_reconciled_inactive=0,
-                containers_skipped_inactive=0,
-                containers_tmux_unavailable=0,
-                error_code=None,
-                error_message=None,
-            )
+            self.scan_container_filters.append(None)
+            return self._build_result()
+
+    def scan_for_container(self, *, container_id: str | None) -> Any:
+        with self._mutex:
+            self.scan_called += 1
+            self.scan_container_filters.append(container_id)
+            return self._build_result()
 
     def list_panes(self, *, active_only: bool = False, container_filter: str | None = None) -> list[Any]:
         self.list_called += 1

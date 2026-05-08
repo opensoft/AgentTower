@@ -17,6 +17,7 @@ import pytest
 from agenttower.agents.errors import RegistrationError
 
 from ._agent_test_helpers import (
+    CK_DEFAULT,
     make_service,
     read_events,
     register_params,

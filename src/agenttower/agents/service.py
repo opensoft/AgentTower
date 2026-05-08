@@ -227,7 +227,12 @@ class AgentService:
         #    container identity; the CLI is responsible).
         container_id = params.get("container_id")
         pane_key_in = params.get("pane_composite_key")
-        if not isinstance(container_id, str) or not container_id:
+        if not isinstance(container_id, str):
+            raise RegistrationError(
+                "bad_request",
+                "params.container_id must be a string",
+            )
+        if not container_id:
             raise RegistrationError(
                 "value_out_of_set",
                 "params.container_id must be a non-empty string",
@@ -336,7 +341,10 @@ class AgentService:
 
             conn.execute("BEGIN IMMEDIATE")
             try:
-                self._validate_bound_pane_is_active(conn, pane_key=pane_key)
+                self._validate_bound_pane_is_active(
+                    conn,
+                    pane_key=pane_key,
+                )
                 existing = state_agents.select_agent_by_pane_key(
                     conn, pane_key=pane_key
                 )
@@ -549,7 +557,7 @@ class AgentService:
                 # ensures pane_key is not already bound) by inspecting
                 # the SQLite extended errcode rather than the localized
                 # English error text.
-                if exc.sqlite_extended_errcode == _SQLITE_CONSTRAINT_PRIMARYKEY:
+                if getattr(exc, "sqlite_errorcode", None) == _SQLITE_CONSTRAINT_PRIMARYKEY:
                     last_exc = exc
                     continue
                 raise RegistrationError(
@@ -613,23 +621,21 @@ class AgentService:
         *,
         pane_key: PaneCompositeKey,
     ) -> None:
-        """Refuse register_agent if the resolved FEAT-004 pane is gone/inactive.
+        """Reject register_agent when the bound FEAT-004 pane/container is not active.
 
-        The client-side resolve step may race a concurrent FEAT-004
-        reconciliation. Re-checking inside the same ``BEGIN IMMEDIATE``
-        transaction closes that window before we create/reactivate an agent row.
+        This closes the FEAT-004 reconciliation race window for
+        register-self: the client may have resolved a valid pane moments
+        earlier, but by the time this BEGIN IMMEDIATE transaction starts
+        the pane or its container may already be inactive. In that case,
+        register-self must follow the same closed-set failure surface as
+        the resolver miss path rather than creating/reactivating a ghost
+        agent row.
         """
         state = state_agents.select_active_for_bound_pane(conn, pane_key=pane_key)
-        if state is None:
+        if state != (True, True):
             raise RegistrationError(
                 "pane_unknown_to_daemon",
-                "resolved pane is no longer present in the daemon registry; rerun pane scan",
-            )
-        pane_active, container_active = state
-        if not pane_active or not container_active:
-            raise RegistrationError(
-                "pane_unknown_to_daemon",
-                "resolved pane is inactive or its container is inactive; rerun pane scan",
+                "bound pane is absent or inactive in the FEAT-004 registry",
             )
 
     def _validate_parent_for_swarm(
@@ -781,7 +787,13 @@ class AgentService:
         validate_agent_id_shape(agent_id)
         new_role = _require_string(params, "role", method_name="set_role")
         validation.validate_role(new_role)
-        confirm = bool(params.get("confirm", False))
+        confirm_raw = params.get("confirm", False)
+        if not isinstance(confirm_raw, bool):
+            raise RegistrationError(
+                "bad_request",
+                "set_role: params.confirm must be a boolean",
+            )
+        confirm = confirm_raw
 
         # FR-012: set-role --role swarm is rejected unconditionally.
         if new_role == "swarm":
@@ -820,15 +832,21 @@ class AgentService:
                             "agent_not_found", f"agent {agent_id} not found"
                         )
                     agent_active, container_active = state
-                    if not agent_active or container_active is not True:
+                    if not agent_active:
+                        conn.execute("ROLLBACK")
+                        raise RegistrationError(
+                            "agent_inactive",
+                            f"agent {agent_id} is inactive",
+                        )
+                    fresh = state_agents.select_agent_by_id(conn, agent_id=agent_id)
+                    assert fresh is not None  # invariant: state is not None
+                    prior_role = fresh.role
+                    if new_role == "master" and container_active is not True:
                         conn.execute("ROLLBACK")
                         raise RegistrationError(
                             "agent_inactive",
                             f"agent {agent_id} or its container is inactive",
                         )
-                    fresh = state_agents.select_agent_by_id(conn, agent_id=agent_id)
-                    assert fresh is not None  # invariant: state is not None
-                    prior_role = fresh.role
                     if prior_role == new_role:
                         # No-op short-circuit (FR-027) — same value, no
                         # audit row, no UPDATE. The check runs INSIDE
@@ -1035,7 +1053,7 @@ def _coerce_pane_key(value: Any) -> PaneCompositeKey:
     """
     if not isinstance(value, dict):
         raise RegistrationError(
-            "value_out_of_set",
+            "bad_request",
             "params.pane_composite_key must be an object",
         )
     required = (
@@ -1049,7 +1067,7 @@ def _coerce_pane_key(value: Any) -> PaneCompositeKey:
     for k in required:
         if k not in value:
             raise RegistrationError(
-                "value_out_of_set",
+                "bad_request",
                 f"params.pane_composite_key.{k} is required",
             )
     try:
