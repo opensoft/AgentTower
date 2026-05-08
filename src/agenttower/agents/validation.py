@@ -8,7 +8,6 @@ Case-sensitivity is strict per Clarifications session
 
 from __future__ import annotations
 
-import os.path
 import re
 from typing import Final
 

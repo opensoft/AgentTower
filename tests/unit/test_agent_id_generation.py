@@ -36,7 +36,11 @@ def test_generate_agent_id_shape() -> None:
 
 
 def test_generate_agent_id_uniqueness_in_bulk() -> None:
-    """96 bits of entropy makes accidental dup vanishingly unlikely."""
+    """48 bits of entropy makes accidental dup vanishingly unlikely at MVP scale.
+
+    Birthday-bound first expected collision is at ~2^24 ≈ 16M unique
+    ids; 2,000 draws stay well clear of any plausible collision.
+    """
     ids = {generate_agent_id() for _ in range(2_000)}
     assert len(ids) == 2_000
 

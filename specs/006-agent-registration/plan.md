@@ -194,7 +194,7 @@ mirroring the package-per-domain split established by FEAT-003's
   closed-set validation, sanitization, mutex coordination, and
   CLI/JSON rendering use Python stdlib only.
 - `agent_id` is generated from `secrets.token_hex(6)` → 12 hex chars
-  (96 bits of entropy) prefixed with `agt_`. Collisions are
+  (48 bits of entropy) prefixed with `agt_`. Collisions are
   retried via a bounded loop (max 5 attempts) under the
   per-(container_id, pane_composite_key) registration mutex; an
   exhausted retry budget surfaces as `internal_error` and the

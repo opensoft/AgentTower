@@ -370,16 +370,22 @@ record shape is `{"ts": "<utc-iso>", "type": "agent_role_change",
 
 ## 8. Failure mode quick reference
 
-| Symptom | Likely cause | Closed-set code |
-| ------- | ------------ | --------------- |
-| `register-self` exits `2` | Daemon not running | `daemon_unavailable` (FEAT-002 inheritance) |
-| `register-self` exits `1` with `host_context_unsupported` | Running on the host shell, not inside a bench container | — |
-| `register-self` exits `3` with `not_in_tmux` | `$TMUX` unset | — |
-| `register-self` exits `3` with `tmux_pane_malformed` | `$TMUX_PANE` malformed | — |
-| `register-self` exits `3` with `container_unresolved` | FEAT-005 identity detection got `multi_match` / `no_match` / `no_candidate` | — |
-| `register-self` exits `3` with `pane_unknown_to_daemon` | Pane composite key not in FEAT-004 registry; focused rescan did not find it; run `agenttower scan --panes` from the host | — |
-| `set-role --role master` exits `3` with `master_confirm_required` | Forgot `--confirm` | — |
-| `set-role --role swarm` exits `3` with `swarm_role_via_set_role_rejected` | Swarm role assignment requires `register-self --role swarm --parent <id>` | — |
-| `register-self --role swarm` exits `3` with `swarm_parent_required` | Forgot `--parent <agent-id>` | — |
-| `register-self --parent <id>` exits `3` with `parent_role_mismatch` | `--parent` requires `--role swarm` | — |
-| Any CLI exits `3` with `schema_version_newer` | Daemon is newer than this CLI build; upgrade the CLI | — |
+The Symptom column already names the closed-set code, so a separate
+column would be redundant. Codes inherit the FEAT-002 socket-API
+contract — see `contracts/socket-api.md` §3 for the daemon-side
+closed set; `daemon_unavailable` is the FEAT-002 CLI-side
+classification (the daemon never received the call).
+
+| Symptom | Likely cause |
+| ------- | ------------ |
+| `register-self` exits `2` (`daemon_unavailable`, FEAT-002 inheritance) | Daemon not running |
+| `register-self` exits `1` with `host_context_unsupported` | Running on the host shell, not inside a bench container |
+| `register-self` exits `3` with `not_in_tmux` | `$TMUX` unset |
+| `register-self` exits `3` with `tmux_pane_malformed` | `$TMUX_PANE` malformed |
+| `register-self` exits `3` with `container_unresolved` | FEAT-005 identity detection got `multi_match` / `no_match` / `no_candidate` |
+| `register-self` exits `3` with `pane_unknown_to_daemon` | Pane composite key not in FEAT-004 registry; focused rescan did not find it; run `agenttower scan --panes` from the host |
+| `set-role --role master` exits `3` with `master_confirm_required` | Forgot `--confirm` |
+| `set-role --role swarm` exits `3` with `swarm_role_via_set_role_rejected` | Swarm role assignment requires `register-self --role swarm --parent <id>` |
+| `register-self --role swarm` exits `3` with `swarm_parent_required` | Forgot `--parent <agent-id>` |
+| `register-self --parent <id>` exits `3` with `parent_role_mismatch` | `--parent` requires `--role swarm` |
+| Any CLI exits `3` with `schema_version_newer` | Daemon is newer than this CLI build; upgrade the CLI | |

@@ -11,16 +11,21 @@ captures Decision, Rationale, and Alternatives Considered.
 ## R-001 — `agent_id` shape and entropy
 
 **Decision**: `agent_id = "agt_" + secrets.token_hex(6)` →
-`agt_<12-character-lowercase-hex>` (96 bits of entropy).
+`agt_<12-character-lowercase-hex>` (48 bits of entropy: 6 bytes ×
+8 bits = 48; 12 hex chars × 4 bits = 48).
 
 **Rationale**:
 - FR-001 fixes the format; this is the implementation that
   satisfies it.
 - `secrets.token_hex(6)` returns 12 lowercase hex chars on every
   Python 3.11+ build (stdlib, no third-party dependency).
-- 96 bits of entropy makes accidental collisions vanishingly
-  unlikely at MVP scale (< 10⁻¹⁵ probability for < 10⁹ ids by the
-  birthday bound — well above the design ceiling).
+- 48 bits of entropy keeps accidental collisions vanishingly
+  unlikely at MVP scale: birthday-bound, the first expected
+  collision is at ~2^24 ≈ 16M unique agents — far beyond any
+  plausible MVP fleet. If post-MVP scale ever pushes past that,
+  bump `token_hex(6)` to `token_hex(12)` and the regex to
+  `[0-9a-f]{24}` for a real 96 bits (a wire-format change that
+  must be coordinated with downstream consumers).
 - The literal `agt_` prefix is human-recognizable in CLI output
   and prevents collision with FEAT-003 container ids (no prefix)
   or FEAT-004 pane ids (`%N`).
