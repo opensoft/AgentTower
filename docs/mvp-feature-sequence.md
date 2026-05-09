@@ -248,6 +248,58 @@ Acceptance:
 - Re-reading after daemon restart does not duplicate old events.
 - `events --follow` streams new events.
 - Classifier rules are visible and conservative.
+- File truncation is detected within one reader cycle (≤ 1 s wall-clock at
+  MVP scale) and offsets reset to `(0, 0)` without replaying the prior
+  file's content (FEAT-007 SC-007 — FEAT-007 shipped the reset signal;
+  FEAT-008 ships the timing + no-replay invariant).
+- File recreation (changed inode) is detected within one reader cycle and
+  offsets reset; same no-replay invariant.
+- File-deleted → file-recreated → operator-explicit `attach-log` round-trip:
+  reader transitions row to `stale` and emits `log_file_missing`; on
+  reappearance emits `log_file_returned` once per
+  `(agent_id, log_path, file_inode)` triple; row remains `stale` until the
+  operator re-attaches; re-attach resets offsets per FEAT-007 FR-021's
+  file-consistency check (FEAT-007 US6 AS3..AS5 — carried over from
+  FEAT-007 T177).
+
+Carried over from FEAT-007:
+
+These items are part of FEAT-007's spec but require FEAT-008's reader to
+exercise. FEAT-007 shipped the helpers + unit-level coverage; FEAT-008
+must consume them and ship the integration / timing assertions.
+
+- **Reader-cycle entry point obligation.** FEAT-008's reader MUST call
+  `agenttower.logs.reader_recovery.reader_cycle_offset_recovery(...)`
+  once per attached row per cycle. The helper owns the
+  `unchanged | truncated | recreated | missing | reappeared` dispatch,
+  the `BEGIN IMMEDIATE` flip from `active → stale`, the
+  `log_attachment_change` audit row append, and the FR-061-suppressed
+  emission of `log_rotation_detected` / `log_file_missing` /
+  `log_file_returned`. FEAT-008 reader code MUST NOT touch
+  `log_attachments` or `log_offsets` directly.
+- **File-change classifier.** Use
+  `agenttower.state.log_offsets.detect_file_change(host_path,
+  stored_inode, stored_size_seen) -> FileChangeKind` as the canonical
+  classifier (Pure function, no side effects).
+- **Sole production-side offset advancer.** FEAT-008's reader is the only
+  production caller that may write to `log_offsets.byte_offset` /
+  `line_offset` / `last_event_offset`. The test seam
+  `state.log_offsets.advance_offset_for_test` MUST NOT be imported by
+  any production module — enforced by AST gate
+  `tests/unit/test_logs_offset_advance_invariant.py` (T080).
+- **Detection-timing tests carried from FEAT-007.** T175 (truncation
+  ≤ 1 s) and T176 (recreation ≤ 1 s) integration tests — FEAT-007 left
+  them un-ticked because the reader cycle does not exist yet. Land them
+  in FEAT-008 as integration tests against the real reader loop.
+- **AS3..AS5 round-trip carried from FEAT-007.** T177 — same reason.
+- **Lifecycle event surface assertion (FEAT-007 T173, optional).** Single
+  consolidated test that every event from `data-model.md §3`
+  (`log_rotation_detected`, `log_file_missing`, `log_file_returned`,
+  `log_attachment_orphan_detected`, `mounts_json_oversized`,
+  `socket_peer_uid_mismatch`) routes through the daemon's lifecycle
+  logger and never appears in `events.jsonl`. Each event class is
+  individually proven by its own dedicated test today; FEAT-008 may
+  consolidate these assertions when adding its own event surface.
 
 Out of scope:
 
