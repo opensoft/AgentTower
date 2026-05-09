@@ -146,12 +146,17 @@ def emit_log_rotation_detected(
     new_inode: Optional[str],
     prior_size: int,
     new_size: int,
-) -> None:
-    """Emit ``log_rotation_detected`` (FR-024 / FR-025) with FR-061 suppression."""
+) -> bool:
+    """Emit ``log_rotation_detected`` (FR-024 / FR-025) with FR-061 suppression.
+
+    Returns True if the event was actually emitted, False if dropped (logger
+    absent OR FR-061 suppression). Callers that need to surface emit/suppress
+    in their own result types use this signal.
+    """
     if logger is None:
-        return
+        return False
     if not _state.should_emit_rotation(agent_id, log_path, prior_inode, new_inode):
-        return
+        return False
     logger.emit(
         EVENT_LOG_ROTATION_DETECTED,
         level="info",
@@ -162,6 +167,7 @@ def emit_log_rotation_detected(
         prior_size=prior_size,
         new_size=new_size,
     )
+    return True
 
 
 def emit_log_file_missing(
@@ -171,12 +177,12 @@ def emit_log_file_missing(
     log_path: str,
     last_known_inode: Optional[str],
     last_known_size: int,
-) -> None:
+) -> bool:
     """Emit ``log_file_missing`` (FR-026) with FR-061 per-stale-entry suppression."""
     if logger is None:
-        return
+        return False
     if not _state.should_emit_missing(agent_id, log_path):
-        return
+        return False
     logger.emit(
         EVENT_LOG_FILE_MISSING,
         level="warn",
@@ -185,6 +191,7 @@ def emit_log_file_missing(
         last_known_inode=last_known_inode if last_known_inode is not None else "null",
         last_known_size=last_known_size,
     )
+    return True
 
 
 def emit_log_file_returned(
@@ -195,12 +202,12 @@ def emit_log_file_returned(
     prior_inode: Optional[str],
     new_inode: str,
     new_size: int,
-) -> None:
+) -> bool:
     """Emit ``log_file_returned`` (FR-026) with FR-046 triple suppression."""
     if logger is None:
-        return
+        return False
     if not _state.should_emit_returned(agent_id, log_path, new_inode):
-        return
+        return False
     logger.emit(
         EVENT_LOG_FILE_RETURNED,
         level="info",
@@ -210,6 +217,7 @@ def emit_log_file_returned(
         new_inode=new_inode,
         new_size=new_size,
     )
+    return True
 
 
 def emit_log_attachment_orphan_detected(

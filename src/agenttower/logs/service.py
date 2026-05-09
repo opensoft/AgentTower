@@ -315,15 +315,22 @@ class LogService:
                 conn, agent_id=agent_id, log_path=host_path
             )
 
-            # Check: this agent's most-recent ACTIVE row at a different path
-            # → supersede that row (FR-019).
-            agent_active = la_state.select_active_for_agent(conn, agent_id=agent_id)
+            # Check: this agent's most-recent recoverable row at a different
+            # path → supersede that row (FR-019). FR-019 applies regardless
+            # of prior status — supersede from active/stale/detached. The
+            # toggle-off path below keys on live pane state (not on the
+            # prior row's status), so toggle-off is correctly skipped when
+            # the prior was stale or detached (no live pipe).
+            agent_recent = la_state.select_most_recent_for_agent(
+                conn, agent_id=agent_id
+            )
             supersede_target: la_state.LogAttachmentRecord | None = None
             if (
-                agent_active is not None
-                and agent_active.log_path != host_path
+                agent_recent is not None
+                and agent_recent.status in ("active", "stale", "detached")
+                and agent_recent.log_path != host_path
             ):
-                supersede_target = agent_active
+                supersede_target = agent_recent
 
             # FR-018: idempotent re-attach (same path, status=active).
             if existing is not None and existing.status == "active":

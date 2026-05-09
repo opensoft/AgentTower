@@ -9,6 +9,55 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from enum import Enum
+
+
+class FileChangeKind(str, Enum):
+    """Outcome of one ``detect_file_change`` call (FR-024 / FR-025 / FR-026)."""
+
+    UNCHANGED = "unchanged"
+    TRUNCATED = "truncated"
+    RECREATED = "recreated"
+    MISSING = "missing"
+
+
+def detect_file_change(
+    host_path: str,
+    stored_inode: str | None,
+    stored_size_seen: int,
+) -> FileChangeKind:
+    """Classify what changed at ``host_path`` relative to stored observation.
+
+    Pure classifier consumed by FEAT-008 reader cycles (via
+    ``logs.reader_recovery.reader_cycle_offset_recovery``) and by
+    ``LogService.attach_log`` for the FR-021 file-consistency check.
+
+    Returns:
+        ``MISSING`` — file does not exist (FR-026).
+        ``RECREATED`` — file exists with a different inode than stored
+            (FR-025). Wins over ``TRUNCATED`` when both could apply.
+        ``TRUNCATED`` — same inode, file is smaller than ``stored_size_seen``
+            (FR-024).
+        ``UNCHANGED`` — everything else, including the first-observation
+            case where ``stored_inode is None``. The first reader cycle
+            after attach records the observation through
+            ``update_file_observation``; subsequent cycles compare against it.
+    """
+    # Layer note: ``state`` typically does not import ``logs``, but T180
+    # specifies this helper lives here for cohesion with the offsets DAO
+    # (data-model.md §1.2 / spec FR-024..FR-026).
+    from ..logs.host_fs import stat_log_file
+
+    stat = stat_log_file(host_path)
+    if stat is None:
+        return FileChangeKind.MISSING
+    if stored_inode is None:
+        return FileChangeKind.UNCHANGED
+    if stat.inode != stored_inode:
+        return FileChangeKind.RECREATED
+    if stat.size < stored_size_seen:
+        return FileChangeKind.TRUNCATED
+    return FileChangeKind.UNCHANGED
 
 
 @dataclass(frozen=True)
