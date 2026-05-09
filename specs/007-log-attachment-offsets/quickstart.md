@@ -16,6 +16,16 @@ inside a bench container.
   ```
   -v ~/.local/state/opensoft/agenttower/logs:~/.local/state/opensoft/agenttower/logs
   ```
+- The daemon force-pins `LANG=C.UTF-8` on every `docker exec` it
+  issues (FEAT-004 pane discovery, FEAT-007 pipe-pane), so a bench
+  container booted in the default Debian/Ubuntu POSIX/C locale is
+  fine. (Bench-side interactive shells still use whatever locale you
+  set — the pin only scopes the daemon's structured calls.)
+- `tmux` available inside the bench (the daemon's pipe-pane attach
+  requires it). tmux ≥ 3.5 is recommended for full FR-043 orphan
+  recovery — older versions don't expose `pane_pipe_command`, which
+  the daemon uses to extract the bound `agent_id` from a stray pipe.
+  Attach / detach / supersede happy paths work on tmux 3.4 too.
 - One tmux pane inside the container.
 - One FEAT-006 agent registered to that pane:
   ```bash
@@ -33,11 +43,15 @@ From inside the bench container, in the registered pane:
 agenttower attach-log --target agt_abc123def456
 ```
 
-Expected:
+Expected (one `key=value` per line; values shown are illustrative — agent
+ids, attachment ids, container ids, and operator user names will differ in
+your environment):
 ```text
-attached agent_id=agt_abc123def456 attachment_id=lat_a1b2c3d4e5f6
+attached agent_id=agt_abc123def456
+attachment_id=lat_a1b2c3d4e5f6
 path=/home/user/.local/state/opensoft/agenttower/logs/<container_id>/agt_abc123def456.log
-source=explicit status=active
+source=explicit
+status=active
 ```
 
 What happened:
@@ -81,12 +95,24 @@ Inspect via preview:
 agenttower attach-log --target agt_abc123def456 --preview 5
 ```
 
-Expected (note redaction):
+Expected (note redaction). On a real interactive bash + tmux pane, the
+captured stream interleaves the typed commands, the prompt's ANSI
+escape sequences, and the resulting output bytes. The redaction
+transform applies to every line, so the secret is masked wherever it
+appears (typed command echo and program output alike):
 ```text
 build started
 auth=<redacted:openai-key> continuing
 build complete in 4.2s
 ```
+
+In a real shell session you will additionally see the surrounding
+prompt + bracketed-paste sequences (`[?2004h`, `[?2004l`, `[01;32m…[00m`)
+inline. That is correct behavior — `pipe-pane` captures the raw byte
+stream verbatim and FEAT-007's preview render performs redaction
+without stripping ANSI. Future cleanup of escape codes would land in a
+separate render layer; the current preview is faithful to the bytes
+on disk.
 
 The host log file itself is NOT redacted — redaction is render-time
 only (FR-030, Assumptions §"Redaction is content-only"). To
@@ -106,7 +132,10 @@ no-op success (FR-018):
 
 ```bash
 agenttower attach-log --target agt_abc123def456
-# → exit 0; attached agent_id=... status=active (existing row)
+# → exit 0; first line reads
+#   `already-attached agent_id=agt_abc123def456`
+#   (the `already-attached` keyword instead of `attached` makes the
+#   no-op semantics explicit; everything else matches the §1 form).
 ```
 
 Verify exactly one row in each table:
@@ -132,10 +161,12 @@ grep '"type":"log_attachment_change"' ~/.local/state/opensoft/agenttower/events.
 agenttower detach-log --target agt_abc123def456
 ```
 
-Expected:
+Expected (one `key=value` per line; values shown are illustrative):
 ```text
-detached agent_id=agt_abc123def456 attachment_id=lat_a1b2c3d4e5f6
-path=... status=detached
+detached agent_id=agt_abc123def456
+attachment_id=lat_a1b2c3d4e5f6
+path=...
+status=detached
 ```
 
 What happened:
@@ -218,38 +249,47 @@ call).
 
 ## 8. Stale recovery from pane drift
 
-Simulate pane drift: kill tmux inside the container so FEAT-004
-reconciliation marks the pane inactive.
+Simulate pane drift: kill the tmux server *and* start a fresh session
+so FEAT-004 sees the original pane composite key has disappeared and
+reconciles it inactive. (Killing the server alone leaves the daemon in
+the FR-010 `tmux_unavailable` state, which preserves prior pane rows
+on the assumption that the server gap is transient — no stale flip.)
 
 ```bash
 # inside the container:
 tmux kill-server
+tmux new-session -d -s scratch         # fresh server, fresh pane keys
 ```
 
-Within one FEAT-004 reconcile cycle (≤ 5 seconds):
+Within one FEAT-004 reconcile cycle (≤ 5 seconds), the original pane
+flips `active → inactive` and the bound attachment flips
+`active → stale` in the same SQLite transaction (FR-042, SC-009):
 
 ```bash
 agenttower attach-log --target agt_abc123def456 --status
 # → status=stale ...
 ```
 
-The `log_attachments` row was flipped `active → stale` in the
-same SQLite transaction as the FEAT-004 reconcile that marked
-the pane inactive (FR-042, SC-009). Offsets are UNCHANGED.
+Offsets are UNCHANGED.
 
-Recover by restarting tmux and re-running `attach-log`:
+Recovery semantics differ from a soft restart: the new tmux session's
+panes have new pane composite keys, so the original FEAT-006 agent
+stays inactive (`agent_inactive` on attempted `attach-log`). Recover
+by registering a fresh agent in the new pane:
 
 ```bash
-# inside the container:
-tmux new-session -d -s main
-# from any shell:
-agenttower attach-log --target agt_abc123def456
+# inside the new pane:
+agenttower register-self --role slave --capability codex \
+                          --label codex-recovered --attach-log
 ```
 
-Because the file at the prior `log_path` is intact, FR-021's
-file-consistency check retains offsets byte-for-byte
-(Clarifications Q4 specifies the file-missing case resets;
-this is the file-intact case).
+The new agent gets a new `agent_id` and a new `lat_<id>` attachment.
+The previously-stale row remains in the registry with offsets retained
+for forensic continuity; FEAT-008 readers ignore stale rows. (The
+"file at the prior `log_path` is intact, retain offsets byte-for-byte"
+recovery path applies on a `set-role`-style reactivation of the same
+agent; that flow is documented in FEAT-006 and is exercised when the
+pane restarts in-place rather than as a fresh server.)
 
 ---
 
@@ -284,24 +324,34 @@ audit row.
 
 ## 10. Read-only inspection across all states
 
+All `--target` arguments below must satisfy the closed-set
+`agt_<12-hex-lowercase>` validator (FEAT-006); illustrative aliases
+like `agt_no_log_yet` or `agt_only_superseded` would surface
+`value_out_of_set` before reaching the daemon. Substitute valid-shape
+ids from your environment.
+
 ```bash
-# Always succeeds, even with no attachment:
+# Always succeeds for a known agent, even with no attachment:
 agenttower attach-log --target agt_abc123def456 --status
 
-# Returns null fields when no attachment exists:
-agenttower attach-log --target agt_no_log_yet --status
-# → agent_id=agt_no_log_yet attachment=null offset=null
+# Returns null fields when the agent has no attachment row at all:
+agenttower attach-log --target agt_000000000000 --status
+# → agent_id=agt_000000000000 attachment=null offset=null
+# (NOTE: this is the "known agent, no attachment" case; an UNKNOWN
+#  agent — one that has never been registered — surfaces
+#  `agent_not_found, exit 3` instead. `--status` is read-only but
+#  cannot synthesize state for agents the daemon has never seen.)
 
 # Preview works on active/stale/detached:
 agenttower attach-log --target agt_abc123def456 --preview 10
 
 # Preview refuses on superseded or no-row with attachment_not_found:
-agenttower attach-log --target agt_only_superseded --preview 10
+agenttower attach-log --target agt_aaaaaaaaaaaa --preview 10
 # → exit 3; error: attachment_not_found
 
 # Preview refuses with log_file_missing if host file absent:
 rm /host/path/X.log
-agenttower attach-log --target agt_with_active_row --preview 10
+agenttower attach-log --target agt_abc123def456 --preview 10
 # → exit 3; error: log_file_missing
 ```
 
@@ -329,24 +379,43 @@ trailing newline); stderr empty (FEAT-006 `--json` purity contract).
 
 ## 12. Error envelope examples
 
+The `--target` validator runs before the daemon round-trip, so an
+ill-shaped id (e.g. `agt_unknown` or `agt_unknown123def456`) is
+rejected as `value_out_of_set` rather than as `agent_not_found`. Use
+a valid-shape (12-hex-lowercase) id when you want to exercise the
+"agent doesn't exist" branch.
+
 ```bash
-agenttower attach-log --target agt_unknown123def456
-# stderr: error: agent_not_found: no such agent
+# Valid shape, but no such agent:
+agenttower attach-log --target agt_111111111111
+# stderr: error: agent 'agt_111111111111' not found
+#         code: agent_not_found
 # exit 3
 
+# Valid agent, log path not under any bind mount → host-visibility refusal.
+# The detail string lists the observed mount destinations so the
+# operator can compare their bench template to the path the daemon
+# expected:
 agenttower attach-log --target agt_abc123def456 --log /not/host/visible/file.log
-# stderr: error: log_path_not_host_visible: no canonical bind mount for /not/host/visible/file.log
+# stderr: error: no bind/volume mount covers container path
+#         '/not/host/visible/file.log'; observed mount destinations
+#         in this container: ...
+#         code: log_path_not_host_visible
 # exit 3
 
+# Out-of-range preview line count:
 agenttower attach-log --target agt_abc123def456 --preview 250
-# stderr: error: value_out_of_set: lines must be between 1 and 200
+# stderr: error: --preview N must be between 1 and 200; got 250
+#         code: value_out_of_set
 # exit 3
 ```
 
-`--json` mode for the same errors:
+`--json` mode for the same errors emits one byte-pure JSON envelope
+per call (no `code:` line — the code lives in the envelope's
+`error.code` field):
 
 ```json
-{"ok":false,"error":{"code":"agent_not_found","message":"no such agent"}}
+{"ok":false,"error":{"code":"agent_not_found","message":"agent 'agt_111111111111' not found"}}
 ```
 
 ---

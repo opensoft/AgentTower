@@ -332,6 +332,13 @@ class LogService:
             ):
                 supersede_target = agent_recent
 
+            # FR-008: pre-create the host log file at mode 0600 BEFORE issuing
+            # any pipe-pane command. The bench-side `cat >> <file>` opens the
+            # file in append mode under the bench user's umask, which would
+            # otherwise create it at 0o644 and trip the FR-008 invariant.
+            # Pre-creating ensures cat appends to an existing 0o600 file.
+            self._ensure_log_dir_and_file(host_path)
+
             # FR-018: idempotent re-attach (same path, status=active).
             if existing is not None and existing.status == "active":
                 # Defensive pipe-pane re-issue (idempotent under -o flag).
@@ -453,7 +460,6 @@ class LogService:
                     line_offset_after = offset_row.line_offset
                 lifecycle_mod.reset_suppression_for_path(agent_id, host_path)
 
-                self._ensure_log_dir_and_file(host_path)
                 # Audit row for this status transition.
                 _emit_or_defer_audit(
                     attachment_id=existing.attachment_id,
@@ -467,20 +473,23 @@ class LogService:
                     socket_peer_uid=socket_peer_uid,
                 )
                 conn.execute("COMMIT")
+                # Pass ``last_status_at=now`` so the JSON envelope reflects
+                # the just-applied status transition (stale/detached → active)
+                # rather than the pre-mutation timestamp from ``existing``.
                 result = self._render_attach_result(
                     existing,
                     byte_offset=byte_offset_after,
                     line_offset=line_offset_after,
                     is_new=False,
                     prior_status=prior_status,
+                    last_status_at=now,
                 )
                 if deferred_audit is not None:
                     result["__deferred_audit__"] = deferred_audit
                 return result
 
             # Else: brand-new row OR superseded prior at different path.
-            self._ensure_log_dir_and_file(host_path)
-
+            # (file already pre-created at the top of this function — FR-008.)
             new_record = la_state.LogAttachmentRecord(
                 attachment_id=new_attachment_id,
                 agent_id=agent_id,
@@ -1018,6 +1027,7 @@ class LogService:
         prior_status: str | None,
         extra_offset_load: bool = False,
         conn_for_offset: sqlite3.Connection | None = None,
+        last_status_at: str | None = None,
     ) -> dict[str, Any]:
         # If we don't have offsets in hand and this is an idempotent re-issue,
         # load them.
@@ -1032,6 +1042,12 @@ class LogService:
             if offset is not None:
                 byte_offset = offset.byte_offset
                 line_offset = offset.line_offset
+        # ``record`` is the pre-mutation snapshot; for status transitions
+        # (stale/detached → active) the caller passes the post-mutation
+        # ``last_status_at`` so the JSON envelope reflects current state.
+        rendered_last_status_at = (
+            last_status_at if last_status_at is not None else record.last_status_at
+        )
         return {
             "agent_id": record.agent_id,
             "attachment_id": record.attachment_id,
@@ -1041,7 +1057,7 @@ class LogService:
             "byte_offset": byte_offset,
             "line_offset": line_offset,
             "attached_at": record.attached_at,
-            "last_status_at": record.last_status_at,
+            "last_status_at": rendered_last_status_at,
             "is_new": is_new,
             "prior_status": prior_status,
         }

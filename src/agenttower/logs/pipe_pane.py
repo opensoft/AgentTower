@@ -19,6 +19,17 @@ _STDERR_CAP: Final[int] = 2048
 _PIPE_COMMAND_CAP: Final[int] = 4096
 
 
+def _exec_env_args() -> list[str]:
+    """Return the ``-e KEY=VAL`` arguments for ``docker exec``.
+
+    Forces a UTF-8 locale so tmux 3.4 with a POSIX/C locale does not
+    silently substitute control characters in ``-F`` format output.
+    Mirrors :meth:`SubprocessTmuxAdapter._exec_env_args` so FEAT-004 and
+    FEAT-007 docker-exec invocations both run under a consistent locale.
+    """
+    return ["-e", "LANG=C.UTF-8", "-e", "LC_ALL=C.UTF-8"]
+
+
 def build_attach_argv(
     container_user: str,
     container_id: str,
@@ -42,6 +53,7 @@ def build_attach_argv(
     return [
         "docker",
         "exec",
+        *_exec_env_args(),
         "-u",
         container_user,
         container_id,
@@ -61,6 +73,7 @@ def build_toggle_off_argv(
     return [
         "docker",
         "exec",
+        *_exec_env_args(),
         "-u",
         container_user,
         container_id,
@@ -86,6 +99,7 @@ def build_inspection_argv(
     return [
         "docker",
         "exec",
+        *_exec_env_args(),
         "-u",
         container_user,
         container_id,

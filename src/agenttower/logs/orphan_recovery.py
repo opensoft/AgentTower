@@ -22,6 +22,7 @@ from typing import Iterable
 from ..socket_api.lifecycle import LifecycleLogger
 from .canonical_paths import host_canonical_log_root_for
 from .docker_exec import DockerExecRunner
+from .pipe_pane import _exec_env_args
 from .lifecycle import emit_log_attachment_orphan_detected
 from .pipe_pane import build_inspection_argv
 from .pipe_pane_state import (
@@ -152,6 +153,7 @@ def _build_list_panes_all_argv(container_user: str, container_id: str) -> list[s
     return [
         "docker",
         "exec",
+        *_exec_env_args(),
         "-u",
         container_user,
         container_id,

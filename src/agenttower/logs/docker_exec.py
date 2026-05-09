@@ -118,6 +118,34 @@ class FakeDockerExecRunner:
                     break
                 cursor = idx + len(str(token))
             if ok:
+                # Optional side-effect: simulate the bench-side
+                # ``cat >> file`` behavior, which opens for append + create
+                # under the bench user's umask. Critically, if the file
+                # already exists, ``cat >>`` does NOT change its mode; only
+                # the create-from-missing case applies the umask-derived
+                # mode. The fixture's ``mode`` value is the mode applied
+                # IFF the daemon hasn't already created the file.
+                touch = entry.get("touch_path_with_mode")
+                if isinstance(touch, dict):
+                    target = touch.get("path")
+                    mode = touch.get("mode")
+                    if isinstance(target, str) and isinstance(mode, int):
+                        try:
+                            parent = os.path.dirname(target)
+                            if parent and not os.path.isdir(parent):
+                                os.makedirs(parent, mode=0o755, exist_ok=True)
+                            if not os.path.exists(target):
+                                fd = os.open(
+                                    target,
+                                    os.O_CREAT | os.O_WRONLY | os.O_EXCL,
+                                    0o666,
+                                )
+                                os.close(fd)
+                                os.chmod(target, mode)
+                            # If file exists (daemon pre-created it), leave
+                            # the mode alone — this is the fixed behavior.
+                        except OSError:
+                            pass
                 return DockerExecResult(
                     returncode=int(entry.get("returncode", 0)),
                     stdout=str(entry.get("stdout", "")),

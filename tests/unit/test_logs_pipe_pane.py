@@ -27,45 +27,78 @@ LOG = "/home/brett/.local/state/opensoft/agenttower/logs/c/agt_abc.log"
 class TestBuildAttachArgv:
     def test_argv_shape(self) -> None:
         argv = build_attach_argv(CONTAINER_USER, CONTAINER_ID, PANE, LOG)
-        assert argv[:5] == [
-            "docker", "exec", "-u", CONTAINER_USER, CONTAINER_ID,
-        ]
-        assert argv[5:7] == ["sh", "-lc"]
+        # ``docker exec`` is followed by the FEAT-007 locale-pinning ``-e``
+        # flags (Bug-2 fix: tmux 3.4 in POSIX locale corrupts ``-F`` output)
+        # then ``-u <user> <container_id>`` then ``sh -lc <inner>``.
+        assert argv[:2] == ["docker", "exec"]
+        # Locate the user/container/sh-lc tail; locale flags appear before.
+        assert "LANG=C.UTF-8" in argv
+        assert "LC_ALL=C.UTF-8" in argv
+        u_idx = argv.index("-u")
+        assert argv[u_idx:u_idx + 3] == ["-u", CONTAINER_USER, CONTAINER_ID]
+        assert argv[u_idx + 3:u_idx + 5] == ["sh", "-lc"]
         # The inner shell command must be a single string.
-        assert isinstance(argv[7], str)
-        assert "tmux pipe-pane -o -t" in argv[7]
+        assert isinstance(argv[u_idx + 5], str)
+        assert "tmux pipe-pane -o -t" in argv[u_idx + 5]
 
     def test_pane_short_form_quoted(self) -> None:
         argv = build_attach_argv(CONTAINER_USER, CONTAINER_ID, "weird:0.0", LOG)
         # shlex.quote of "weird:0.0" is the literal (no shell-meta) but the
         # construction MUST go through shlex.quote.
-        assert shlex.quote("weird:0.0") in argv[7]
+        assert shlex.quote("weird:0.0") in argv[-1]
 
     def test_log_path_with_spaces_quoted(self) -> None:
         weird_log = "/host/log with spaces/x.log"
         argv = build_attach_argv(CONTAINER_USER, CONTAINER_ID, PANE, weird_log)
         # Must NOT contain unquoted ' with ' (it would be word-split).
-        assert "'/host/log with spaces/x.log'" in argv[7] or shlex.quote(weird_log) in argv[7]
+        assert "'/host/log with spaces/x.log'" in argv[-1] or shlex.quote(weird_log) in argv[-1]
 
     def test_log_path_with_shell_meta_quoted(self) -> None:
         evil_log = "/host/log;rm -rf /.log"
         argv = build_attach_argv(CONTAINER_USER, CONTAINER_ID, PANE, evil_log)
         # The shell-meta MUST be inside quotes.
-        assert shlex.quote(evil_log) in argv[7]
+        assert shlex.quote(evil_log) in argv[-1]
 
 
 class TestBuildToggleOffArgv:
     def test_argv_shape(self) -> None:
         argv = build_toggle_off_argv(CONTAINER_USER, CONTAINER_ID, PANE)
-        assert "tmux pipe-pane -t" in argv[7]
-        assert "cat >>" not in argv[7]
+        assert "tmux pipe-pane -t" in argv[-1]
+        assert "cat >>" not in argv[-1]
 
 
 class TestBuildInspectionArgv:
     def test_argv_shape(self) -> None:
         argv = build_inspection_argv(CONTAINER_USER, CONTAINER_ID, PANE)
-        assert "tmux list-panes" in argv[7]
-        assert "#{pane_pipe}" in argv[7]
+        assert "tmux list-panes" in argv[-1]
+        assert "#{pane_pipe}" in argv[-1]
+
+
+class TestExecEnvArgs:
+    """Bug-2 regression: docker exec MUST pin LANG=C.UTF-8 so tmux 3.4 in
+    POSIX/C locale does not corrupt ``-F`` format output (tabs and other
+    control chars get replaced with ``_``)."""
+
+    def test_attach_argv_pins_utf8_locale(self) -> None:
+        argv = build_attach_argv(CONTAINER_USER, CONTAINER_ID, PANE, LOG)
+        # ``-e LANG=C.UTF-8`` and ``-e LC_ALL=C.UTF-8`` must precede ``-u``.
+        assert "-e" in argv
+        assert "LANG=C.UTF-8" in argv
+        assert "LC_ALL=C.UTF-8" in argv
+        u_idx = argv.index("-u")
+        # Locale env must appear before user/container args.
+        assert argv.index("LANG=C.UTF-8") < u_idx
+        assert argv.index("LC_ALL=C.UTF-8") < u_idx
+
+    def test_toggle_off_argv_pins_utf8_locale(self) -> None:
+        argv = build_toggle_off_argv(CONTAINER_USER, CONTAINER_ID, PANE)
+        assert "LANG=C.UTF-8" in argv
+        assert "LC_ALL=C.UTF-8" in argv
+
+    def test_inspection_argv_pins_utf8_locale(self) -> None:
+        argv = build_inspection_argv(CONTAINER_USER, CONTAINER_ID, PANE)
+        assert "LANG=C.UTF-8" in argv
+        assert "LC_ALL=C.UTF-8" in argv
 
 
 class TestRenderPipeCommandForAudit:
