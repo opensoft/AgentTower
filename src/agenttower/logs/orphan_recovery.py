@@ -16,20 +16,16 @@ from __future__ import annotations
 
 import shlex
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Iterable
 
 from ..socket_api.lifecycle import LifecycleLogger
 from .canonical_paths import host_canonical_log_root_for
 from .docker_exec import DockerExecRunner
-from .pipe_pane import _exec_env_args
 from .lifecycle import emit_log_attachment_orphan_detected
-from .pipe_pane import build_inspection_argv
-from .pipe_pane_state import (
-    classify_pipe_target,
-    parse_list_panes_output,
-    sanitize_prior_pipe_target,
-)
+from .pipe_pane import _exec_env_args
+from .pipe_pane_state import classify_pipe_target, sanitize_prior_pipe_target
 
 
 def _bench_containers(conn: sqlite3.Connection) -> Iterable[tuple[str, str, str]]:
@@ -74,75 +70,85 @@ def detect_orphans(
     canonical_prefix = str(host_canonical_log_root_for(daemon_home)) + "/"
     emitted = 0
 
-    for container_id, container_user, _name in _bench_containers(connection_factory()):
-        # Run a per-container `tmux list-panes -a` to enumerate every pane
-        # across every session. The FR-043 contract is best-effort: if
-        # tmux is missing or the container has no live tmux server, we
-        # simply find no orphans.
-        argv = _build_list_panes_all_argv(container_user, container_id)
-        result = docker_exec_runner.run(argv)
-        if result.returncode != 0:
-            continue
-        for line in result.stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
+    # One SQLite connection covers the entire orphan pass: it owns the
+    # ``containers`` enumeration AND the per-orphan ``log_attachments``
+    # lookups. ``closing()`` guarantees release even if a tmux scan or
+    # parser raises mid-loop.
+    with closing(connection_factory()) as conn:
+        for container_id, container_user, _name in _bench_containers(conn):
+            # Run a per-container `tmux list-panes -a` to enumerate every pane
+            # across every session. The FR-043 contract is best-effort: if
+            # tmux is missing or the container has no live tmux server, we
+            # simply find no orphans.
+            argv = _build_list_panes_all_argv(container_user, container_id)
+            result = docker_exec_runner.run(argv)
+            if result.returncode != 0:
                 continue
-            # Output shape (custom format below): "<pane_short> <pipe_pipe_flag> <pipe_command>"
-            # The pipe_command may contain spaces; everything after the second
-            # token is the pipe command.
-            parts = stripped.split(" ", 2)
-            if len(parts) < 2:
-                continue
-            pane_short = parts[0]
-            pipe_flag = parts[1]
-            pipe_cmd = parts[2] if len(parts) >= 3 else ""
+            for line in result.stdout.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # Output shape (custom format below):
+                # "<pane_short> <pipe_pipe_flag> <pipe_command>".
+                # The pipe_command may contain spaces; everything after the
+                # second token is the pipe command.
+                parts = stripped.split(" ", 2)
+                if len(parts) < 2:
+                    continue
+                pane_short = parts[0]
+                pipe_flag = parts[1]
+                pipe_cmd = parts[2] if len(parts) >= 3 else ""
 
-            if pipe_flag != "1":
-                continue
-            if not pipe_cmd:
-                continue
+                if pipe_flag != "1":
+                    continue
+                if not pipe_cmd:
+                    continue
 
-            # Quick prefix filter: only inspect pipes that target the
-            # canonical-log root. Foreign pipes are not orphans.
-            if canonical_prefix not in pipe_cmd:
-                continue
+                # Quick prefix filter: only inspect pipes that target the
+                # canonical-log root. Foreign pipes are not orphans.
+                if canonical_prefix not in pipe_cmd:
+                    continue
 
-            # Resolve the orphan to a (container_id, agent_id) by parsing
-            # the canonical path out of the pipe command.
-            agent_id = _extract_agent_id_from_pipe_command(
-                pipe_cmd, container_id=container_id, daemon_home=daemon_home
-            )
-            if agent_id is None:
-                continue
+                # Resolve the orphan to a (container_id, agent_id) by parsing
+                # the canonical path out of the pipe command.
+                agent_id = _extract_agent_id_from_pipe_command(
+                    pipe_cmd, container_id=container_id, daemon_home=daemon_home
+                )
+                if agent_id is None:
+                    continue
 
-            # Strict canonical-target match (FR-054).
-            expected = _expected_container_side_log_for(
-                daemon_home=daemon_home, container_id=container_id, agent_id=agent_id
-            )
-            classification = classify_pipe_target(pipe_cmd, expected)
-            if not classification.is_canonical:
-                # Substring match without strict equality → foreign target;
-                # not an orphan.
-                continue
+                # Strict canonical-target match (FR-054).
+                expected = _expected_container_side_log_for(
+                    daemon_home=daemon_home,
+                    container_id=container_id,
+                    agent_id=agent_id,
+                )
+                classification = classify_pipe_target(pipe_cmd, expected)
+                if not classification.is_canonical:
+                    # Substring match without strict equality → foreign
+                    # target; not an orphan.
+                    continue
 
-            # Look up the corresponding log_attachments row by (container_id,
-            # pane_short_form) — but pane_short_form maps to the pane composite
-            # key which has six fields. We use container_id + agent_id as the
-            # disambiguator (the canonical path encodes agent_id).
-            if _attachment_exists_for(connection_factory, container_id=container_id, agent_id=agent_id):
-                continue
+                # Look up the corresponding log_attachments row by
+                # (container_id, agent_id). The canonical path encodes
+                # agent_id, so this disambiguates without needing the full
+                # six-field pane composite key.
+                if _attachment_exists_for(
+                    conn, container_id=container_id, agent_id=agent_id
+                ):
+                    continue
 
-            # ORPHAN.
-            pane_composite_key = f"{container_id}:{pane_short}"
-            sanitized = sanitize_prior_pipe_target(pipe_cmd)
-            emit_log_attachment_orphan_detected(
-                lifecycle_logger,
-                container_id=container_id,
-                pane_composite_key=pane_composite_key,
-                observed_pipe_target=sanitized,
-                pane_short_form=pane_short,
-            )
-            emitted += 1
+                # ORPHAN.
+                pane_composite_key = f"{container_id}:{pane_short}"
+                sanitized = sanitize_prior_pipe_target(pipe_cmd)
+                emit_log_attachment_orphan_detected(
+                    lifecycle_logger,
+                    container_id=container_id,
+                    pane_composite_key=pane_composite_key,
+                    observed_pipe_target=sanitized,
+                    pane_short_form=pane_short,
+                )
+                emitted += 1
     return emitted
 
 
@@ -182,14 +188,17 @@ def _extract_agent_id_from_pipe_command(
     return None
 
 
-def _attachment_exists_for(connection_factory, *, container_id: str, agent_id: str) -> bool:
-    conn = connection_factory()
-    try:
-        cur = conn.execute(
-            "SELECT 1 FROM log_attachments WHERE container_id = ? AND agent_id = ? "
-            "AND status = 'active'",
-            (container_id, agent_id),
-        )
-        return cur.fetchone() is not None
-    finally:
-        conn.close()
+def _attachment_exists_for(
+    conn: sqlite3.Connection, *, container_id: str, agent_id: str
+) -> bool:
+    """Return True iff an active ``log_attachments`` row exists for the pair.
+
+    Reuses the caller's connection — orphan recovery opens one connection
+    for the entire pass (see :func:`detect_orphans`).
+    """
+    cur = conn.execute(
+        "SELECT 1 FROM log_attachments WHERE container_id = ? AND agent_id = ? "
+        "AND status = 'active'",
+        (container_id, agent_id),
+    )
+    return cur.fetchone() is not None

@@ -1,9 +1,10 @@
 """FR-065 AST gate — daemon MUST NOT execute log file bytes (T220).
 
 Defense against A3 (malicious in-container process emitting adversarial
-pane content). The daemon reads host log files only via ``host_fs.read_tail_lines``
-and ``preview.read_tail_lines``; the bytes flow into the redaction utility
-and out via the CLI render path. They MUST NOT reach ``eval`` / ``exec`` /
+pane content). The daemon reads host log files only via
+``agenttower.logs.host_fs.read_tail_lines``; the bytes flow into the
+redaction utility (``agenttower.logs.redaction``) and out via the CLI
+preview render path. They MUST NOT reach ``eval`` / ``exec`` /
 ``compile`` / ``__import__`` / ``subprocess``-based shell construction.
 
 This test scans every production module under ``src/agenttower/`` for

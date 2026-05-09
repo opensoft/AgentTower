@@ -203,12 +203,19 @@ def _truncate_line(line: str, max_bytes: int) -> str:
     return truncated + "…"
 
 
-def ensure_log_directory_and_file(host_path: str, namespace_root: Path) -> None:
+def ensure_log_directory_and_file(host_path: str) -> None:
     """Create the parent directory at mode 0700 and the file at mode 0600 (FR-008 + FR-048).
 
     Race-free file creation via ``O_EXCL | O_CREAT | O_WRONLY`` (Research R-011 /
     FR-048). Refuses to broaden modes if the directory or file already exists with
     a wider mode (FR-008 strict-mode invariant).
+
+    Path validation is the caller's responsibility: this function trusts that
+    ``host_path`` has already been gated by FR-006 (lexical) + FR-052
+    (daemon-owned roots) + FR-053 (special-fs roots) + FR-007 (host-visibility)
+    upstream. Adding a redundant namespace assertion here would either duplicate
+    those checks or break legitimate operator-supplied ``--log`` paths under
+    bind mounts outside the AgentTower namespace.
 
     The test seam is intentionally NOT consulted for this function — production
     code paths always run real syscalls because the daemon must guarantee on-disk
@@ -227,16 +234,15 @@ def ensure_log_directory_and_file(host_path: str, namespace_root: Path) -> None:
         )
 
     if not os.path.exists(host_path):
-        try:
-            fd = os.open(
-                host_path,
-                os.O_CREAT | os.O_WRONLY | os.O_EXCL,
-                _FILE_MODE,
-            )
-        except FileExistsError as exc:
-            # TOCTOU: another process created the file between exists() and open().
-            # FR-048 says we MUST refuse with internal_error; surface the error.
-            raise
+        # TOCTOU on FileExistsError: another process created the file between
+        # exists() and open(); FR-048 says we MUST refuse with internal_error,
+        # which the unhandled raise (turning into RegistrationError upstream)
+        # produces.
+        fd = os.open(
+            host_path,
+            os.O_CREAT | os.O_WRONLY | os.O_EXCL,
+            _FILE_MODE,
+        )
         os.close(fd)
         # Belt-and-braces chmod (umask may have widened the requested mode).
         os.chmod(host_path, _FILE_MODE)

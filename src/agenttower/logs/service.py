@@ -992,7 +992,7 @@ class LogService:
         from . import host_fs as host_fs_mod
 
         try:
-            host_fs_mod.ensure_log_directory_and_file(host_path, self.daemon_home)
+            host_fs_mod.ensure_log_directory_and_file(host_path)
         except OSError as exc:
             raise RegistrationError(
                 "internal_error",
