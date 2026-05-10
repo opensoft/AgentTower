@@ -316,7 +316,13 @@ class LogService:
                 existing_active_other is not None
                 and existing_active_other.agent_id != agent_id
             ):
-                conn.execute("ROLLBACK")
+                # Don't roll back here — the ``except RegistrationError``
+                # handler below already gates the rollback on
+                # ``manage_transaction``. An unconditional rollback here
+                # would tear down the outer ``AgentService`` transaction
+                # when ``manage_transaction=False`` (register-self path)
+                # and surface as ``sqlite3.OperationalError`` instead of
+                # the closed-set ``log_path_in_use`` code.
                 raise RegistrationError(
                     "log_path_in_use",
                     f"log_path {host_path!r} is owned by agent_id "
@@ -361,9 +367,16 @@ class LogService:
                 )
                 if manage_transaction:
                     conn.execute("COMMIT")
+                # When ``manage_transaction=True`` the COMMIT above released
+                # the conn's snapshot, so a fresh connection is fine; when
+                # ``False`` the caller's transaction is still open and the
+                # offset row must be read on that same conn to see consistent
+                # state. ``conn_for_offset`` carries that distinction.
                 return self._render_attach_result(
-                    existing, byte_offset=0, line_offset=0, is_new=False, prior_status=existing.status,
-                    extra_offset_load=True, conn_for_offset=None,
+                    existing, byte_offset=0, line_offset=0, is_new=False,
+                    prior_status=existing.status,
+                    extra_offset_load=True,
+                    conn_for_offset=None if manage_transaction else conn,
                 )
 
             # FR-011 pipe-state inspection.
@@ -1168,15 +1181,27 @@ class LogService:
         last_status_at: str | None = None,
     ) -> dict[str, Any]:
         # If we don't have offsets in hand and this is an idempotent re-issue,
-        # load them.
+        # load them. When the caller is already inside an open transaction
+        # (e.g. ``register-self --attach-log`` driving the inner-flow with
+        # ``manage_transaction=False``), reuse their connection so the
+        # offset read sees the same SQLite snapshot — opening a fresh
+        # connection here could miss uncommitted writes from the same
+        # transaction.
         if extra_offset_load:
-            conn = self.connection_factory()
-            try:
+            if conn_for_offset is not None:
                 offset = lo_state.select(
-                    conn, agent_id=record.agent_id, log_path=record.log_path
+                    conn_for_offset,
+                    agent_id=record.agent_id,
+                    log_path=record.log_path,
                 )
-            finally:
-                conn.close()
+            else:
+                conn = self.connection_factory()
+                try:
+                    offset = lo_state.select(
+                        conn, agent_id=record.agent_id, log_path=record.log_path
+                    )
+                finally:
+                    conn.close()
             if offset is not None:
                 byte_offset = offset.byte_offset
                 line_offset = offset.line_offset
