@@ -18,7 +18,12 @@ agenttower = "agenttower.cli:main"
 agenttowerd = "agenttower.daemon:main"
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = [
+    "pytest>=7",
+    # FEAT-008 T005: JSON Schema validator for the FR-027 / FR-032
+    # event schema. Test-only — runtime stays stdlib-only per the plan.
+    "jsonschema>=4",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agenttower"]

@@ -6,6 +6,7 @@ import errno
 import os
 import stat
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_CONFIG_TOML = """\
@@ -173,6 +174,175 @@ def load_containers_block(config_path: Path):
         cleaned.append(stripped)
 
     return MatchingRule(name_contains=tuple(cleaned))
+
+
+@dataclass(frozen=True)
+class EventsConfig:
+    """Resolved FEAT-008 ``[events]`` configuration block.
+
+    All fields default to the constants in
+    ``agenttower.events.__init__`` (FR-045 / Plan §"Defaults locked").
+    Values come from the ``[events]`` table in ``config.toml`` when
+    present; missing keys fall back to the defaults.
+    """
+
+    reader_cycle_wallclock_cap_seconds: float
+    per_cycle_byte_cap_bytes: int
+    per_event_excerpt_cap_bytes: int
+    excerpt_truncation_marker: str
+    debounce_activity_window_seconds: float
+    pane_exited_grace_seconds: float
+    long_running_grace_seconds: float
+    default_page_size: int
+    max_page_size: int
+    follow_long_poll_max_seconds: float
+    follow_session_idle_timeout_seconds: float
+
+
+def _events_defaults() -> "EventsConfig":
+    """Return the FR-045 defaults from ``agenttower.events``."""
+
+    from . import events as _events
+
+    return EventsConfig(
+        reader_cycle_wallclock_cap_seconds=_events.READER_CYCLE_WALLCLOCK_CAP_SECONDS,
+        per_cycle_byte_cap_bytes=_events.PER_CYCLE_BYTE_CAP_BYTES,
+        per_event_excerpt_cap_bytes=_events.PER_EVENT_EXCERPT_CAP_BYTES,
+        excerpt_truncation_marker=_events.EXCERPT_TRUNCATION_MARKER,
+        debounce_activity_window_seconds=_events.DEBOUNCE_ACTIVITY_WINDOW_SECONDS,
+        pane_exited_grace_seconds=_events.PANE_EXITED_GRACE_SECONDS,
+        long_running_grace_seconds=_events.LONG_RUNNING_GRACE_SECONDS,
+        default_page_size=_events.DEFAULT_PAGE_SIZE,
+        max_page_size=_events.MAX_PAGE_SIZE,
+        follow_long_poll_max_seconds=_events.FOLLOW_LONG_POLL_MAX_SECONDS,
+        follow_session_idle_timeout_seconds=_events.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+    )
+
+
+_EVENTS_FLOAT_KEYS = {
+    "reader_cycle_wallclock_cap_seconds",
+    "debounce_activity_window_seconds",
+    "pane_exited_grace_seconds",
+    "long_running_grace_seconds",
+    "follow_long_poll_max_seconds",
+    "follow_session_idle_timeout_seconds",
+}
+_EVENTS_INT_KEYS = {
+    "per_cycle_byte_cap_bytes",
+    "per_event_excerpt_cap_bytes",
+    "default_page_size",
+    "max_page_size",
+}
+_EVENTS_STR_KEYS = {"excerpt_truncation_marker"}
+
+
+def load_events_block(config_path: Path) -> EventsConfig:
+    """Load and validate ``[events]`` from *config_path*.
+
+    Missing file, missing block, or missing key falls back to the
+    FR-045 defaults. Type errors and out-of-range values raise
+    :class:`ConfigInvalidError`.
+    """
+
+    defaults = _events_defaults()
+    if not config_path.exists():
+        return defaults
+
+    try:
+        with open(config_path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigInvalidError(_bound(f"failed to parse {config_path}: {exc}")) from exc
+
+    block = data.get("events")
+    if block is None:
+        return defaults
+    if not isinstance(block, dict):
+        raise ConfigInvalidError(
+            _bound(f"[events] must be a TOML table; got {type(block).__name__}")
+        )
+
+    overrides: dict[str, object] = {}
+    for key, raw in block.items():
+        if key in _EVENTS_FLOAT_KEYS:
+            if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+                raise ConfigInvalidError(
+                    _bound(f"[events] {key} must be a number; got {raw!r}")
+                )
+            value = float(raw)
+            if value <= 0:
+                raise ConfigInvalidError(
+                    _bound(f"[events] {key} must be > 0; got {value}")
+                )
+            overrides[key] = value
+        elif key in _EVENTS_INT_KEYS:
+            if not isinstance(raw, int) or isinstance(raw, bool):
+                raise ConfigInvalidError(
+                    _bound(f"[events] {key} must be an integer; got {raw!r}")
+                )
+            if raw <= 0:
+                raise ConfigInvalidError(
+                    _bound(f"[events] {key} must be > 0; got {raw}")
+                )
+            overrides[key] = raw
+        elif key in _EVENTS_STR_KEYS:
+            if not isinstance(raw, str):
+                raise ConfigInvalidError(
+                    _bound(f"[events] {key} must be a string; got {raw!r}")
+                )
+            overrides[key] = raw
+        else:
+            raise ConfigInvalidError(
+                _bound(f"[events] unknown key {key!r}")
+            )
+
+    # Apply MVP caps named in FR-014 (≤ 5 s), FR-017 (≤ 30 s), FR-030
+    # (≤ 50 page size). Values exceeding the caps are rejected; values
+    # equal to the caps are accepted.
+    if overrides.get("debounce_activity_window_seconds", defaults.debounce_activity_window_seconds) > 5.0:
+        raise ConfigInvalidError(
+            _bound(
+                "[events] debounce_activity_window_seconds must be ≤ 5.0 (FR-014); "
+                f"got {overrides['debounce_activity_window_seconds']}"
+            )
+        )
+    if overrides.get("pane_exited_grace_seconds", defaults.pane_exited_grace_seconds) > 30.0:
+        raise ConfigInvalidError(
+            _bound(
+                "[events] pane_exited_grace_seconds must be ≤ 30.0 (FR-017); "
+                f"got {overrides['pane_exited_grace_seconds']}"
+            )
+        )
+    if overrides.get("default_page_size", defaults.default_page_size) > 50:
+        raise ConfigInvalidError(
+            _bound(
+                "[events] default_page_size must be ≤ 50 (FR-030); "
+                f"got {overrides['default_page_size']}"
+            )
+        )
+    if overrides.get("max_page_size", defaults.max_page_size) > 50:
+        raise ConfigInvalidError(
+            _bound(
+                "[events] max_page_size must be ≤ 50 (FR-030); "
+                f"got {overrides['max_page_size']}"
+            )
+        )
+    # FR-019 cross-check: per_cycle_byte_cap_bytes must be ≥
+    # per_event_excerpt_cap_bytes; otherwise no full record can ever
+    # fit (configuration.md CHK033 edge case).
+    pcb = int(overrides.get("per_cycle_byte_cap_bytes", defaults.per_cycle_byte_cap_bytes))
+    pee = int(overrides.get("per_event_excerpt_cap_bytes", defaults.per_event_excerpt_cap_bytes))
+    if pcb < pee:
+        raise ConfigInvalidError(
+            _bound(
+                f"[events] per_cycle_byte_cap_bytes ({pcb}) must be ≥ "
+                f"per_event_excerpt_cap_bytes ({pee})"
+            )
+        )
+
+    fields = {f: getattr(defaults, f) for f in defaults.__dataclass_fields__}
+    fields.update(overrides)
+    return EventsConfig(**fields)  # type: ignore[arg-type]
 
 
 def write_default_config(config_file: Path, *, namespace_root: Path | None = None) -> str:

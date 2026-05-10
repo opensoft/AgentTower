@@ -124,3 +124,26 @@ def stop_daemon_if_alive(env: dict[str, str]) -> None:
                 time.sleep(0.05)
         except ProcessLookupError:
             pass
+
+
+# FEAT-008 T005 — JSON Schema validator for the FR-027 / FR-032 stable
+# event schema. Loaded once per session by ``event_schema_validator``;
+# the caller invokes ``.validate(event_dict)`` per event.
+
+_EVENT_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schemas" / "event-v1.schema.json"
+)
+
+
+def event_schema_validator():
+    """Return a Draft 2020-12 validator for one event's JSONL/CLI shape.
+
+    Test-only; ``jsonschema`` is in ``pyproject.toml``'s ``test`` extras
+    (T005) — runtime stays stdlib-only.
+    """
+    import json
+
+    import jsonschema  # type: ignore[import-untyped]
+
+    schema = json.loads(_EVENT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return jsonschema.Draft202012Validator(schema)

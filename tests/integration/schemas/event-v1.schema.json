@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensoft.one/schemas/agenttower/feat-008/event.json",
+  "title": "AgentTower Event (FEAT-008)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "agent_id",
+    "attachment_id",
+    "log_path",
+    "byte_range_start",
+    "byte_range_end",
+    "line_offset_start",
+    "line_offset_end",
+    "observed_at",
+    "record_at",
+    "excerpt",
+    "classifier_rule_id",
+    "debounce",
+    "schema_version"
+  ],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "JSONL writer timestamp (FEAT-001). Present only in JSONL output."
+    },
+    "event_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "activity",
+        "waiting_for_input",
+        "completed",
+        "error",
+        "test_failed",
+        "test_passed",
+        "manual_review_needed",
+        "long_running",
+        "pane_exited",
+        "swarm_member_reported"
+      ]
+    },
+    "agent_id": {
+      "type": "string",
+      "pattern": "^agt_[0-9a-f]{12}$"
+    },
+    "attachment_id": {
+      "type": "string",
+      "pattern": "^atc_[0-9a-f]{12}$"
+    },
+    "log_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "byte_range_start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "byte_range_end": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "line_offset_start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "line_offset_end": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "record_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "excerpt": {
+      "type": "string"
+    },
+    "classifier_rule_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*\\.[a-z0-9_]+\\.v[0-9]+$"
+    },
+    "debounce": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window_id",
+        "collapsed_count",
+        "window_started_at",
+        "window_ended_at"
+      ],
+      "properties": {
+        "window_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{12}$"
+        },
+        "collapsed_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "window_started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "window_ended_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}
