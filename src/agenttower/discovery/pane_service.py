@@ -469,6 +469,16 @@ class PaneDiscoveryService:
             state_agents.cascade_agents_active_from_pane(
                 self._conn, pane_keys=write_set.inactivate
             )
+            # FEAT-007 FR-042: in the SAME transaction as the pane reconcile,
+            # flip every bound log_attachments row from 'active' to 'stale'
+            # and capture the affected rows for post-COMMIT audit emission.
+            from ..state import log_attachments as state_log_attachments
+
+            cascaded_attachments = state_log_attachments.cascade_to_stale_for_panes(
+                self._conn,
+                pane_keys=write_set.inactivate,
+                now_iso=started_at,
+            )
             completed_at = _now_iso()
             state_panes.insert_pane_scan(
                 self._conn,
@@ -491,6 +501,46 @@ class PaneDiscoveryService:
         except Exception:
             self._conn.execute("ROLLBACK")
             raise
+
+        # FR-042 / FR-044: append one log_attachment_change audit row per
+        # row that was flipped to stale. Performed AFTER COMMIT because the
+        # FEAT-001 events writer is a JSONL append surface (out-of-band of
+        # the SQLite transaction). socket_peer_uid for system-driven
+        # transitions is the daemon's effective uid (no peer involved).
+        if cascaded_attachments:
+            from ..logs import audit as logs_audit
+
+            try:
+                daemon_uid = os.geteuid()
+            except OSError:
+                daemon_uid = -1
+            for record in cascaded_attachments:
+                try:
+                    # Preserve the attachment's persisted ``source`` and
+                    # ``prior_pipe_target`` so a register-self attachment
+                    # that later goes stale audits as ``register_self`` (not
+                    # synthetic ``explicit``) and any captured prior pipe
+                    # target survives the cascade event.
+                    logs_audit.append_log_attachment_change(
+                        self._events_file,
+                        attachment_id=record.attachment_id,
+                        agent_id=record.agent_id,
+                        prior_status="active",
+                        new_status="stale",
+                        prior_path=record.log_path,
+                        new_path=record.log_path,
+                        prior_pipe_target=record.prior_pipe_target,
+                        source=record.source,
+                        socket_peer_uid=daemon_uid,
+                    )
+                except Exception:  # pragma: no cover — defensive
+                    self._emit_lifecycle(
+                        "audit_append_failed",
+                        method="pane_reconcile.stale_cascade",
+                        agent_id=record.agent_id,
+                        attachment_id=record.attachment_id,
+                    )
+
         return completed_at
 
     def _emit_jsonl_degraded(

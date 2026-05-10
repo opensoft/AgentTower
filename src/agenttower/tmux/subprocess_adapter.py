@@ -102,7 +102,10 @@ class SubprocessTmuxAdapter(TmuxAdapter):
     # -- TmuxAdapter Protocol --------------------------------------------------
 
     def resolve_uid(self, *, container_id: str, bench_user: str) -> str:
-        argv = self._argv("exec", "-u", bench_user, container_id, "id", "-u")
+        argv = self._argv(
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id, "id", "-u",
+        )
         completed = self._run(argv, container_id=container_id, socket_path=None)
         if completed.returncode != 0:
             raise TmuxError(
@@ -126,7 +129,9 @@ class SubprocessTmuxAdapter(TmuxAdapter):
     ) -> SocketListing:
         socket_dir = f"/tmp/tmux-{uid}"  # NOSONAR - intentional tmux socket dir on Linux benches.
         argv = self._argv(
-            "exec", "-u", bench_user, container_id, "ls", "-1", "--", socket_dir
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "ls", "-1", "--", socket_dir,
         )
         completed = self._run(argv, container_id=container_id, socket_path=None)
         if completed.returncode != 0:
@@ -155,6 +160,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
     ) -> Sequence[ParsedPane]:
         argv = self._argv(
             "exec",
+            *self._exec_env_args(),
             "-u",
             bench_user,
             container_id,
@@ -207,6 +213,17 @@ class SubprocessTmuxAdapter(TmuxAdapter):
     def _argv(self, *args: str) -> list[str]:
         binary = self._resolve_docker()
         return [binary, *args]
+
+    @staticmethod
+    def _exec_env_args() -> list[str]:
+        """Return the ``-e KEY=VAL`` arguments for ``docker exec``.
+
+        Forces a UTF-8 locale inside the bench container so tmux 3.4 with
+        a POSIX/C locale does not silently substitute tabs and other
+        control characters in ``-F`` format output (which would surface
+        here as ``output_malformed``).
+        """
+        return ["-e", "LANG=C.UTF-8", "-e", "LC_ALL=C.UTF-8"]
 
     def _resolve_docker(self) -> str:
         path = self._env.get("PATH", os.defpath)

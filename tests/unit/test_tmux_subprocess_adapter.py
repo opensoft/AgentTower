@@ -80,9 +80,15 @@ def test_resolve_uid_argv_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     uid = adapter.resolve_uid(container_id="abc", bench_user="user")
 
     assert uid == "1000"
+    # ``docker exec`` is followed by FEAT-007 / Bug-2 locale-pinning ``-e``
+    # flags then ``-u <user> <container_id>``.
     assert captured["argv"] == [
         "/usr/bin/docker",
         "exec",
+        "-e",
+        "LANG=C.UTF-8",
+        "-e",
+        "LC_ALL=C.UTF-8",
         "-u",
         "user",
         "abc",
@@ -118,6 +124,10 @@ def test_list_socket_dir_argv_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["argv"] == [
         "/usr/bin/docker",
         "exec",
+        "-e",
+        "LANG=C.UTF-8",
+        "-e",
+        "LC_ALL=C.UTF-8",
         "-u",
         "user",
         "abc",
@@ -147,8 +157,13 @@ def test_list_panes_argv_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     argv = captured["argv"]
-    # FR-033 — exactly the documented invocation shape.
-    assert argv[:5] == ["/usr/bin/docker", "exec", "-u", "user", "abc"]
+    # FR-033 — exactly the documented invocation shape; FEAT-007 / Bug-2
+    # adds ``-e LANG=C.UTF-8 -e LC_ALL=C.UTF-8`` between ``exec`` and ``-u``.
+    assert argv[:2] == ["/usr/bin/docker", "exec"]
+    assert "LANG=C.UTF-8" in argv
+    assert "LC_ALL=C.UTF-8" in argv
+    u_idx = argv.index("-u")
+    assert argv[u_idx:u_idx + 3] == ["-u", "user", "abc"]
     assert "tmux" in argv
     tmux_idx = argv.index("tmux")
     assert argv[tmux_idx : tmux_idx + 6] == [

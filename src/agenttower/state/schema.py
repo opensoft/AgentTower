@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -213,10 +213,91 @@ def _apply_migration_v4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_v5(conn: sqlite3.Connection) -> None:
+    """Create FEAT-007 ``log_attachments`` and ``log_offsets`` tables.
+
+    Idempotent via IF NOT EXISTS. Touches no FEAT-001..006 table
+    (data-model.md §1; spec FR-014..FR-017).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS log_attachments (
+            attachment_id              TEXT PRIMARY KEY,
+            agent_id                   TEXT NOT NULL,
+            container_id               TEXT NOT NULL,
+            tmux_socket_path           TEXT NOT NULL,
+            tmux_session_name          TEXT NOT NULL,
+            tmux_window_index          INTEGER NOT NULL,
+            tmux_pane_index            INTEGER NOT NULL,
+            tmux_pane_id               TEXT NOT NULL,
+            log_path                   TEXT NOT NULL,
+            status                     TEXT NOT NULL
+                CHECK(status IN ('active','superseded','stale','detached')),
+            source                     TEXT NOT NULL
+                CHECK(source IN ('explicit','register_self')),
+            pipe_pane_command          TEXT NOT NULL,
+            prior_pipe_target          TEXT,
+            attached_at                TEXT NOT NULL,
+            last_status_at             TEXT NOT NULL,
+            superseded_at              TEXT,
+            superseded_by              TEXT,
+            created_at                 TEXT NOT NULL,
+            FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE RESTRICT,
+            FOREIGN KEY (superseded_by) REFERENCES log_attachments(attachment_id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS log_attachments_agent_status
+            ON log_attachments(agent_id, status, last_status_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS log_attachments_pane_status
+            ON log_attachments(container_id, tmux_socket_path, tmux_session_name,
+                               tmux_window_index, tmux_pane_index, tmux_pane_id,
+                               status)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS log_attachments_active_log_path
+            ON log_attachments(log_path) WHERE status = 'active'
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS log_offsets (
+            agent_id                   TEXT NOT NULL,
+            log_path                   TEXT NOT NULL,
+            byte_offset                INTEGER NOT NULL DEFAULT 0,
+            line_offset                INTEGER NOT NULL DEFAULT 0,
+            last_event_offset          INTEGER NOT NULL DEFAULT 0,
+            last_output_at             TEXT,
+            file_inode                 TEXT,
+            file_size_seen             INTEGER NOT NULL DEFAULT 0,
+            created_at                 TEXT NOT NULL,
+            updated_at                 TEXT NOT NULL,
+            PRIMARY KEY (agent_id, log_path),
+            FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS log_offsets_agent
+            ON log_offsets(agent_id)
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
     3: _apply_migration_v3,
     4: _apply_migration_v4,
+    5: _apply_migration_v5,
 }
 
 
@@ -291,11 +372,12 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
             f"build supports ({CURRENT_SCHEMA_VERSION}); refusing to open"
         )
     # Existing DB at current version: ensure FEAT-003 + FEAT-004 + FEAT-006
-    # tables exist in case the schema_version row got there ahead of the
-    # tables (defensive — every migration body uses IF NOT EXISTS).
+    # + FEAT-007 tables exist in case the schema_version row got there ahead
+    # of the tables (defensive — every migration body uses IF NOT EXISTS).
     _apply_migration_v2(conn)
     _apply_migration_v3(conn)
     _apply_migration_v4(conn)
+    _apply_migration_v5(conn)
 
 
 def _chmod_new_companions(

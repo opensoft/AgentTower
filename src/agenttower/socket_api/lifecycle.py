@@ -190,6 +190,15 @@ EVENT_PANE_SCAN_STARTED = "pane_scan_started"
 EVENT_PANE_SCAN_COMPLETED = "pane_scan_completed"
 EVENT_PANE_SCAN_JSONL_FAILED = "pane_scan_jsonl_failed"
 
+# FEAT-007 additions (FR-046 / data-model.md §3).
+EVENT_LOG_ROTATION_DETECTED = "log_rotation_detected"
+EVENT_LOG_FILE_MISSING = "log_file_missing"
+EVENT_LOG_FILE_RETURNED = "log_file_returned"
+EVENT_LOG_ATTACHMENT_ORPHAN_DETECTED = "log_attachment_orphan_detected"
+EVENT_MOUNTS_JSON_OVERSIZED = "mounts_json_oversized"
+EVENT_SOCKET_PEER_UID_MISMATCH = "socket_peer_uid_mismatch"
+EVENT_AUDIT_APPEND_FAILED = "audit_append_failed"
+
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
         EVENT_DAEMON_STARTING,
@@ -204,6 +213,13 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         EVENT_PANE_SCAN_STARTED,
         EVENT_PANE_SCAN_COMPLETED,
         EVENT_PANE_SCAN_JSONL_FAILED,
+        EVENT_LOG_ROTATION_DETECTED,
+        EVENT_LOG_FILE_MISSING,
+        EVENT_LOG_FILE_RETURNED,
+        EVENT_LOG_ATTACHMENT_ORPHAN_DETECTED,
+        EVENT_MOUNTS_JSON_OVERSIZED,
+        EVENT_SOCKET_PEER_UID_MISMATCH,
+        EVENT_AUDIT_APPEND_FAILED,
     }
 )
 

@@ -56,6 +56,14 @@ PROJECT_PATH_INVALID: Final[str] = "project_path_invalid"
 UNKNOWN_FILTER: Final[str] = "unknown_filter"
 SCHEMA_VERSION_NEWER: Final[str] = "schema_version_newer"
 
+# FEAT-007 additions (FR-038).
+LOG_PATH_INVALID: Final[str] = "log_path_invalid"
+LOG_PATH_NOT_HOST_VISIBLE: Final[str] = "log_path_not_host_visible"
+LOG_PATH_IN_USE: Final[str] = "log_path_in_use"
+PIPE_PANE_FAILED: Final[str] = "pipe_pane_failed"
+ATTACHMENT_NOT_FOUND: Final[str] = "attachment_not_found"
+LOG_FILE_MISSING: Final[str] = "log_file_missing"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
     {
         BAD_JSON,
@@ -98,6 +106,12 @@ CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
         PROJECT_PATH_INVALID,
         UNKNOWN_FILTER,
         SCHEMA_VERSION_NEWER,
+        LOG_PATH_INVALID,
+        LOG_PATH_NOT_HOST_VISIBLE,
+        LOG_PATH_IN_USE,
+        PIPE_PANE_FAILED,
+        ATTACHMENT_NOT_FOUND,
+        LOG_FILE_MISSING,
     }
 )
 

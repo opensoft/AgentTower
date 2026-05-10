@@ -59,3 +59,21 @@ def _no_real_docker() -> Iterator[None]:
         subprocess.run = real_run  # type: ignore[assignment]
         subprocess.Popen = real_popen  # type: ignore[assignment]
         shutil.which = real_which  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _reset_feat007_lifecycle_suppression() -> Iterator[None]:
+    """Reset the FEAT-007 lifecycle suppression registry between tests.
+
+    The suppression state is module-global (data-model.md §3.6) and survives
+    across test boundaries within the same process. Without this fixture,
+    a test that emits ``log_file_returned`` for triple ``(A, P, I)`` would
+    silently suppress the same triple in a later test that reuses the
+    same ids — leading to flaky cross-test behavior. Resetting between
+    tests mirrors the daemon-restart semantics the spec already documents.
+    """
+    from agenttower.logs import lifecycle as logs_lifecycle
+
+    logs_lifecycle.reset_for_test()
+    yield
+    logs_lifecycle.reset_for_test()

@@ -1,10 +1,10 @@
-"""Snapshot test for FEAT-006 socket DISPATCH stability (T091 / FR-022 / FR-023).
+"""Snapshot test for socket DISPATCH stability (T091 / FR-022 / FR-023).
 
 The dispatch table's KEY ORDER is part of the FEAT-002 stability rule
 (insertion order preserved across feature versions). FEAT-001..005
-established the first seven entries; FEAT-006 appends five more. This
-test pins the exact ordered key list so an accidental re-ordering or
-added entry is caught immediately.
+established the first seven entries; FEAT-006 appended five more;
+FEAT-007 appended four more. This test pins the exact ordered key list
+so an accidental re-ordering or added entry is caught immediately.
 """
 
 from __future__ import annotations
@@ -30,6 +30,11 @@ EXPECTED_ORDER = [
     "set_role",
     "set_label",
     "set_capability",
+    # FEAT-007.
+    "attach_log",
+    "detach_log",
+    "attach_log_status",
+    "attach_log_preview",
 ]
 
 
@@ -37,5 +42,5 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_twelve_entries() -> None:
-    assert len(DISPATCH) == 12
+def test_dispatch_table_is_exactly_sixteen_entries() -> None:
+    assert len(DISPATCH) == 16

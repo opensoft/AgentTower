@@ -719,6 +719,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=argparse.SUPPRESS,
         help="parent agent_id when --role swarm (immutable after creation).",
     )
+    register_self.add_argument(
+        "--attach-log",
+        action="store_true",
+        help="(FEAT-007 FR-034) atomically attach a tmux pipe-pane log "
+        "after registration; if attach fails, registration is rolled back.",
+    )
+    register_self.add_argument(
+        "--log",
+        default=argparse.SUPPRESS,
+        help="(with --attach-log) explicit log path (host-visible or "
+        "container-visible through the bench mount); default = "
+        "~/.local/state/opensoft/agenttower/logs/<container>/<agent>.log",
+    )
     register_self.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     register_self.set_defaults(_handler=_register_self_command)
 
@@ -798,6 +811,49 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     set_capability.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     set_capability.set_defaults(_handler=_set_capability_command)
+
+    # ------------------------------------------------------------------ #
+    # FEAT-007 — attach-log / detach-log (FR-031, FR-032, FR-033, FR-037a)
+    # ------------------------------------------------------------------ #
+
+    attach_log = subparsers.add_parser(
+        "attach-log",
+        help="attach a tmux pipe-pane log to an AgentTower agent",
+        description=(
+            "attach a registered AgentTower agent's pane output to a "
+            "host-visible log file via tmux pipe-pane (FEAT-007)"
+        ),
+    )
+    attach_log.add_argument("--target", required=True, help=_AGENT_ID_HELP)
+    attach_log.add_argument(
+        "--log",
+        default=argparse.SUPPRESS,
+        help="explicit log path (host-visible or container-visible through "
+        "the bench mount); defaults to "
+        "~/.local/state/opensoft/agenttower/logs/<container>/<agent>.log",
+    )
+    attach_log.add_argument(
+        "--status",
+        action="store_true",
+        help="universal read-only status inspection (FR-032)",
+    )
+    attach_log.add_argument(
+        "--preview",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="emit the last N lines (1..200) of the host log file, redacted (FR-033)",
+    )
+    attach_log.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    attach_log.set_defaults(_handler=_attach_log_command)
+
+    detach_log = subparsers.add_parser(
+        "detach-log",
+        help="stop piping pane output to the host log file",
+        description="stop piping pane output and mark the attachment detached (FR-037a)",
+    )
+    detach_log.add_argument("--target", required=True, help=_AGENT_ID_HELP)
+    detach_log.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+    detach_log.set_defaults(_handler=_detach_log_command)
 
     return parser
 
@@ -1082,6 +1138,17 @@ def _register_self_command(args: argparse.Namespace) -> int:
     from .agents.client_resolve import resolve_pane_composite_key
     from .agents.errors import RegistrationError
 
+    # Pre-flight CLI guard: ``--log`` only meaningful with ``--attach-log``.
+    # Surface this BEFORE socket resolution so the operator sees a clean
+    # bad_request rather than daemon_unavailable when typing the wrong flag.
+    if hasattr(args, "log") and not getattr(args, "attach_log", False):
+        _emit_local_error(
+            "bad_request",
+            "register-self: --log requires --attach-log",
+            args.json,
+        )
+        return 3
+
     _, resolved = _resolve_socket_with_paths()
     socket_path = resolved.path
 
@@ -1141,13 +1208,23 @@ def _register_self_command(args: argparse.Namespace) -> int:
         if hasattr(args, ns_attr):
             params[wire_key] = getattr(args, ns_attr)
 
+    # FEAT-007 / FR-034: --attach-log opts into the atomic register+attach
+    # surface. The optional --log overrides the FR-005 default canonical path.
+    # We send a nested ``attach_log`` object the daemon recognizes; absent
+    # means no attach and the daemon falls back to FEAT-006-only behavior.
+    if getattr(args, "attach_log", False):
+        attach_log_payload: dict[str, Any] = {}
+        if hasattr(args, "log"):
+            attach_log_payload["log_path"] = args.log
+        params["attach_log"] = attach_log_payload
+
     try:
         result = send_request(
             socket_path,
             "register_agent",
             params,
             connect_timeout=1.0,
-            read_timeout=5.0,
+            read_timeout=10.0,
         )
     except DaemonUnavailable:
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
@@ -1169,6 +1246,13 @@ def _register_self_command(args: argparse.Namespace) -> int:
         print(f"project_path={_scrub_for_tsv(result.get('project_path', ''))}")
         print(f"parent_agent_id={result.get('parent_agent_id') or '-'}")
         print(f"created_or_reactivated={result.get('created_or_reactivated')}")
+        attach_block = result.get("attach_log")
+        if attach_block is not None:
+            print(
+                f"attached attachment_id={attach_block.get('attachment_id')} "
+                f"path={attach_block.get('log_path')} "
+                f"status={attach_block.get('status')}"
+            )
     return 0
 
 
@@ -1371,6 +1455,184 @@ def _send_set_command(
         print(f"prior_value={result.get('prior_value')}")
         print(f"new_value={result.get('new_value')}")
         print(f"audit_appended={str(result.get('audit_appended', False)).lower()}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# FEAT-007 — attach-log / detach-log (FR-031, FR-032, FR-033, FR-037a)
+# ---------------------------------------------------------------------------
+
+
+def _attach_log_command(args: argparse.Namespace) -> int:
+    """Dispatch attach-log / --status / --preview based on supplied flags."""
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    target_err = _validate_target_shape(args.target, args.json)
+    if target_err is not None:
+        return target_err
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    schema_version = int(MAX_SUPPORTED_SCHEMA_VERSION)
+
+    # --status mode (FR-032): universal read-only inspection.
+    if args.status:
+        if hasattr(args, "preview") or hasattr(args, "log"):
+            _emit_local_error(
+                "bad_request",
+                "attach-log: --status is mutually exclusive with --preview / --log",
+                args.json,
+            )
+            return 3
+        params = {
+            "schema_version": schema_version,
+            "agent_id": args.target,
+        }
+        try:
+            result = send_request(
+                socket_path,
+                "attach_log_status",
+                params,
+                connect_timeout=1.0,
+                read_timeout=5.0,
+            )
+        except DaemonUnavailable:
+            print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            return 2
+        except DaemonError as exc:
+            return _emit_daemon_error(exc, args.json)
+        if args.json:
+            print(json.dumps({"ok": True, "result": result}))
+        else:
+            attachment = result.get("attachment")
+            offset = result.get("offset")
+            print(f"agent_id={result.get('agent_id')}")
+            if attachment is None:
+                print("attachment=null offset=null")
+            else:
+                print(f"attachment_id={attachment.get('attachment_id')}")
+                print(f"path={attachment.get('log_path')}")
+                print(f"status={attachment.get('status')}")
+                print(f"source={attachment.get('source')}")
+                print(f"attached_at={attachment.get('attached_at')}")
+                print(f"last_status_at={attachment.get('last_status_at')}")
+                if offset is not None:
+                    print(f"byte_offset={offset.get('byte_offset')}")
+                    print(f"line_offset={offset.get('line_offset')}")
+                    print(f"last_event_offset={offset.get('last_event_offset')}")
+                    fi = offset.get("file_inode")
+                    print(f"file_inode={fi if fi is not None else '-'}")
+                    print(f"file_size_seen={offset.get('file_size_seen')}")
+        return 0
+
+    # --preview mode (FR-033).
+    if hasattr(args, "preview"):
+        if hasattr(args, "log"):
+            _emit_local_error(
+                "bad_request",
+                "attach-log: --preview is mutually exclusive with --log",
+                args.json,
+            )
+            return 3
+        n = args.preview
+        if not isinstance(n, int) or n < 1 or n > 200:
+            _emit_local_error(
+                "value_out_of_set",
+                f"--preview N must be between 1 and 200; got {n}",
+                args.json,
+            )
+            return 3
+        params = {
+            "schema_version": schema_version,
+            "agent_id": args.target,
+            "lines": int(n),
+        }
+        try:
+            result = send_request(
+                socket_path,
+                "attach_log_preview",
+                params,
+                connect_timeout=1.0,
+                read_timeout=5.0,
+            )
+        except DaemonUnavailable:
+            print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            return 2
+        except DaemonError as exc:
+            return _emit_daemon_error(exc, args.json)
+        if args.json:
+            print(json.dumps({"ok": True, "result": result}))
+        else:
+            for line in result.get("lines", []):
+                print(_scrub_for_tsv(line) if "\n" in line or "\t" in line else line)
+        return 0
+
+    # Default: attach mode (FR-031).
+    params = {
+        "schema_version": schema_version,
+        "agent_id": args.target,
+    }
+    if hasattr(args, "log"):
+        params["log_path"] = args.log
+    try:
+        result = send_request(
+            socket_path,
+            "attach_log",
+            params,
+            connect_timeout=1.0,
+            read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        verb = "attached" if result.get("is_new") else "already-attached"
+        print(f"{verb} agent_id={result.get('agent_id')}")
+        print(f"attachment_id={result.get('attachment_id')}")
+        print(f"path={result.get('log_path')}")
+        print(f"source={result.get('source')}")
+        print(f"status={result.get('status')}")
+    return 0
+
+
+def _detach_log_command(args: argparse.Namespace) -> int:
+    """Send the detach_log socket method and render the response (FR-037a)."""
+    from .config_doctor import MAX_SUPPORTED_SCHEMA_VERSION
+
+    target_err = _validate_target_shape(args.target, args.json)
+    if target_err is not None:
+        return target_err
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    params = {
+        "schema_version": int(MAX_SUPPORTED_SCHEMA_VERSION),
+        "agent_id": args.target,
+    }
+    try:
+        result = send_request(
+            socket_path,
+            "detach_log",
+            params,
+            connect_timeout=1.0,
+            read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+    if args.json:
+        print(json.dumps({"ok": True, "result": result}))
+    else:
+        print(f"detached agent_id={result.get('agent_id')}")
+        print(f"attachment_id={result.get('attachment_id')}")
+        print(f"path={result.get('log_path')}")
+        print(f"status={result.get('status')}")
     return 0
 
 
