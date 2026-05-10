@@ -414,6 +414,12 @@ Classification is rule-based for MVP. It should be conservative and
 transparent. The daemon may emit uncertain events, but it must not turn
 uncertain classification into automatic command execution.
 
+The pipeline above is implemented in FEAT-008. See
+`specs/008-event-ingestion-follow/plan.md` for the implementation
+detail (atomic SQLite + offset commit, FR-029 JSONL retry watermark,
+FR-040 buffered-retry on degraded SQLite, FR-014 debounce semantics,
+FR-013 / FR-016 synthesized event types).
+
 ## 14. Routing Model
 
 AgentTower routes structured messages between agents. The main MVP routing path

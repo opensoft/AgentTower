@@ -49,11 +49,14 @@ class TestSocketSourceOrdering:
     """``SOCKET_SOURCE=`` is appended AFTER the FEAT-001 six-line block."""
 
     def test_six_existing_lines_in_declared_paths_order_unchanged(self, env):
+        """First seven lines mirror the FEAT-001..005 ``Paths`` field
+        order. FEAT-008 appends ten ``EVENTS_*`` lines after; this test
+        only checks the first seven for stability."""
         proc = _run_paths(env)
         assert proc.returncode == 0
         lines = proc.stdout.rstrip("\n").splitlines()
-        # First six lines mirror the declared `Paths` field order
-        assert len(lines) == 7
+        # FEAT-001 + FEAT-005 SOCKET_SOURCE + FEAT-008 EVENTS_* = 17 total.
+        assert len(lines) == 17
         assert lines[0].startswith("CONFIG_FILE=")
         assert lines[1].startswith("STATE_DB=")
         assert lines[2].startswith("EVENTS_FILE=")
@@ -61,11 +64,16 @@ class TestSocketSourceOrdering:
         assert lines[4].startswith("SOCKET=")
         assert lines[5].startswith("CACHE_DIR=")
         assert lines[6].startswith("SOCKET_SOURCE=")
+        # After SOCKET_SOURCE come the FEAT-008 EVENTS_* lines.
+        assert lines[7].startswith("EVENTS_")
 
-    def test_socket_source_is_the_last_line(self, env):
+    def test_socket_source_is_the_last_pre_events_line(self, env):
+        """SOCKET_SOURCE is the FINAL of the FEAT-001..005 lines.
+        FEAT-008 appends EVENTS_* keys after it (FR-019 ordering of the
+        original block is preserved)."""
         proc = _run_paths(env)
-        last = proc.stdout.rstrip("\n").splitlines()[-1]
-        assert last.startswith("SOCKET_SOURCE=")
+        lines = proc.stdout.rstrip("\n").splitlines()
+        assert lines[6].startswith("SOCKET_SOURCE=")
 
     def test_no_json_mode_introduced(self, env):
         """``config paths`` does not add ``--json`` in FEAT-005."""
@@ -96,8 +104,10 @@ class TestHostDefault:
         env.setdefault("AGENTTOWER_TEST_DOCKER_FAKE", "1")
         proc = _run_paths(env)
         assert proc.returncode == 0
-        last = proc.stdout.rstrip("\n").splitlines()[-1]
-        assert last == "SOCKET_SOURCE=host_default"
+        # SOCKET_SOURCE is line 7 (FEAT-001..005 block); FEAT-008
+        # appends 10 EVENTS_* lines after, so it's no longer last.
+        lines = proc.stdout.rstrip("\n").splitlines()
+        assert lines[6] == "SOCKET_SOURCE=host_default"
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +124,10 @@ class TestEnvOverride:
             env["AGENTTOWER_SOCKET"] = str(sock_path)
             proc = _run_paths(env)
             assert proc.returncode == 0
-            last = proc.stdout.rstrip("\n").splitlines()[-1]
-            assert last == "SOCKET_SOURCE=env_override"
+            # SOCKET_SOURCE is line 7 (FEAT-001..005 block); FEAT-008
+            # appends EVENTS_* lines after.
+            lines = proc.stdout.rstrip("\n").splitlines()
+            assert lines[6] == "SOCKET_SOURCE=env_override"
         finally:
             s.close()
             if sock_path.exists():

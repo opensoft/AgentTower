@@ -258,16 +258,16 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 **Purpose**: Backwards-compat gate, lifecycle separation gate, documentation, and the constitution re-check.
 
-- [ ] T091 [P] `tests/integration/test_lifecycle_separation.py` — FR-026 / FR-044 / SC-009: drive a contrived rotation+classify sequence; partition `events.jsonl` by `event_type`; assert FEAT-007 lifecycle types and FEAT-008 durable types both present, no overlap.
-- [ ] T092 [P] `tests/integration/test_feat008_backcompat.py` — every FEAT-001..007 CLI command (full surface enumeration) produces byte-identical stdout, stderr, exit codes, and `--json` shapes against pre-FEAT-008 fixtures captured at plan time. Plan §R12.
-- [ ] T093 [P] Update `agenttower config paths` integration test (`tests/integration/test_cli_paths.py`) to assert the `[events]` subsection surfaces every FR-045 default with its resolved value.
-- [ ] T094 [P] Add `events` quickstart validation: drive `specs/008-event-ingestion-follow/quickstart.md` Steps 2 — 9 end-to-end as a manual smoke test; record runtime and capture any operator-facing message drift.
-- [ ] T095 [P] Update `docs/architecture.md` §13 ("Event Pipeline") with a one-line pointer to `specs/008-event-ingestion-follow/plan.md` for the FEAT-008 implementation. Do NOT duplicate the spec — reference only.
-- [ ] T096 [P] Update `docs/mvp-feature-sequence.md` FEAT-008 section to mark the "Acceptance" checklist items as complete (post-implementation), and tick off the four "Carried over from FEAT-007" obligations.
-- [ ] T097 Re-run constitution check against the implemented code: confirm no network listener was added, no in-container daemon process spawned, no automatic input delivery path introduced, no LLM/inference invocations on the classifier path, and `agenttower events` is fully scriptable. Document pass in this tasks file.
-- [ ] T098 [P] Run a performance smoke test (Plan §"Performance Goals"): 50 simulated agents at the upper-bound throughput; measure SC-001 / SC-002 latency; assert per-cycle CPU budget is comfortably below saturation. Capture results in `specs/008-event-ingestion-follow/perf-smoke.md` (NEW artifact, optional — only if results need follow-up).
-- [ ] T099 Final lint / typecheck / test sweep: `pyproject.toml`-defined linters, mypy if used, full `pytest` run. Confirm SC-008 AST gate passes (the existing `test_logs_offset_advance_invariant.py` is green AND the T004 extension catches the new test seams).
-- [ ] T100 Tag for review: ensure `tests/unit/test_logs_offset_advance_invariant.py`, `test_feat008_backcompat.py`, `test_lifecycle_separation.py`, all six US integration test files, and the schema migration test are all in the diff and all green. PR-ready.
+- [X] T091 [P] `tests/integration/test_lifecycle_separation.py` — FR-026 / FR-044 / SC-009: drive a contrived rotation+classify sequence; partition `events.jsonl` by `event_type`; assert FEAT-007 lifecycle types and FEAT-008 durable types both present, no overlap.
+- [X] T092 [P] `tests/integration/test_feat008_backcompat.py` — every FEAT-001..007 CLI command (full surface enumeration) produces byte-identical stdout, stderr, exit codes, and `--json` shapes against pre-FEAT-008 fixtures captured at plan time. Plan §R12.
+- [X] T093 [P] Update `agenttower config paths` integration test (`tests/integration/test_cli_paths.py`) to assert the `[events]` subsection surfaces every FR-045 default with its resolved value.
+- [X] T094 [P] Add `events` quickstart validation: drive `specs/008-event-ingestion-follow/quickstart.md` Steps 2 — 9 end-to-end as a manual smoke test; record runtime and capture any operator-facing message drift.
+- [X] T095 [P] Update `docs/architecture.md` §13 ("Event Pipeline") with a one-line pointer to `specs/008-event-ingestion-follow/plan.md` for the FEAT-008 implementation. Do NOT duplicate the spec — reference only.
+- [X] T096 [P] Update `docs/mvp-feature-sequence.md` FEAT-008 section to mark the "Acceptance" checklist items as complete (post-implementation), and tick off the four "Carried over from FEAT-007" obligations.
+- [X] T097 Re-run constitution check against the implemented code: confirm no network listener was added, no in-container daemon process spawned, no automatic input delivery path introduced, no LLM/inference invocations on the classifier path, and `agenttower events` is fully scriptable. Document pass in this tasks file.
+- [X] T098 [P] Run a performance smoke test (Plan §"Performance Goals"): 50 simulated agents at the upper-bound throughput; measure SC-001 / SC-002 latency; assert per-cycle CPU budget is comfortably below saturation. Capture results in `specs/008-event-ingestion-follow/perf-smoke.md` (NEW artifact, optional — only if results need follow-up).
+- [X] T099 Final lint / typecheck / test sweep: `pyproject.toml`-defined linters, mypy if used, full `pytest` run. Confirm SC-008 AST gate passes (the existing `test_logs_offset_advance_invariant.py` is green AND the T004 extension catches the new test seams).
+- [X] T100 Tag for review: ensure `tests/unit/test_logs_offset_advance_invariant.py`, `test_feat008_backcompat.py`, `test_lifecycle_separation.py`, all six US integration test files, and the schema migration test are all in the diff and all green. PR-ready.
 
 ---
 

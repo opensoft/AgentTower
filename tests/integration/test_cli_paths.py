@@ -40,20 +40,37 @@ def _parse_kv(stdout: str) -> dict[str, str]:
 # byte-for-byte unchanged (FR-019, FR-026, SC-007).
 EXPECTED_KEYS = ("CONFIG_FILE", "STATE_DB", "EVENTS_FILE", "LOGS_DIR", "SOCKET", "CACHE_DIR")
 EXPECTED_KEYS_WITH_SOCKET_SOURCE = EXPECTED_KEYS + ("SOCKET_SOURCE",)
+# FEAT-008 FR-045: the [events] block defaults are surfaced after
+# SOCKET_SOURCE. Order is locked so eval-friendly consumers can rely
+# on it (matches the order in cli._config_paths).
+EVENTS_KEYS = (
+    "EVENTS_READER_CYCLE_WALLCLOCK_CAP_SECONDS",
+    "EVENTS_PER_CYCLE_BYTE_CAP_BYTES",
+    "EVENTS_PER_EVENT_EXCERPT_CAP_BYTES",
+    "EVENTS_DEBOUNCE_ACTIVITY_WINDOW_SECONDS",
+    "EVENTS_PANE_EXITED_GRACE_SECONDS",
+    "EVENTS_LONG_RUNNING_GRACE_SECONDS",
+    "EVENTS_DEFAULT_PAGE_SIZE",
+    "EVENTS_MAX_PAGE_SIZE",
+    "EVENTS_FOLLOW_LONG_POLL_MAX_SECONDS",
+    "EVENTS_FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS",
+)
+ALL_EXPECTED_KEYS = EXPECTED_KEYS_WITH_SOCKET_SOURCE + EVENTS_KEYS
 
 
-def test_config_paths_outputs_seven_lines_in_fixed_order(tmp_path: Path) -> None:
+def test_config_paths_outputs_seventeen_lines_in_fixed_order(tmp_path: Path) -> None:
     env = _isolated_env(tmp_path)
     proc = _run_paths(env)
     assert proc.returncode == 0
     lines = proc.stdout.splitlines()
-    assert len(lines) == 7, lines
-    for line, key in zip(lines, EXPECTED_KEYS_WITH_SOCKET_SOURCE):
+    # 7 FEAT-001..005 keys + 10 FEAT-008 events keys = 17.
+    assert len(lines) == len(ALL_EXPECTED_KEYS), lines
+    for line, key in zip(lines, ALL_EXPECTED_KEYS):
         assert line.startswith(f"{key}="), line
         assert line.count("=") >= 1
         assert " " not in line
-    # FR-019: SOCKET_SOURCE MUST be the last line
-    assert lines[-1].startswith("SOCKET_SOURCE=")
+    # FR-019: SOCKET_SOURCE is the 7th line (still ends the FEAT-005 block).
+    assert lines[6].startswith("SOCKET_SOURCE=")
 
 
 def test_config_paths_values_are_absolute_under_namespace(tmp_path: Path) -> None:
@@ -73,10 +90,14 @@ def test_config_paths_eval_compatible(tmp_path: Path) -> None:
     proc = _run_paths(env)
     assert proc.returncode == 0
     kv = _parse_kv(proc.stdout)
-    # FR-019: the seven keys are exactly the six FEAT-001 keys plus SOCKET_SOURCE.
-    assert set(kv.keys()) == set(EXPECTED_KEYS_WITH_SOCKET_SOURCE)
+    # FR-019 + FEAT-008 FR-045: the seven FEAT-001..005 keys plus the
+    # ten EVENTS_* keys.
+    assert set(kv.keys()) == set(ALL_EXPECTED_KEYS)
     # SOCKET_SOURCE values are closed-set tokens per FR-001.
     assert kv["SOCKET_SOURCE"] in {"env_override", "mounted_default", "host_default"}
+    # Default values for [events] settings come from the events module.
+    assert kv["EVENTS_READER_CYCLE_WALLCLOCK_CAP_SECONDS"] == "1.0"
+    assert kv["EVENTS_DEFAULT_PAGE_SIZE"] == "50"
     for value in kv.values():
         assert "'" not in value
         assert '"' not in value
@@ -105,8 +126,8 @@ def test_initialized_emits_no_stderr_note(tmp_path: Path) -> None:
     proc = _run_paths(env)
     assert proc.returncode == 0
     assert proc.stderr == ""
-    # FR-019: six FEAT-001 lines + the new trailing SOCKET_SOURCE= line.
-    assert proc.stdout.count("\n") == 7
+    # FR-019: six FEAT-001 lines + SOCKET_SOURCE + 10 FEAT-008 EVENTS_* lines.
+    assert proc.stdout.count("\n") == len(ALL_EXPECTED_KEYS)
 
 
 def test_xdg_config_home_redirects_only_config(tmp_path: Path) -> None:

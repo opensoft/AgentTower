@@ -191,6 +191,22 @@ def _config_paths(args: argparse.Namespace) -> int:
     print(f"SOCKET={resolved.path}")
     print(f"CACHE_DIR={paths.cache_dir}")
     print(f"SOCKET_SOURCE={resolved.source}")
+    # FEAT-008 FR-045: surface every [events] default with its resolved
+    # value so operators can see the effective configuration. Lines are
+    # appended to the existing FEAT-001..005 keys; FR-019 KEY ordering
+    # for the original seven entries is preserved.
+    from .config import load_events_block
+    events_cfg = load_events_block(paths.config_file)
+    print(f"EVENTS_READER_CYCLE_WALLCLOCK_CAP_SECONDS={events_cfg.reader_cycle_wallclock_cap_seconds}")
+    print(f"EVENTS_PER_CYCLE_BYTE_CAP_BYTES={events_cfg.per_cycle_byte_cap_bytes}")
+    print(f"EVENTS_PER_EVENT_EXCERPT_CAP_BYTES={events_cfg.per_event_excerpt_cap_bytes}")
+    print(f"EVENTS_DEBOUNCE_ACTIVITY_WINDOW_SECONDS={events_cfg.debounce_activity_window_seconds}")
+    print(f"EVENTS_PANE_EXITED_GRACE_SECONDS={events_cfg.pane_exited_grace_seconds}")
+    print(f"EVENTS_LONG_RUNNING_GRACE_SECONDS={events_cfg.long_running_grace_seconds}")
+    print(f"EVENTS_DEFAULT_PAGE_SIZE={events_cfg.default_page_size}")
+    print(f"EVENTS_MAX_PAGE_SIZE={events_cfg.max_page_size}")
+    print(f"EVENTS_FOLLOW_LONG_POLL_MAX_SECONDS={events_cfg.follow_long_poll_max_seconds}")
+    print(f"EVENTS_FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS={events_cfg.follow_session_idle_timeout_seconds}")
     if not paths.state_db.exists():
         print(
             "note: agenttower has not been initialized; run `agenttower config init`",
