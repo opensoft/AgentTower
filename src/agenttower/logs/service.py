@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 from ..agents.errors import RegistrationError
 from ..agents.identifiers import validate_agent_id_shape
@@ -57,9 +57,6 @@ from .pipe_pane_state import (
     parse_list_panes_output,
     sanitize_prior_pipe_target,
 )
-
-
-_SQLITE_CONSTRAINT_PRIMARYKEY: Final[int] = 1555
 
 
 def _now_iso() -> str:
@@ -902,6 +899,8 @@ class LogService:
 
     def _resolve_active_container(self, container_id: str) -> dict[str, Any]:
         """Return container row's relevant fields (mounts_json, bench_user, tmux_present)."""
+        from ..state.bench_user import normalize_bench_user_for_exec
+
         conn = self.connection_factory()
         try:
             cur = conn.execute(
@@ -923,7 +922,12 @@ class LogService:
             raise RegistrationError(
                 "agent_inactive", f"container {container_id!r} is inactive"
             )
-        bench_user = row[2] or "root"
+        # Docker ``Config.User`` may be ``user:uid`` (or whitespace/empty);
+        # strip the ``:uid`` suffix and fall back to ``root`` so canonical
+        # path construction and ``docker exec -u`` get a bare username.
+        # Mirrors ``AgentService._select_active_container_for_attach`` and
+        # ``logs.orphan_recovery._bench_containers``.
+        bench_user = normalize_bench_user_for_exec(row[2])
         # We don't have a persisted tmux_present field on containers in this
         # build; derive a default of None (treat as available unless explicitly
         # known otherwise). Future FEAT-003 may persist this.

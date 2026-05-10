@@ -1,8 +1,11 @@
 """FR-006 + FR-051 + FR-052 + FR-053 ``--log <path>`` validation.
 
 Mirrors FEAT-006 ``validate_project_path`` (FR-006) and adds the FEAT-007
-hardening rules: shell-meaningful byte rejection (FR-051), daemon-owned-root
-rejection (FR-052), special-filesystem rejection (FR-053).
+hardening rules: control-byte rejection (FR-051 — every C0 byte plus
+DEL is refused; printable shell metacharacters are NOT rejected here
+and instead pass through ``shlex.quote`` at the pipe-pane construction
+layer), daemon-owned-root rejection (FR-052), special-filesystem
+rejection (FR-053).
 
 Symlink-escape rejection (FR-050) lives in ``host_visibility.py`` because it
 needs the resolved mount Source root for context.

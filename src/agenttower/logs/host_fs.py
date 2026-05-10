@@ -182,22 +182,31 @@ def read_tail_lines(host_path: str, n: int, *, max_line_bytes: int = 65536) -> l
     max_buffer_bytes = (n + 1) * max_line_bytes
 
     with open(host_path, "rb") as f:
-        # Step backwards from end, accumulating until we have at least n+1 newlines
-        # (the +1 protects against the final partial line) OR we hit the
-        # buffer cap.
+        # Step backwards from end, accumulating until we have at least n+1
+        # newlines (the +1 protects against the final partial line) OR we hit
+        # the buffer cap. Chunks accumulate in a list and we ``b"".join()``
+        # once at the end — avoids the O(N²) ``data = chunk + data`` rebuild
+        # plus the O(N²) ``data.count(b"\n")`` rescan per iteration; newline
+        # totals are now tracked incrementally per chunk.
         block_size = 8192
-        data = b""
+        chunks: list[bytes] = []
+        total_bytes = 0
         offset = size
         newlines_seen = 0
-        while offset > 0 and newlines_seen <= n and len(data) < max_buffer_bytes:
+        while offset > 0 and newlines_seen <= n and total_bytes < max_buffer_bytes:
             read_bytes = min(block_size, offset)
             offset -= read_bytes
             f.seek(offset)
             chunk = f.read(read_bytes)
-            data = chunk + data
-            newlines_seen = data.count(b"\n")
+            chunks.append(chunk)
+            total_bytes += len(chunk)
+            newlines_seen += chunk.count(b"\n")
             if offset == 0:
                 break
+        # ``chunks`` was built in reverse (newest-to-oldest); reverse before
+        # joining so the byte order matches the original file layout.
+        chunks.reverse()
+        data = b"".join(chunks)
         # If the cap stopped us before we found enough newlines, drop the
         # leading partial line so callers get cleanly-bounded output. The
         # subsequent split + ``[-n:]`` slice already handles the case
