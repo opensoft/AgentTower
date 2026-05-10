@@ -108,6 +108,44 @@ Opensoft namespace:
 Bench containers mount the daemon socket and, preferably, the state log
 directory. No network listener is required for MVP.
 
+### 4.1 UID-mapping invariant for bench containers
+
+The host daemon reads pane log files written by in-container `tmux
+pipe-pane` processes via the bind mount. For the daemon's read to
+succeed, **the UID that wrote the log file must be reachable from the
+daemon's UID** — i.e., the host UID and the in-container UID must be
+the same value (or the host daemon must be able to read files owned
+by the mapped UID).
+
+Two supported configurations:
+
+1. **No userns remap** (default): the bench container runs with
+   `--user $(id -u):$(id -g)` so the in-container process and the host
+   daemon share the same UID. The daemon reads its own files; SO_PEERCRED
+   on the mounted socket sees the same UID on both sides. This is the
+   recommended setup.
+
+2. **Userns remap**: if the operator deploys with Docker's
+   `--userns=remap:<user>` (or `userns_mode=host` with a manual
+   `--user X:Y` that diverges from the host UID), the in-container
+   process writes log files with the *remapped host UID* (e.g.,
+   `100000`). The host daemon (running as e.g. UID `1000`) cannot read
+   these files; the FEAT-008 reader surfaces a per-attachment
+   `failure_class=PermissionError` (FR-038), but the root cause is
+   silent at the spec level.
+
+   Operators using userns-remapped containers MUST either:
+   - Map the in-container UID to the daemon's host UID (e.g., add
+     `userns-remap` config that rewrites `0` → daemon-UID), OR
+   - Run the daemon as `root` (NOT recommended — undermines the
+     local-first least-privilege constitution).
+
+The `agenttower config doctor` command (FEAT-005) currently checks
+socket reachability but **does not yet** check log-file readability;
+operators encountering EACCES errors should manually verify
+`stat $(ls ~/.local/state/opensoft/agenttower/logs/*/*.log | head -1)`
+matches the daemon's UID.
+
 ## 5. Components
 
 ### 5.1 Host Daemon

@@ -58,6 +58,7 @@ from . import classifier_rules as classifier_rules_module
 from .classifier import classify
 from .dao import EventRow, insert_event, mark_jsonl_appended, select_pending_jsonl
 from .debounce import DebounceManager, PendingEvent
+from .session_registry import FollowSessionRegistry
 from ..logs import host_fs as host_fs_mod
 from ..logs import reader_recovery
 from ..socket_api.lifecycle import LifecycleLogger
@@ -109,7 +110,7 @@ class EventsReader:
         state_db: Path,
         events_file: Path,
         lifecycle_logger: LifecycleLogger | None,
-        follow_session_registry: Any | None = None,
+        follow_session_registry: FollowSessionRegistry | None = None,
         clock: Clock | None = None,
         cycle_cap_seconds: float = READER_CYCLE_WALLCLOCK_CAP_SECONDS,
         per_cycle_byte_cap_bytes: int = PER_CYCLE_BYTE_CAP_BYTES,
@@ -144,6 +145,14 @@ class EventsReader:
         # per running task; once an eligible event lands AFTER a
         # ``long_running`` emission, the marker resets so a later
         # quiet period can emit again.
+        #
+        # P10 (review MEDIUM defensive) — these sets are only mutated
+        # from the reader thread today (single-writer), so no lock is
+        # strictly required. They are read by other threads only via
+        # ``status_snapshot`` which doesn't expose them. If a future
+        # refactor introduces a second writer (e.g., per-attachment
+        # workers), wrap these accesses with ``self._lock`` like the
+        # other shared snapshot fields.
         self._pane_exited_emitted: set[str] = set()  # attachment_ids
         self._long_running_marked: set[str] = set()  # attachment_ids
 
@@ -277,6 +286,12 @@ class EventsReader:
                 _LOG.exception("follow-session janitor failed")
 
         conn = sqlite3.connect(self._state_db, isolation_level=None)
+        # P5 (review MEDIUM) — defensive PRAGMA re-application. WAL mode
+        # is file-level and persists across connections, but explicit
+        # re-set on each new connection costs nothing and guards against
+        # mode downgrades if the .db file is migrated.
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             attachments = la_state.select_actives(conn) if hasattr(
                 la_state, "select_actives"
@@ -456,6 +471,50 @@ class EventsReader:
             new_bytes
         )
         if not complete_records:
+            # T7 (review HIGH) — long-line memory bound: if the cycle
+            # read PER_CYCLE_BYTE_CAP_BYTES worth of bytes and found
+            # ZERO complete records, the on-disk file has a single
+            # un-terminated line longer than the cycle byte cap. Without
+            # an escape hatch, the reader would re-read the same N bytes
+            # every cycle indefinitely, never advancing offsets and
+            # never emitting an event for content beyond the cap.
+            #
+            # Force-emit a one-time synthetic ``activity`` event with the
+            # excerpt-cap-truncated record-fragment, advance offsets past
+            # the consumed bytes, and continue. This bounds memory pressure
+            # at the per-cycle cap and prevents a runaway agent from
+            # starving other attachments.
+            if len(new_bytes) >= self._byte_cap:
+                try:
+                    record_text = new_bytes.decode("utf-8", errors="replace")
+                except Exception:
+                    record_text = ""
+                outcome = classify(record_text)
+                forced = self._debounce.submit(
+                    attachment_id=attachment.attachment_id,
+                    outcome=outcome,
+                    observed_at=now_iso,
+                    monotonic=now_monotonic,
+                    byte_range_start=offset_row.byte_offset,
+                    byte_range_end=offset_row.byte_offset + len(new_bytes),
+                    line_offset_start=offset_row.line_offset,
+                    line_offset_end=offset_row.line_offset,
+                )
+                if forced:
+                    advance_bytes = len(new_bytes)
+                    advance_lines = 0
+                    complete_records = []  # no real records to commit
+                    events_to_emit_forced = forced
+                    # Fall through to the commit path with these synthetic
+                    # events; mirror the normal flow.
+                    return self._commit_forced_long_line(
+                        conn, attachment=attachment,
+                        offset_row=offset_row,
+                        events_to_emit=events_to_emit_forced,
+                        advance_bytes=advance_bytes,
+                        now_iso=now_iso,
+                        now_monotonic=now_monotonic,
+                    )
             return result  # only partial-line bytes; re-read next cycle (FR-005)
 
         # ----- Steps 7-9: classify, debounce, atomic commit per event -----
@@ -633,6 +692,88 @@ class EventsReader:
                 )
 
         result.events_emitted = len(committed_event_ids)
+        return result
+
+    # ------------------------------------------------------------------
+    # T7 (review HIGH) — long-line escape hatch
+    # ------------------------------------------------------------------
+
+    def _commit_forced_long_line(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        attachment: la_state.LogAttachmentRecord,
+        offset_row: lo_state.LogOffsetRecord,
+        events_to_emit: list[PendingEvent],
+        advance_bytes: int,
+        now_iso: str,
+        now_monotonic: float,  # noqa: ARG002
+    ) -> _AttachmentCycleResult:
+        """Commit one synthetic long-line event + advance offsets.
+
+        Used only when a cycle read ``PER_CYCLE_BYTE_CAP_BYTES`` of
+        bytes WITHOUT finding a complete record. Forces forward
+        progress so a runaway no-newline agent does not starve other
+        attachments.
+        """
+        result = _AttachmentCycleResult()
+        new_byte_offset = offset_row.byte_offset + advance_bytes
+        new_line_offset = offset_row.line_offset
+        new_last_event_offset = (
+            events_to_emit[-1].byte_range_end
+            if events_to_emit
+            else offset_row.last_event_offset
+        )
+        committed_event_ids: list[tuple[int, EventRow]] = []
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for ev in events_to_emit:
+                    row = EventRow(
+                        event_id=0,
+                        event_type=ev.event_type,
+                        agent_id=attachment.agent_id,
+                        attachment_id=attachment.attachment_id,
+                        log_path=attachment.log_path,
+                        byte_range_start=ev.byte_range_start,
+                        byte_range_end=ev.byte_range_end,
+                        line_offset_start=ev.line_offset_start,
+                        line_offset_end=ev.line_offset_end,
+                        observed_at=ev.observed_at,
+                        record_at=None,
+                        excerpt=ev.excerpt,
+                        classifier_rule_id=ev.rule_id,
+                        debounce_window_id=ev.debounce_window_id,
+                        debounce_collapsed_count=ev.debounce_collapsed_count,
+                        debounce_window_started_at=ev.debounce_window_started_at,
+                        debounce_window_ended_at=ev.debounce_window_ended_at,
+                        schema_version=1,
+                        jsonl_appended_at=None,
+                    )
+                    new_event_id = insert_event(conn, row)
+                    committed_event_ids.append((new_event_id, row))
+                lo_state.advance_offset(
+                    conn,
+                    agent_id=attachment.agent_id,
+                    log_path=attachment.log_path,
+                    byte_offset=new_byte_offset,
+                    line_offset=new_line_offset,
+                    last_event_offset=new_last_event_offset,
+                    file_inode=offset_row.file_inode,
+                    file_size_seen=offset_row.file_size_seen,
+                    last_output_at=now_iso,
+                    timestamp=now_iso,
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.Error:
+            result.failed = True
+            result.failure_class = "sqlite_commit"
+            return result
+        result.events_emitted = len(committed_event_ids)
+        result.bytes_read = advance_bytes
         return result
 
     # ------------------------------------------------------------------
@@ -992,13 +1133,23 @@ def _split_complete_records(
     Partial trailing bytes (no terminating newline) are NOT included
     in ``records`` and are NOT counted toward ``advance_bytes``;
     they remain on disk and are re-read on the next cycle (FR-005).
+
+    T6 (review HIGH) — PTY streams emit ``\\r\\n`` line endings; the
+    trailing ``\\r`` is stripped from each record so anchored rule
+    patterns (e.g., ``waiting_for_input.v1`` ending on ``\\?\\s*$``)
+    match cleanly. Byte offsets advance over the original ``\\r\\n``
+    pair so persistence stays aligned with the on-disk file.
     """
     if not raw:
         return [], 0, 0
     parts = raw.split(b"\n")
     # parts[-1] is the trailing partial (or empty if raw ends in \n).
-    complete = parts[:-1]
-    advance = sum(len(r) for r in complete) + len(complete)  # +1 per \n
+    complete_raw = parts[:-1]
+    # Strip trailing \r from each record (T6); offsets are still
+    # computed against the on-disk byte length, so we record advance
+    # against the pre-strip lengths.
+    complete = [r[:-1] if r.endswith(b"\r") else r for r in complete_raw]
+    advance = sum(len(r) for r in complete_raw) + len(complete_raw)  # +1 per \n
     return complete, advance, len(complete)
 
 
@@ -1044,3 +1195,6 @@ def _list_active_attachments(
         if full is not None and full.status == "active":
             out.append(full)
     return out
+
+
+__all__ = ["EventsReader", "ReaderStatusSnapshot"]

@@ -465,6 +465,14 @@ def _run(args: argparse.Namespace) -> int:
             lifecycle_logger=logger,
             follow_session_registry=follow_registry,
         )
+        # C7 (review MEDIUM) — the reader thread is started BEFORE the
+        # control socket binds (~10ms window). Events emitted in this
+        # window are durably persisted to SQLite + JSONL. The first
+        # ``events.follow_open`` call after the socket comes up sees
+        # them via the documented ``--since`` backlog mechanism. No
+        # follower can subscribe before the socket is bound, so no
+        # event is "missed" — they're just observed via the backlog
+        # path rather than the live notify.
         events_reader.start()
 
         ctx = _build_context(

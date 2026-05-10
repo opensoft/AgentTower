@@ -13,6 +13,7 @@ calls :func:`classify` once.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -22,6 +23,38 @@ from . import (
 )
 from . import classifier_rules as rules_module
 from ..logs.redaction import redact_one_line
+
+
+# T2 (review HIGH) — ANSI/CSI/OSC escape stripper for classifier input.
+# A PTY-piped log line may contain color codes (``\x1b[31m``), cursor
+# motion (``\x1b[K``), or OSC sequences (``\x1b]0;…\x07``) that would
+# break anchored regex matches in the classifier rule catalogue. The
+# stripper runs AFTER redaction (so any secret-bearing escapes are
+# already neutralized) and BEFORE the matcher walk; the resulting
+# ``redacted_record`` stored on the ``ClassifierOutcome`` is the
+# escape-stripped form so excerpt rendering is also safe.
+#
+# Patterns covered:
+#   * CSI: ``\x1b[`` + parameter bytes + final byte (``[0-9;:?]*[A-Za-z]``)
+#   * OSC: ``\x1b]`` + arbitrary bytes + ST (``\x07`` or ``\x1b\\``)
+#   * Lone ESC + single intermediate (``\x1b%`` charset switch, etc.)
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1b\[[0-9;:?<>=]*[A-Za-z]"      # CSI
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC terminated by BEL or ST
+    r"|\x1b[\x20-\x2f][\x30-\x7e]"     # ESC + intermediate + final
+    r"|\x1b[a-zA-Z]"                    # ESC + final byte (e.g. ESC c reset)
+)
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from *text*.
+
+    Public so the reader can pre-strip records before passing them to
+    the classifier (the rule patterns assume escape-free input).
+    """
+    if not text or "\x1b" not in text:
+        return text
+    return _ANSI_ESCAPE_RE.sub("", text)
 
 
 @dataclass(frozen=True)
@@ -104,7 +137,10 @@ def classify(
     The function is pure: same ``record`` (and same ``cap_bytes``)
     yields the same outcome every call.
     """
-    redacted = redact_one_line(record)
+    # T2 (review HIGH): redact first, then strip ANSI escapes so the
+    # rule catalogue's anchored patterns (``^Error:``, etc.) match
+    # cleanly against PTY-emitted color/cursor sequences.
+    redacted = strip_ansi(redact_one_line(record))
 
     # The catch-all matches non-empty records. Empty strings would
     # never be passed (FR-005 splits on ``\n`` and partial-line
@@ -133,3 +169,6 @@ def classify(
         excerpt=excerpt,
         redacted_record=redacted,
     )
+
+
+__all__ = ["ClassifierOutcome", "classify", "strip_ansi", "truncate_excerpt"]

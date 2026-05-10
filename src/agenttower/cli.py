@@ -886,7 +886,11 @@ def _build_parser() -> argparse.ArgumentParser:
     events_cmd.add_argument(
         "--target",
         default=None,
-        help="filter to one agent id (agt_<12 hex>)",
+        help=(
+            "filter to one agent id (agt_<12 hex>); "
+            "run 'agenttower list-agents' to find ids. "
+            "Omit to list events from all agents."
+        ),
     )
     events_cmd.add_argument(
         "--type",
@@ -1827,6 +1831,38 @@ def main(argv: list[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _sanitize_for_terminal(s: str) -> str:
+    """Escape control bytes before printing to a terminal (CRIT-1).
+
+    Log content (event excerpts) flows through the redaction utility but
+    is otherwise byte-for-byte from the PTY stream. ANSI/OSC escape
+    sequences (``\\x1b[...m``, ``\\x1b]0;...\\x07``), carriage returns,
+    backspaces, and tabs survive redaction. If we ``print()`` them
+    verbatim, an attacker-controlled log line can clear the operator's
+    screen, spoof the terminal title, or corrupt column alignment.
+
+    This helper produces a printable ASCII-safe string by escaping every
+    C0 control byte (\\x00-\\x1f) other than the printable forms
+    documented for events (we keep nothing — the human-mode renderer
+    pre-trims to a single line, so newlines should not survive). The
+    rendering uses ``\\xNN`` escapes that are immediately readable.
+
+    JSON output is unaffected — Python's json encoder already escapes
+    these as ``\\u00xx``.
+    """
+    if not s:
+        return ""
+    out: list[str] = []
+    for ch in s:
+        codepoint = ord(ch)
+        if codepoint < 0x20 or codepoint == 0x7f:
+            # C0 control set + DEL → escape.
+            out.append(f"\\x{codepoint:02x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 _VALID_EVENT_TYPES = frozenset(
     {
         "activity", "waiting_for_input", "completed", "error",
@@ -1988,7 +2024,13 @@ def _events_command(args: argparse.Namespace) -> int:
             ts = (event.get("observed_at") or "")[:19].replace("T", " ")
             label = event.get("agent_id") or ""
             etype = event.get("event_type") or ""
-            excerpt = (event.get("excerpt") or "").splitlines()[0] if event.get("excerpt") else ""
+            raw_excerpt = (
+                (event.get("excerpt") or "").splitlines()[0]
+                if event.get("excerpt")
+                else ""
+            )
+            # CRIT-1 — sanitize control bytes before printing to a terminal.
+            excerpt = _sanitize_for_terminal(raw_excerpt)
             print(f"{ts}  {label}  {etype:<22} {excerpt}")
         if next_cursor is not None:
             print(f"# next_cursor: {next_cursor}", file=sys.stderr)
@@ -2053,12 +2095,17 @@ def _events_follow_loop(args: argparse.Namespace, socket_path: Path) -> int:
             ts = (event.get("observed_at") or "")[:19].replace("T", " ")
             label = event.get("agent_id") or ""
             etype = event.get("event_type") or ""
-            excerpt = (
+            # CRIT-1 — sanitize control bytes before printing.
+            excerpt = _sanitize_for_terminal(
                 (event.get("excerpt") or "").splitlines()[0]
                 if event.get("excerpt")
                 else ""
             )
-            print(f"{ts}  {label}  {etype:<22} {excerpt}", flush=True)
+            print(
+                f"{_sanitize_for_terminal(ts)}  {_sanitize_for_terminal(label)}  "
+                f"{_sanitize_for_terminal(etype):<22} {excerpt}",
+                flush=True,
+            )
 
     try:
         # 1. Print backlog first (FR-033 — bounded backlog before live).

@@ -233,3 +233,6 @@ class DebounceManager:
         )
         del self._windows[key]
         return emitted
+
+
+__all__ = ["DebounceManager", "DebounceWindow", "PendingEvent"]

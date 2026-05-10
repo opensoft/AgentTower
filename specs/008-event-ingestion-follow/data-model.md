@@ -308,7 +308,11 @@ When SQLite is degraded for one or more attachments:
 }
 ```
 
-When JSONL is degraded:
+When JSONL is degraded (note: in MVP the daemon retries indefinitely
+and surfaces the condition only via this status field; a persistent
+degraded state — e.g., a permanently read-only mount — is NOT escalated
+to a lifecycle event in MVP. Operators should monitor `degraded_jsonl`
+externally if SLA-critical):
 
 ```json
 "events_persistence": {

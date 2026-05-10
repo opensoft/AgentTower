@@ -394,3 +394,17 @@ def select_event_by_id(
     cur = conn.execute(sql, (event_id,))
     row = cur.fetchone()
     return _row_to_event(row) if row else None
+
+
+__all__ = [
+    "EventRow",
+    "EventFilter",
+    "CursorError",
+    "encode_cursor",
+    "decode_cursor",
+    "insert_event",
+    "mark_jsonl_appended",
+    "select_events",
+    "select_pending_jsonl",
+    "select_event_by_id",
+]

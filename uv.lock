@@ -15,7 +15,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jsonschema", marker = "extra == 'test'", specifier = ">=4" },
+    { name = "jsonschema", marker = "extra == 'test'", specifier = ">=4,<5" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
 ]
 provides-extras = ["test"]

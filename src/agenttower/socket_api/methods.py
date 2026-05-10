@@ -803,9 +803,13 @@ def _events_follow_next(
         return err
     session = registry.get(session_id)
     if session is None:
+        # CRIT-4 — register the bad lookup against the sliding-window
+        # rate limiter. Generic message either way (no enumeration
+        # signal); the limiter just prevents thread-pool exhaustion
+        # under brute-force.
+        registry.is_rate_limited(now_monotonic=_time.monotonic())
         return errors.make_error(
-            errors.EVENTS_SESSION_UNKNOWN,
-            f"unknown follow session: {session_id}",
+            errors.EVENTS_SESSION_UNKNOWN, "unknown follow session"
         )
     now_mono = _time.monotonic()
     if session.expires_at_monotonic < now_mono:
@@ -815,6 +819,12 @@ def _events_follow_next(
             f"follow session {session_id} expired",
         )
 
+    # C4 (review MEDIUM) — clamp ``max_wait_seconds`` to the documented
+    # server-side budget. The CLI passes ``max_wait_seconds=1.0`` so
+    # SIGINT response stays bounded; bench-container scripts may pass
+    # higher values. We cap at FOLLOW_LONG_POLL_MAX_SECONDS so a single
+    # follower cannot hold a connection longer than the server-side
+    # documented limit, regardless of the client's read_timeout.
     max_wait = float(
         params.get("max_wait_seconds")
         or events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS
@@ -892,6 +902,8 @@ def _events_follow_close(
     ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
 ) -> dict[str, Any]:
     """``events.follow_close`` per C-EVT-004."""
+    import time as _time
+
     session_id = params.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         return errors.make_error(
@@ -902,9 +914,11 @@ def _events_follow_close(
         return err
     closed = registry.close(session_id)
     if not closed:
+        # CRIT-4 — register the bad lookup. Generic message; same
+        # rationale as ``_events_follow_next``.
+        registry.is_rate_limited(now_monotonic=_time.monotonic())
         return errors.make_error(
-            errors.EVENTS_SESSION_UNKNOWN,
-            f"unknown follow session: {session_id}",
+            errors.EVENTS_SESSION_UNKNOWN, "unknown follow session"
         )
     return errors.make_ok({})
 

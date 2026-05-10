@@ -254,8 +254,23 @@ agenttower events --target <id> --follow --json | jq -c 'select(.event_type=="er
 
 ### Time-bound query
 
+`--since` and `--until` accept ISO-8601 with an explicit offset
+(`Z` or `±HH:MM`). On GNU date (Linux):
+
 ```bash
 agenttower events --since "$(date -u -d '5 minutes ago' +%FT%TZ)"
+```
+
+On BSD date (macOS):
+
+```bash
+agenttower events --since "$(date -u -v-5M +%FT%TZ)"
+```
+
+Or supply an absolute timestamp directly:
+
+```bash
+agenttower events --since "2026-05-10T12:00:00Z"
 ```
 
 ### Reverse / paginate

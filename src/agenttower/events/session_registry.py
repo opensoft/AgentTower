@@ -72,9 +72,23 @@ class FollowSessionRegistry:
     session's condition, not the registry's lock.
     """
 
+    # CRIT-4 — rate-limit threshold for unknown-session_id lookups.
+    # An attacker on the local socket has SO_PEERCRED-bound access but
+    # could brute-force the 48-bit session_id space. Once we observe
+    # this many bad lookups within
+    # ``_BAD_LOOKUP_WINDOW_SECONDS``, we begin returning a generic
+    # ``events_session_unknown`` error WITHOUT touching the dict, so
+    # the cost of a brute-force attempt stays at constant time and the
+    # daemon does not spawn a thread per failed guess.
+    _BAD_LOOKUP_THRESHOLD = 100
+    _BAD_LOOKUP_WINDOW_SECONDS = 10.0
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._sessions: dict[str, FollowSession] = {}
+        # Sliding-window rate limiter for unknown-session_id lookups.
+        self._bad_lookup_count: int = 0
+        self._bad_lookup_window_start: float = 0.0
 
     # ------------------------------------------------------------------
     # CRUD
@@ -106,6 +120,26 @@ class FollowSessionRegistry:
     def get(self, session_id: str) -> Optional[FollowSession]:
         with self._lock:
             return self._sessions.get(session_id)
+
+    def is_rate_limited(self, *, now_monotonic: float) -> bool:
+        """CRIT-4 sliding-window check for unknown-session_id brute force.
+
+        Call this from the dispatcher on a missing session BEFORE
+        returning an error envelope. Returns ``True`` iff the threshold
+        has been exceeded inside the current window. Caller MUST still
+        return ``events_session_unknown`` to the client; the rate
+        limiter is purely a CPU-shedding gate so the dispatcher's hot
+        path (dict miss → error) stays cheap.
+        """
+        with self._lock:
+            elapsed = now_monotonic - self._bad_lookup_window_start
+            if elapsed >= self._BAD_LOOKUP_WINDOW_SECONDS:
+                # New window.
+                self._bad_lookup_window_start = now_monotonic
+                self._bad_lookup_count = 1
+                return False
+            self._bad_lookup_count += 1
+            return self._bad_lookup_count > self._BAD_LOOKUP_THRESHOLD
 
     def close(self, session_id: str) -> bool:
         """Remove a session; return True iff it was present."""
@@ -184,3 +218,6 @@ class FollowSessionRegistry:
         """Diagnostic: number of active sessions (for ``agenttower status``)."""
         with self._lock:
             return len(self._sessions)
+
+
+__all__ = ["FollowSession", "FollowSessionRegistry", "matches_filter"]

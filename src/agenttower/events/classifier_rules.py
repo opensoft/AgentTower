@@ -238,3 +238,13 @@ for _id in SYNTHETIC_RULE_IDS:
     assert _RULE_ID_RE.match(_id), (
         f"synthetic rule_id {_id!r} does not match the documented pattern"
     )
+
+
+__all__ = [
+    "ClassifierRule",
+    "RULES",
+    "SYNTHETIC_RULE_IDS",
+    "PANE_EXITED_SYNTH_RULE_ID",
+    "LONG_RUNNING_SYNTH_RULE_ID",
+    "parse_swarm_member",
+]

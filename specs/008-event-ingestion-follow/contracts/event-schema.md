@@ -78,7 +78,8 @@ The schema is JSON-Schema 2020-12.
     },
     "log_path": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Host-side absolute path to the pane log file. NOT translated for in-container consumers — the path is always the host path. Container-side consumers (FEAT-009/FEAT-010) reading events.jsonl SHOULD treat this as an opaque identifier rather than a directly-openable path unless the bind-mount layout is known."
     },
     "byte_range_start": {
       "type": "integer",
