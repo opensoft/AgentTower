@@ -299,32 +299,53 @@ def load_events_block(config_path: Path) -> EventsConfig:
     # Apply MVP caps named in FR-014 (≤ 5 s), FR-017 (≤ 30 s), FR-030
     # (≤ 50 page size). Values exceeding the caps are rejected; values
     # equal to the caps are accepted.
-    if overrides.get("debounce_activity_window_seconds", defaults.debounce_activity_window_seconds) > 5.0:
+    debounce_activity_window_seconds = float(
+        overrides.get(
+            "debounce_activity_window_seconds",
+            defaults.debounce_activity_window_seconds,
+        )
+    )
+    pane_exited_grace_seconds = float(
+        overrides.get("pane_exited_grace_seconds", defaults.pane_exited_grace_seconds)
+    )
+    default_page_size = int(
+        overrides.get("default_page_size", defaults.default_page_size)
+    )
+    max_page_size = int(overrides.get("max_page_size", defaults.max_page_size))
+
+    if debounce_activity_window_seconds > 5.0:
         raise ConfigInvalidError(
             _bound(
                 "[events] debounce_activity_window_seconds must be ≤ 5.0 (FR-014); "
-                f"got {overrides['debounce_activity_window_seconds']}"
+                f"got {debounce_activity_window_seconds}"
             )
         )
-    if overrides.get("pane_exited_grace_seconds", defaults.pane_exited_grace_seconds) > 30.0:
+    if pane_exited_grace_seconds > 30.0:
         raise ConfigInvalidError(
             _bound(
                 "[events] pane_exited_grace_seconds must be ≤ 30.0 (FR-017); "
-                f"got {overrides['pane_exited_grace_seconds']}"
+                f"got {pane_exited_grace_seconds}"
             )
         )
-    if overrides.get("default_page_size", defaults.default_page_size) > 50:
+    if default_page_size > 50:
         raise ConfigInvalidError(
             _bound(
                 "[events] default_page_size must be ≤ 50 (FR-030); "
-                f"got {overrides['default_page_size']}"
+                f"got {default_page_size}"
             )
         )
-    if overrides.get("max_page_size", defaults.max_page_size) > 50:
+    if max_page_size > 50:
         raise ConfigInvalidError(
             _bound(
                 "[events] max_page_size must be ≤ 50 (FR-030); "
-                f"got {overrides['max_page_size']}"
+                f"got {max_page_size}"
+            )
+        )
+    if default_page_size > max_page_size:
+        raise ConfigInvalidError(
+            _bound(
+                f"[events] default_page_size ({default_page_size}) must be ≤ "
+                f"max_page_size ({max_page_size})"
             )
         )
     # FR-019 cross-check: per_cycle_byte_cap_bytes must be ≥

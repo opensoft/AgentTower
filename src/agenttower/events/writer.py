@@ -81,16 +81,7 @@ def append_event(events_file: Path, payload: Mapping[str, Any]) -> None:
             _verify_file_mode(events_file)
 
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-        # H5 / M5 — save+restore umask around the create so a loose
-        # process umask cannot widen the file mode in the brief window
-        # between ``os.open`` and ``os.fchmod``. ``0o177`` masks
-        # everything except owner read/write so the create-time mode
-        # cannot exceed ``0o600``.
-        old_umask = os.umask(0o177)
-        try:
-            fd = os.open(events_file, flags, _FILE_MODE)
-        finally:
-            os.umask(old_umask)
+        fd = os.open(events_file, flags, _FILE_MODE)
         try:
             if not pre_existed:
                 os.fchmod(fd, _FILE_MODE)

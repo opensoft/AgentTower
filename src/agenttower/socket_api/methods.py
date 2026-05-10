@@ -56,6 +56,7 @@ class DaemonContext:
     # ``running: false``. See ``data-model.md`` §7.
     events_reader: Any = None
     follow_session_registry: Any = None
+    events_config: Any = None
 
 
 def _ping(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
@@ -84,8 +85,13 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
         events_persistence = {"degraded_sqlite": None, "degraded_jsonl": None}
     else:
         snapshot = ctx.events_reader.status_snapshot()
+        is_running = (
+            bool(ctx.events_reader.is_running())
+            if hasattr(ctx.events_reader, "is_running")
+            else True
+        )
         events_reader = {
-            "running": True,
+            "running": is_running,
             "last_cycle_started_at": snapshot.last_cycle_started_at,
             "last_cycle_duration_ms": snapshot.last_cycle_duration_ms,
             "active_attachments": snapshot.active_attachments,
@@ -516,6 +522,32 @@ _EVENTS_VALID_TYPES = frozenset(
 )
 
 
+def _events_config_value(ctx: DaemonContext, name: str, fallback: Any) -> Any:
+    cfg = getattr(ctx, "events_config", None)
+    if cfg is None:
+        return fallback
+    return getattr(cfg, name, fallback)
+
+
+def _events_parse_iso_with_offset(
+    value: str, *, field: str
+) -> tuple[datetime | None, dict[str, Any] | None]:
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None, errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"{field} must be ISO-8601 with an explicit offset",
+        )
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None, errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"{field} must be ISO-8601 with an explicit offset",
+        )
+    return parsed.astimezone(timezone.utc), None
+
+
 def _events_resolve_target(
     ctx: DaemonContext, target: str | None
 ) -> dict[str, Any] | None:
@@ -578,10 +610,25 @@ def _events_validate_filter(params: dict[str, Any]) -> dict[str, Any] | None:
         return errors.make_error(
             errors.EVENTS_FILTER_INVALID, "until must be an ISO-8601 string"
         )
-    if since is not None and until is not None and since > until:
+    since_dt = None
+    until_dt = None
+    if since is not None:
+        since_dt, err = _events_parse_iso_with_offset(since, field="since")
+        if err is not None:
+            return err
+    if until is not None:
+        until_dt, err = _events_parse_iso_with_offset(until, field="until")
+        if err is not None:
+            return err
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
         return errors.make_error(
             errors.EVENTS_FILTER_INVALID,
             f"since ({since}) must be <= until ({until})",
+        )
+    if "reverse" in params and not isinstance(params["reverse"], bool):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"reverse must be a boolean; got {params['reverse']!r}",
         )
     limit = params.get("limit")
     if limit is not None:
@@ -651,11 +698,17 @@ def _events_list(
     if err is not None:
         return err
 
-    limit = int(params.get("limit") or events_pkg.DEFAULT_PAGE_SIZE)
-    if limit > events_pkg.MAX_PAGE_SIZE:
-        limit = events_pkg.MAX_PAGE_SIZE
+    default_page_size = int(
+        _events_config_value(ctx, "default_page_size", events_pkg.DEFAULT_PAGE_SIZE)
+    )
+    max_page_size = int(
+        _events_config_value(ctx, "max_page_size", events_pkg.MAX_PAGE_SIZE)
+    )
+    limit = int(params.get("limit") or default_page_size)
+    if limit > max_page_size:
+        limit = max_page_size
     cursor = params.get("cursor")
-    reverse = bool(params.get("reverse", False))
+    reverse = params.get("reverse", False)
     types = tuple(params.get("types") or [])
     filter = EventFilter(
         target_agent_id=target,
@@ -759,14 +812,24 @@ def _events_follow_open(
                     target_agent_id=target, types=types, since_iso=since
                 ),
                 cursor=None,
-                limit=events_pkg.DEFAULT_PAGE_SIZE,
+                limit=int(
+                    _events_config_value(
+                        ctx, "default_page_size", events_pkg.DEFAULT_PAGE_SIZE
+                    )
+                ),
                 reverse=False,
             )
             backlog_events = [_event_row_to_payload(r) for r in backlog_rows]
     finally:
         conn.close()
 
-    expires_at = _time.monotonic() + events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS
+    expires_at = _time.monotonic() + float(
+        _events_config_value(
+            ctx,
+            "follow_session_idle_timeout_seconds",
+            events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+        )
+    )
     session = registry.open(
         target_agent_id=target,
         types=types,
@@ -787,6 +850,7 @@ def _events_follow_next(
     ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
 ) -> dict[str, Any]:
     """``events.follow_next`` per C-EVT-003 — long-poll."""
+    import math
     import sqlite3
     import time as _time
 
@@ -825,11 +889,42 @@ def _events_follow_next(
     # higher values. We cap at FOLLOW_LONG_POLL_MAX_SECONDS so a single
     # follower cannot hold a connection longer than the server-side
     # documented limit, regardless of the client's read_timeout.
-    max_wait = float(
-        params.get("max_wait_seconds")
-        or events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS
+    default_page_size = int(
+        _events_config_value(ctx, "default_page_size", events_pkg.DEFAULT_PAGE_SIZE)
     )
-    max_wait = min(max_wait, events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS)
+    follow_idle_timeout = float(
+        _events_config_value(
+            ctx,
+            "follow_session_idle_timeout_seconds",
+            events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+        )
+    )
+    follow_long_poll_max = float(
+        _events_config_value(
+            ctx,
+            "follow_long_poll_max_seconds",
+            events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS,
+        )
+    )
+    raw_max_wait = params.get("max_wait_seconds")
+    if raw_max_wait is None:
+        max_wait = follow_long_poll_max
+    elif (
+        not isinstance(raw_max_wait, (int, float))
+        or isinstance(raw_max_wait, bool)
+    ):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"max_wait_seconds must be a positive number; got {raw_max_wait!r}",
+        )
+    else:
+        max_wait = float(raw_max_wait)
+    if not math.isfinite(max_wait) or max_wait <= 0:
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"max_wait_seconds must be a positive number; got {raw_max_wait!r}",
+        )
+    max_wait = min(max_wait, follow_long_poll_max)
     deadline = now_mono + max_wait
 
     db_path = ctx.state_path / "agenttower.sqlite3"
@@ -854,7 +949,7 @@ def _events_follow_next(
                     types=tuple(session.type_filter),
                 ),
                 cursor=cursor_token,
-                limit=events_pkg.DEFAULT_PAGE_SIZE,
+                limit=default_page_size,
                 reverse=False,
             )
         finally:
@@ -864,8 +959,7 @@ def _events_follow_next(
             session.last_emitted_event_id = rows[-1].event_id
             registry.refresh_expiration(
                 session_id,
-                new_expires_at_monotonic=_time.monotonic()
-                + events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+                new_expires_at_monotonic=_time.monotonic() + follow_idle_timeout,
             )
             return errors.make_ok(
                 {
@@ -892,8 +986,7 @@ def _events_follow_next(
 
     registry.refresh_expiration(
         session_id,
-        new_expires_at_monotonic=_time.monotonic()
-        + events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+        new_expires_at_monotonic=_time.monotonic() + follow_idle_timeout,
     )
     return errors.make_ok({"events": [], "session_open": True})
 

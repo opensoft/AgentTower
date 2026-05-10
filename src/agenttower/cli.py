@@ -2127,6 +2127,8 @@ def _events_follow_loop(args: argparse.Namespace, socket_path: Path) -> int:
                     read_timeout=5.0,
                 )
             except DaemonUnavailable:
+                if interrupt_flag["set"]:
+                    break
                 print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
                 return 3
             except DaemonError as exc:

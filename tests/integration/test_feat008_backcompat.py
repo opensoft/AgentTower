@@ -14,10 +14,7 @@ gate is informative once fixtures land.
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -30,6 +27,26 @@ _FIXTURES_DIR = (
     / "fixtures"
     / "feat007_baseline"
 )
+
+
+_ARGV_BY_SLUG: dict[str, list[str]] = {
+    "help": ["--help"],
+    "config-init": ["config", "init"],
+    "config-paths": ["config", "paths"],
+    "config-paths--json": ["config", "paths", "--json"],
+    "config-doctor": ["config", "doctor"],
+    "config-doctor--json": ["config", "doctor", "--json"],
+    "status": ["status"],
+    "status--json": ["status", "--json"],
+    "ensure-daemon": ["ensure-daemon"],
+    "ensure-daemon--json": ["ensure-daemon", "--json"],
+    "scan-containers": ["scan", "--containers"],
+    "scan-containers--json": ["scan", "--containers", "--json"],
+    "list-containers": ["list", "--containers"],
+    "list-containers--json": ["list", "--containers", "--json"],
+    "scan-panes": ["scan", "--panes"],
+    "list-panes": ["list", "--panes"],
+}
 
 
 def _fixture_dirs() -> list[Path]:
@@ -53,7 +70,7 @@ def _fixture_dirs() -> list[Path]:
     return out
 
 
-def test_t092_backcompat_fixtures_or_skip() -> None:
+def test_t092_backcompat_fixtures_or_skip(tmp_path: Path) -> None:
     """If fixtures have been captured, replay them all. Otherwise
     skip with a clear message."""
     fixture_dirs = _fixture_dirs()
@@ -66,12 +83,30 @@ def test_t092_backcompat_fixtures_or_skip() -> None:
             "land in a follow-up."
         )
 
-    # The replay logic itself: each fixture directory is named
-    # <command-with-dashes>; argv reconstructs by replacing '-' with
-    # ' ' and splitting. Special cases (`--help`, `config init`, etc.)
-    # are handled via dedicated fixture names.
-    pytest.skip(
-        "T092 replay implementation pending fixture capture. "
-        "Once fixtures are committed, replace this skip with the "
-        "subprocess-replay loop."
-    )
+    env = helpers.isolated_env(tmp_path / "home")
+    try:
+        for fixture_dir in fixture_dirs:
+            argv = _ARGV_BY_SLUG.get(fixture_dir.name)
+            assert argv is not None, (
+                f"no replay argv mapping for fixture {fixture_dir.name!r}"
+            )
+            result = subprocess.run(
+                ["agenttower", *argv],
+                env=env,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+
+            expected_returncode = int(
+                (fixture_dir / "exit").read_text(encoding="ascii").strip()
+            )
+            assert result.returncode == expected_returncode, fixture_dir.name
+            assert result.stdout == (fixture_dir / "stdout").read_bytes(), (
+                fixture_dir.name
+            )
+            assert result.stderr == (fixture_dir / "stderr").read_bytes(), (
+                fixture_dir.name
+            )
+    finally:
+        helpers.stop_daemon_if_alive(env)

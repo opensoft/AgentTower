@@ -132,7 +132,6 @@ def test_v3_to_current_preserves_feat001_through_feat004_tables(tmp_path: Path) 
         "idx_events_type_eventid",
         "idx_events_observedat_eventid",
         "idx_events_jsonl_pending",
-        "sqlite_sequence",  # AUTOINCREMENT bookkeeping table
     )
     name_filter = (
         "name NOT IN ("

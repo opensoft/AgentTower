@@ -182,16 +182,19 @@ class DebounceManager:
         return emitted
 
     def flush_expired(
-        self, *, monotonic: float, observed_at: str
+        self, *, monotonic: float, observed_at: str, attachment_id: str | None = None
     ) -> list[PendingEvent]:
         """Close any window whose budget has elapsed.
 
         Called by the reader once per per-attachment cycle visit
         (Plan §R5). Returns the events emitted for closed windows
-        (zero or one per attachment under MVP scale).
+        (zero or one per attachment under MVP scale). When *attachment_id*
+        is supplied, only that attachment's windows are considered.
         """
         emitted: list[PendingEvent] = []
         for key in list(self._windows.keys()):
+            if attachment_id is not None and key[0] != attachment_id:
+                continue
             window = self._windows[key]
             if monotonic - window.started_at_monotonic >= self._window_seconds:
                 emitted.append(self._close_window(key, window, observed_at))

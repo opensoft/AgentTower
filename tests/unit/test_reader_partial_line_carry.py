@@ -50,8 +50,7 @@ def test_empty_input() -> None:
 
 
 def test_only_newlines() -> None:
-    """Three consecutive newlines = two empty records and a final
-    empty trailing partial."""
+    """Three consecutive newlines = three complete empty records."""
     raw = b"\n\n\n"
     records, advance, lines = _split_complete_records(raw)
     assert records == [b"", b"", b""]

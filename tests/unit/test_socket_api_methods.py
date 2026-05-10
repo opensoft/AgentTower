@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agenttower.socket_api.methods import DISPATCH, DaemonContext
+from agenttower.events.session_registry import FollowSessionRegistry
+from agenttower.socket_api.methods import (
+    DISPATCH,
+    DaemonContext,
+    _events_validate_filter,
+)
 
 
 def _ctx(tmp_path: Path) -> DaemonContext:
@@ -147,6 +153,33 @@ def test_status_does_not_re_read_schema_version(tmp_path: Path, monkeypatch) -> 
     envelope = DISPATCH["status"](ctx, {})
     assert envelope["ok"] is True
     assert envelope["result"]["schema_version"] == ctx.schema_version
+
+
+class _ReaderSnapshot:
+    last_cycle_started_at = None
+    last_cycle_duration_ms = None
+    active_attachments = 0
+    attachments_in_failure: list[dict] = []
+    degraded_sqlite = None
+    degraded_jsonl = None
+
+
+class _StoppedEventsReader:
+    def status_snapshot(self) -> _ReaderSnapshot:
+        return _ReaderSnapshot()
+
+    def is_running(self) -> bool:
+        return False
+
+
+def test_status_reports_events_reader_not_running_when_thread_stopped(
+    tmp_path: Path,
+) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.events_reader = _StoppedEventsReader()
+    envelope = DISPATCH["status"](ctx, {})
+    assert envelope["ok"] is True
+    assert envelope["result"]["events_reader"]["running"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -314,3 +347,44 @@ def test_set_role_uses_third_arg_peer_uid(tmp_path: Path) -> None:
         {"agent_id": "agt_x", "role": "slave"},
         1000,
     )
+
+
+def test_events_list_rejects_non_boolean_reverse(tmp_path: Path) -> None:
+    envelope = DISPATCH["events.list"](_ctx(tmp_path), {"reverse": "false"})
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "events_filter_invalid"
+
+
+def test_events_filter_compares_since_until_chronologically() -> None:
+    """Different offsets must be compared as instants, not strings."""
+    err = _events_validate_filter(
+        {
+            "since": "2026-05-10T10:00:00+02:00",
+            "until": "2026-05-10T09:30:00+00:00",
+        }
+    )
+    assert err is None
+
+
+def test_events_filter_rejects_naive_since_timestamp() -> None:
+    err = _events_validate_filter({"since": "2026-05-10T10:00:00"})
+    assert err is not None
+    assert err["error"]["code"] == "events_filter_invalid"
+
+
+def test_events_follow_next_rejects_non_numeric_max_wait(tmp_path: Path) -> None:
+    registry = FollowSessionRegistry()
+    session = registry.open(
+        target_agent_id=None,
+        types=(),
+        since_iso=None,
+        live_starting_event_id=0,
+        expires_at_monotonic=time.monotonic() + 60.0,
+    )
+    ctx = _ctx(tmp_path)
+    ctx.follow_session_registry = registry
+    envelope = DISPATCH["events.follow_next"](
+        ctx, {"session_id": session.session_id, "max_wait_seconds": "1"}
+    )
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "events_filter_invalid"

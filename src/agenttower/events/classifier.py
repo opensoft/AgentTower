@@ -113,6 +113,7 @@ def classify(
     *,
     prior_event_type: Optional[str] = None,  # noqa: ARG001 (reserved; FR-013)
     cap_bytes: int = PER_EVENT_EXCERPT_CAP_BYTES,
+    marker: str = EXCERPT_TRUNCATION_MARKER,
 ) -> ClassifierOutcome:
     """Classify one complete record into the FR-008 closed set.
 
@@ -154,7 +155,7 @@ def classify(
 
     if matched_rule is None:
         # Empty record. Fall back to ``activity`` per FR-011 default.
-        excerpt = truncate_excerpt(redacted, cap_bytes=cap_bytes)
+        excerpt = truncate_excerpt(redacted, cap_bytes=cap_bytes, marker=marker)
         return ClassifierOutcome(
             event_type="activity",
             rule_id="activity.fallback.v1",
@@ -162,7 +163,7 @@ def classify(
             redacted_record=redacted,
         )
 
-    excerpt = truncate_excerpt(redacted, cap_bytes=cap_bytes)
+    excerpt = truncate_excerpt(redacted, cap_bytes=cap_bytes, marker=marker)
     return ClassifierOutcome(
         event_type=matched_rule.event_type,
         rule_id=matched_rule.rule_id,

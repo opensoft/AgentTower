@@ -238,6 +238,90 @@ def test_pagination_via_cursor(tmp_path: Path) -> None:
     assert cursor3 is None  # Last page.
 
 
+def test_cursor_uses_full_sort_tuple_not_event_id_only(tmp_path: Path) -> None:
+    conn = _open_v6(tmp_path)
+    # Insert event_ids in an order that differs from FR-028 ordering.
+    id_late_low = insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T12:00:00.000000+00:00",
+            byte_range_start=10,
+            byte_range_end=20,
+            excerpt="late-low-id",
+        ),
+    )
+    id_early_high = insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T11:00:00.000000+00:00",
+            byte_range_start=0,
+            byte_range_end=10,
+            excerpt="early-high-id",
+        ),
+    )
+    id_later_high = insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T12:00:00.000000+00:00",
+            byte_range_start=20,
+            byte_range_end=30,
+            excerpt="later-high-id",
+        ),
+    )
+    conn.commit()
+
+    page1, cursor = select_events(
+        conn, filter=EventFilter(), cursor=None, limit=2, reverse=False
+    )
+    assert [r.event_id for r in page1] == [id_early_high, id_late_low]
+    assert cursor is not None
+    page2, cursor2 = select_events(
+        conn, filter=EventFilter(), cursor=cursor, limit=2, reverse=False
+    )
+    assert [r.event_id for r in page2] == [id_later_high]
+    assert cursor2 is None
+
+
+def test_reverse_cursor_uses_full_sort_tuple_not_event_id_only(tmp_path: Path) -> None:
+    conn = _open_v6(tmp_path)
+    id_late_low = insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T12:00:00.000000+00:00",
+            byte_range_start=10,
+            byte_range_end=20,
+        ),
+    )
+    id_early_high = insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T11:00:00.000000+00:00",
+            byte_range_start=0,
+            byte_range_end=10,
+        ),
+    )
+    id_later_high = insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T12:00:00.000000+00:00",
+            byte_range_start=20,
+            byte_range_end=30,
+        ),
+    )
+    conn.commit()
+
+    page1, cursor = select_events(
+        conn, filter=EventFilter(), cursor=None, limit=2, reverse=True
+    )
+    assert [r.event_id for r in page1] == [id_later_high, id_late_low]
+    assert cursor is not None
+    page2, cursor2 = select_events(
+        conn, filter=EventFilter(), cursor=cursor, limit=2, reverse=True
+    )
+    assert [r.event_id for r in page2] == [id_early_high]
+    assert cursor2 is None
+
+
 def test_reverse_inverts_order(tmp_path: Path) -> None:
     conn = _open_v6(tmp_path)
     _seed_three_agents(conn)

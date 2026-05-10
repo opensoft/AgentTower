@@ -309,7 +309,21 @@ def test_us2_since_then_live_ordering(tmp_path: Path) -> None:
             text=True,
         )
         try:
-            time.sleep(0.5)
+            # Wait until the backlog has been printed; that proves
+            # follow_open completed before we seed the live event.
+            lines: list[str] = []
+            events: list[dict] = []
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                lines.extend(_read_stdout_until(proc, timeout=0.25))
+                events = [
+                    json.loads(ln) for ln in lines if ln.strip().startswith("{")
+                ]
+                events = [e for e in events if "event_id" in e]
+                if {"b1", "b2"}.issubset({e["excerpt"] for e in events}):
+                    break
+            assert {"b1", "b2"}.issubset({e["excerpt"] for e in events})
+
             # Seed a live event AFTER follow_open. Use a future
             # timestamp so default ordering keeps it last.
             live_id = _seed_event(
@@ -317,8 +331,7 @@ def test_us2_since_then_live_ordering(tmp_path: Path) -> None:
                 excerpt="live",
                 observed_at="2026-05-10T12:00:00.000000+00:00",
             )
-            time.sleep(1.5)
-            lines = _read_stdout_until(proc, timeout=3.0)
+            lines.extend(_read_stdout_until(proc, timeout=3.0))
             events = [
                 json.loads(ln) for ln in lines if ln.strip().startswith("{")
             ]

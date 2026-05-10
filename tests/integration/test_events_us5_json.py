@@ -11,6 +11,7 @@ import json
 import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -225,12 +226,67 @@ def test_us5_as2_follow_json_extends_with_new_events(tmp_path: Path) -> None:
         proc = subprocess.Popen(
             [
                 "agenttower", "events", "--follow", "--json",
+                "--since", "1970-01-01T00:00:00.000000+00:00",
                 "--target", "agt_a1b2c3d4e5f6",
             ],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         try:
-            time.sleep(0.5)
+            fd = proc.stdout.fileno()
+            sel = selectors.DefaultSelector()
+            sel.register(fd, selectors.EVENT_READ)
+            lines: list[str] = []
+            pending = ""
+
+            def _events_from_lines() -> list[dict[str, object]]:
+                events: list[dict[str, object]] = []
+                for line in lines:
+                    if not line.startswith("{"):
+                        continue
+                    obj = json.loads(line)
+                    if "event_id" in obj:
+                        events.append(obj)
+                return events
+
+            def _read_until(timeout: float, predicate: Callable[[], bool]) -> bool:
+                nonlocal pending
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    if predicate():
+                        return True
+                    remaining = deadline - time.monotonic()
+                    ready = sel.select(timeout=remaining)
+                    if not ready:
+                        break
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    pending += chunk.decode("utf-8", errors="replace")
+                    while "\n" in pending:
+                        line, _, pending = pending.partition("\n")
+                        if line.strip():
+                            lines.append(line)
+                return predicate()
+
+            # Synchronize with follow_open before seeding the live events.
+            # With direct DB writes there is no reader notify, and an event
+            # inserted before follow_open's live boundary is backlog rather
+            # than live. ``--since`` makes the sentinel observable either way.
+            _seed_event(
+                paths["state_db"],
+                event_type="error",
+                classifier_rule_id="error.line.v1",
+                excerpt="ready",
+                observed_at="2026-05-10T11:59:59.000000+00:00",
+            )
+            assert _read_until(
+                5.0,
+                lambda: any(
+                    event.get("excerpt") == "ready"
+                    for event in _events_from_lines()
+                ),
+            ), "\n".join(lines)
+
             for i in range(3):
                 _seed_event(
                     paths["state_db"],
@@ -241,26 +297,24 @@ def test_us5_as2_follow_json_extends_with_new_events(tmp_path: Path) -> None:
                 )
                 time.sleep(0.4)
 
-            # Drain stdout for up to 3s.
-            fd = proc.stdout.fileno()
-            sel = selectors.DefaultSelector()
-            sel.register(fd, selectors.EVENT_READ)
-            deadline = time.monotonic() + 3.0
-            buf = ""
-            while time.monotonic() < deadline:
-                if sel.select(timeout=deadline - time.monotonic()):
-                    chunk = os.read(fd, 4096)
-                    if not chunk:
-                        break
-                    buf += chunk.decode("utf-8", errors="replace")
-            lines = [ln for ln in buf.splitlines() if ln.strip()]
-            events = [json.loads(ln) for ln in lines if ln.startswith("{")]
-            events = [e for e in events if "event_id" in e]
+            assert _read_until(
+                5.0,
+                lambda: {"err 0", "err 1", "err 2"}.issubset(
+                    {
+                        event.get("excerpt")
+                        for event in _events_from_lines()
+                    }
+                ),
+            ), "\n".join(lines)
+            events = [
+                event for event in _events_from_lines()
+                if str(event.get("excerpt", "")).startswith("err ")
+            ]
             # All 3 events came through.
             assert len(events) >= 3
             assert {e["excerpt"] for e in events[-3:]} == {"err 0", "err 1", "err 2"}
             # Each event line ended with \n (already consumed by splitlines).
-            assert buf.endswith("\n") or buf == ""
+            assert pending == ""
         finally:
             proc.send_signal(signal.SIGINT)
             try:

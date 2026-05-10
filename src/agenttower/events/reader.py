@@ -40,18 +40,22 @@ import os
 import socket
 import sqlite3
 import threading
+import time as _time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 from . import (
+    DEBOUNCE_ACTIVITY_WINDOW_SECONDS,
+    EXCERPT_TRUNCATION_MARKER,
     LONG_RUNNING_GRACE_SECONDS,
     PANE_EXITED_GRACE_SECONDS,
     PER_CYCLE_BYTE_CAP_BYTES,
+    PER_EVENT_EXCERPT_CAP_BYTES,
     READER_CYCLE_WALLCLOCK_CAP_SECONDS,
     Clock,
-    SystemClock,
     append_event,
+    resolve_clock,
 )
 from . import classifier_rules as classifier_rules_module
 from .classifier import classify
@@ -111,7 +115,10 @@ class EventsReader:
         clock: Clock | None = None,
         cycle_cap_seconds: float = READER_CYCLE_WALLCLOCK_CAP_SECONDS,
         per_cycle_byte_cap_bytes: int = PER_CYCLE_BYTE_CAP_BYTES,
+        per_event_excerpt_cap_bytes: int = PER_EVENT_EXCERPT_CAP_BYTES,
+        excerpt_truncation_marker: str = EXCERPT_TRUNCATION_MARKER,
         debounce_manager: DebounceManager | None = None,
+        debounce_activity_window_seconds: float = DEBOUNCE_ACTIVITY_WINDOW_SECONDS,
         pane_exited_grace_seconds: float = PANE_EXITED_GRACE_SECONDS,
         long_running_grace_seconds: float = LONG_RUNNING_GRACE_SECONDS,
     ) -> None:
@@ -129,10 +136,14 @@ class EventsReader:
         self._events_file = events_file
         self._lifecycle_logger = lifecycle_logger
         self._follow_session_registry = follow_session_registry
-        self._clock: Clock = clock if clock is not None else SystemClock()
+        self._clock: Clock = clock if clock is not None else resolve_clock()
         self._cycle_cap = float(cycle_cap_seconds)
         self._byte_cap = int(per_cycle_byte_cap_bytes)
-        self._debounce = debounce_manager or DebounceManager()
+        self._event_excerpt_cap = int(per_event_excerpt_cap_bytes)
+        self._excerpt_marker = excerpt_truncation_marker
+        self._debounce = debounce_manager or DebounceManager(
+            activity_window_seconds=debounce_activity_window_seconds
+        )
 
         self._pane_exited_grace = float(pane_exited_grace_seconds)
         self._long_running_grace = float(long_running_grace_seconds)
@@ -274,10 +285,19 @@ class EventsReader:
             # Test mode: block on the socket. One byte = one tick.
             try:
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-                sock.settimeout(remaining if remaining > 0 else None)
                 sock.bind(tick_path)
+                deadline = _time.monotonic() + remaining
                 try:
-                    sock.recv(1)
+                    while not self._stop_event.is_set():
+                        timeout = min(0.05, max(0.0, deadline - _time.monotonic()))
+                        if timeout <= 0:
+                            break
+                        sock.settimeout(timeout)
+                        try:
+                            sock.recv(1)
+                            break
+                        except socket.timeout:
+                            continue
                 finally:
                     sock.close()
                     try:
@@ -481,6 +501,22 @@ class EventsReader:
             return result
 
         if not new_bytes:
+            expired = self._debounce.flush_expired(
+                monotonic=now_monotonic,
+                observed_at=now_iso,
+                attachment_id=attachment.attachment_id,
+            )
+            if expired:
+                return self._commit_events_and_advance(
+                    conn,
+                    attachment=attachment,
+                    offset_row=offset_row,
+                    events_to_emit=expired,
+                    advance_bytes=0,
+                    advance_lines=0,
+                    bytes_read=0,
+                    now_iso=now_iso,
+                )
             return result
         result.bytes_read = len(new_bytes)
 
@@ -507,44 +543,65 @@ class EventsReader:
                     record_text = new_bytes.decode("utf-8", errors="replace")
                 except Exception:
                     record_text = ""
-                outcome = classify(record_text)
-                forced = self._debounce.submit(
-                    attachment_id=attachment.attachment_id,
-                    outcome=outcome,
+                outcome = classify(
+                    record_text,
+                    cap_bytes=self._event_excerpt_cap,
+                    marker=self._excerpt_marker,
+                )
+                forced = PendingEvent(
+                    event_type=outcome.event_type,
+                    rule_id=outcome.rule_id,
+                    excerpt=outcome.excerpt,
                     observed_at=now_iso,
-                    monotonic=now_monotonic,
                     byte_range_start=offset_row.byte_offset,
                     byte_range_end=offset_row.byte_offset + len(new_bytes),
                     line_offset_start=offset_row.line_offset,
                     line_offset_end=offset_row.line_offset,
+                    debounce_window_id=None,
+                    debounce_collapsed_count=1,
+                    debounce_window_started_at=None,
+                    debounce_window_ended_at=None,
                 )
-                if forced:
-                    advance_bytes = len(new_bytes)
-                    advance_lines = 0
-                    complete_records = []  # no real records to commit
-                    events_to_emit_forced = forced
-                    # Fall through to the commit path with these synthetic
-                    # events; mirror the normal flow.
-                    return self._commit_forced_long_line(
-                        conn, attachment=attachment,
-                        offset_row=offset_row,
-                        events_to_emit=events_to_emit_forced,
-                        advance_bytes=advance_bytes,
-                        now_iso=now_iso,
-                        now_monotonic=now_monotonic,
-                    )
+                return self._commit_events_and_advance(
+                    conn,
+                    attachment=attachment,
+                    offset_row=offset_row,
+                    events_to_emit=[forced],
+                    advance_bytes=len(new_bytes),
+                    advance_lines=0,
+                    bytes_read=len(new_bytes),
+                    now_iso=now_iso,
+                )
+            expired = self._debounce.flush_expired(
+                monotonic=now_monotonic,
+                observed_at=now_iso,
+                attachment_id=attachment.attachment_id,
+            )
+            if expired:
+                return self._commit_events_and_advance(
+                    conn,
+                    attachment=attachment,
+                    offset_row=offset_row,
+                    events_to_emit=expired,
+                    advance_bytes=0,
+                    advance_lines=0,
+                    bytes_read=len(new_bytes),
+                    now_iso=now_iso,
+                )
             return result  # only partial-line bytes; re-read next cycle (FR-005)
 
         # ----- Steps 7-9: classify, debounce, atomic commit per event -----
         events_to_emit: list[PendingEvent] = []
+        byte_start = offset_row.byte_offset
         for i, record_bytes in enumerate(complete_records):
             try:
                 record_text = record_bytes.decode("utf-8", errors="replace")
             except Exception:
                 record_text = ""
-            outcome = classify(record_text)
-            byte_start = offset_row.byte_offset + (
-                sum(len(r) + 1 for r in complete_records[:i])  # +1 for \n
+            outcome = classify(
+                record_text,
+                cap_bytes=self._event_excerpt_cap,
+                marker=self._excerpt_marker,
             )
             byte_end = byte_start + len(record_bytes) + 1  # include \n
             line_start = offset_row.line_offset + i
@@ -560,163 +617,33 @@ class EventsReader:
                 line_offset_end=line_end,
             )
             events_to_emit.extend(emitted)
+            byte_start = byte_end
 
         # Plus any windows that aged out this cycle.
         events_to_emit.extend(
             self._debounce.flush_expired(
-                monotonic=now_monotonic, observed_at=now_iso
+                monotonic=now_monotonic,
+                observed_at=now_iso,
+                attachment_id=attachment.attachment_id,
             )
         )
 
-        # Atomic commit: each event row + the offset advance go
-        # together (FR-006). We use a single transaction for all
-        # events emitted this cycle — Plan §"Plan summary" allows
-        # "single atomic commit per emitted event OR per cycle batch
-        # within a single transaction".
-        new_byte_offset = offset_row.byte_offset + advance_bytes
-        new_line_offset = offset_row.line_offset + advance_lines
-        new_last_event_offset = (
-            events_to_emit[-1].byte_range_end
-            if events_to_emit
-            else offset_row.last_event_offset
+        return self._commit_events_and_advance(
+            conn,
+            attachment=attachment,
+            offset_row=offset_row,
+            events_to_emit=events_to_emit,
+            advance_bytes=advance_bytes,
+            advance_lines=advance_lines,
+            bytes_read=len(new_bytes),
+            now_iso=now_iso,
         )
 
-        committed_event_ids: list[tuple[int, EventRow]] = []
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                for ev in events_to_emit:
-                    row = EventRow(
-                        event_id=0,  # ignored on insert
-                        event_type=ev.event_type,
-                        agent_id=attachment.agent_id,
-                        attachment_id=attachment.attachment_id,
-                        log_path=attachment.log_path,
-                        byte_range_start=ev.byte_range_start,
-                        byte_range_end=ev.byte_range_end,
-                        line_offset_start=ev.line_offset_start,
-                        line_offset_end=ev.line_offset_end,
-                        observed_at=ev.observed_at,
-                        record_at=None,  # always null in MVP (Clarifications Q3)
-                        excerpt=ev.excerpt,
-                        classifier_rule_id=ev.rule_id,
-                        debounce_window_id=ev.debounce_window_id,
-                        debounce_collapsed_count=ev.debounce_collapsed_count,
-                        debounce_window_started_at=ev.debounce_window_started_at,
-                        debounce_window_ended_at=ev.debounce_window_ended_at,
-                        schema_version=1,
-                        jsonl_appended_at=None,
-                    )
-                    new_event_id = insert_event(conn, row)
-                    committed_event_ids.append((new_event_id, row))
-                # Advance offsets in the same transaction (FR-006).
-                lo_state.advance_offset(
-                    conn,
-                    agent_id=attachment.agent_id,
-                    log_path=attachment.log_path,
-                    byte_offset=new_byte_offset,
-                    line_offset=new_line_offset,
-                    last_event_offset=new_last_event_offset,
-                    file_inode=offset_row.file_inode,
-                    file_size_seen=offset_row.file_size_seen,
-                    last_output_at=now_iso,
-                    timestamp=now_iso,
-                )
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        except sqlite3.Error:
-            # FR-040 — degraded SQLite. T077 (Phase 8) wires the
-            # buffered-retry path; for now, surface the failure and
-            # leave offsets unchanged.
-            result.failed = True
-            result.failure_class = "sqlite_commit"
-            with self._lock:
-                self._degraded_sqlite = {
-                    "since": now_iso,
-                    "buffered_attachments": [
-                        {
-                            "attachment_id": attachment.attachment_id,
-                            "agent_id": attachment.agent_id,
-                            "buffered_count": len(events_to_emit),
-                            "last_error_class": "sqlite3.Error",
-                        }
-                    ],
-                }
-            return result
-
-        # ----- Step 9: JSONL append AFTER SQLite commit (FR-025/29) -----
-        # H2/H3 fix — wrap each row's JSONL append + watermark UPDATE
-        # in an explicit BEGIN/COMMIT so the watermark is durably
-        # persisted before we notify followers. Without the explicit
-        # transaction, the UPDATE would sit in an implicit transaction
-        # on the ``isolation_level=None`` connection and a process kill
-        # between JSONL write and the implicit commit would leave the
-        # watermark NULL → re-emit on restart. Notify is moved AFTER
-        # the watermark is durable so followers cannot observe a row
-        # whose ``jsonl_appended_at`` is still NULL.
-        successfully_appended: list[tuple[int, EventRow]] = []
-        for new_event_id, row in committed_event_ids:
-            try:
-                self._append_event_to_jsonl(row, event_id=new_event_id)
-            except OSError:
-                # FR-029 — leave jsonl_appended_at NULL; retry next cycle.
-                with self._lock:
-                    self._degraded_jsonl = {
-                        "since": now_iso,
-                        "pending_event_count": (
-                            (self._degraded_jsonl or {}).get("pending_event_count", 0) + 1
-                        ),
-                        "last_error_class": "OSError",
-                    }
-                continue
-
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    mark_jsonl_appended(conn, new_event_id, now_iso)
-                    conn.execute("COMMIT")
-                except Exception:
-                    conn.execute("ROLLBACK")
-                    raise
-                successfully_appended.append((new_event_id, row))
-            except sqlite3.Error:
-                # JSONL succeeded but the watermark UPDATE failed; the
-                # next cycle's retry pass will pick the row up via the
-                # ``idx_events_jsonl_pending`` partial index. Surface
-                # the SQLite-degraded condition rather than the JSONL
-                # one (the source of truth is the SQLite write).
-                with self._lock:
-                    self._degraded_sqlite = {
-                        "since": now_iso,
-                        "buffered_attachments": [
-                            {
-                                "attachment_id": attachment.attachment_id,
-                                "agent_id": attachment.agent_id,
-                                "buffered_count": 0,
-                                "last_error_class": "sqlite3.Error",
-                            }
-                        ],
-                    }
-
-        # Notify followers ONLY after the watermark is durable for that
-        # row. A waking follower's DAO query will then never see a row
-        # whose ``jsonl_appended_at`` is NULL.
-        if self._follow_session_registry is not None:
-            for _, row in successfully_appended:
-                self._follow_session_registry.notify(
-                    agent_id=row.agent_id, event_type=row.event_type
-                )
-
-        result.events_emitted = len(committed_event_ids)
-        return result
-
     # ------------------------------------------------------------------
-    # T7 (review HIGH) — long-line escape hatch
+    # SQLite commit + JSONL watermark/notify
     # ------------------------------------------------------------------
 
-    def _commit_forced_long_line(
+    def _commit_events_and_advance(
         self,
         conn: sqlite3.Connection,
         *,
@@ -724,24 +651,27 @@ class EventsReader:
         offset_row: lo_state.LogOffsetRecord,
         events_to_emit: list[PendingEvent],
         advance_bytes: int,
+        advance_lines: int,
+        bytes_read: int,
         now_iso: str,
-        now_monotonic: float,  # noqa: ARG002
     ) -> _AttachmentCycleResult:
-        """Commit one synthetic long-line event + advance offsets.
+        """Commit emitted events and offset movement atomically.
 
-        Used only when a cycle read ``PER_CYCLE_BYTE_CAP_BYTES`` of
-        bytes WITHOUT finding a complete record. Forces forward
-        progress so a runaway no-newline agent does not starve other
-        attachments.
+        The SQLite transaction covers all event rows plus the
+        corresponding ``log_offsets`` advance (FR-006). JSONL append,
+        watermark update, and follower notify happen only after that
+        transaction commits; notify is last so followers only wake for
+        rows with a durable ``jsonl_appended_at`` watermark.
         """
         result = _AttachmentCycleResult()
         new_byte_offset = offset_row.byte_offset + advance_bytes
-        new_line_offset = offset_row.line_offset
+        new_line_offset = offset_row.line_offset + advance_lines
         new_last_event_offset = (
             events_to_emit[-1].byte_range_end
             if events_to_emit
             else offset_row.last_event_offset
         )
+        last_output_at = now_iso if advance_bytes > 0 else offset_row.last_output_at
         committed_event_ids: list[tuple[int, EventRow]] = []
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -779,7 +709,7 @@ class EventsReader:
                     last_event_offset=new_last_event_offset,
                     file_inode=offset_row.file_inode,
                     file_size_seen=offset_row.file_size_seen,
-                    last_output_at=now_iso,
+                    last_output_at=last_output_at,
                     timestamp=now_iso,
                 )
                 conn.execute("COMMIT")
@@ -789,10 +719,80 @@ class EventsReader:
         except sqlite3.Error:
             result.failed = True
             result.failure_class = "sqlite_commit"
+            with self._lock:
+                self._degraded_sqlite = {
+                    "since": now_iso,
+                    "buffered_attachments": [
+                        {
+                            "attachment_id": attachment.attachment_id,
+                            "agent_id": attachment.agent_id,
+                            "buffered_count": len(events_to_emit),
+                            "last_error_class": "sqlite3.Error",
+                        }
+                    ],
+                }
             return result
+
+        for new_event_id, row in committed_event_ids:
+            self._append_mark_and_notify(
+                conn, event_id=new_event_id, row=row, now_iso=now_iso
+            )
+
         result.events_emitted = len(committed_event_ids)
-        result.bytes_read = advance_bytes
+        result.bytes_read = bytes_read
         return result
+
+    def _append_mark_and_notify(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        event_id: int,
+        row: EventRow,
+        now_iso: str,
+    ) -> bool:
+        """Append JSONL, mark the watermark, then notify live followers."""
+        try:
+            self._append_event_to_jsonl(row, event_id=event_id)
+        except OSError:
+            with self._lock:
+                self._degraded_jsonl = {
+                    "since": now_iso,
+                    "pending_event_count": (
+                        (self._degraded_jsonl or {}).get("pending_event_count", 0)
+                        + 1
+                    ),
+                    "last_error_class": "OSError",
+                }
+            return False
+
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                mark_jsonl_appended(conn, event_id, now_iso)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.Error:
+            with self._lock:
+                self._degraded_sqlite = {
+                    "since": now_iso,
+                    "buffered_attachments": [
+                        {
+                            "attachment_id": row.attachment_id,
+                            "agent_id": row.agent_id,
+                            "buffered_count": 0,
+                            "last_error_class": "sqlite3.Error",
+                        }
+                    ],
+                }
+            return False
+
+        if self._follow_session_registry is not None:
+            self._follow_session_registry.notify(
+                agent_id=row.agent_id, event_type=row.event_type
+            )
+        return True
 
     # ------------------------------------------------------------------
     # JSONL retry watermark (FR-029)
@@ -986,34 +986,11 @@ class EventsReader:
 
         # JSONL append + watermark for the synthetic row, mirroring
         # the byte-driven path. Failures leave ``jsonl_appended_at``
-        # NULL for the next-cycle retry pass.
-        try:
-            self._append_event_to_jsonl(synth, event_id=event_id)
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    mark_jsonl_appended(conn, event_id, now_iso)
-                    conn.execute("COMMIT")
-                except Exception:
-                    conn.execute("ROLLBACK")
-                    raise
-            except sqlite3.Error:
-                pass  # next cycle's retry pass will pick up the row
-        except OSError:
-            with self._lock:
-                self._degraded_jsonl = {
-                    "since": now_iso,
-                    "pending_event_count": (
-                        (self._degraded_jsonl or {}).get("pending_event_count", 0)
-                        + 1
-                    ),
-                    "last_error_class": "OSError",
-                }
-
-        if self._follow_session_registry is not None:
-            self._follow_session_registry.notify(
-                agent_id=attachment.agent_id, event_type=event_type
-            )
+        # NULL for the next-cycle retry pass, and followers are only
+        # notified after the watermark is durable.
+        self._append_mark_and_notify(
+            conn, event_id=event_id, row=synth, now_iso=now_iso
+        )
         return event_id
 
     def _maybe_synthesize_pane_exited(

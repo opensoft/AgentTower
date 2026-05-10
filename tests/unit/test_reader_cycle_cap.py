@@ -8,11 +8,13 @@ exceed the cap.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from agenttower.events import (
     READER_CYCLE_WALLCLOCK_CAP_SECONDS,
     Clock,
+    FakeClock,
 )
 from agenttower.events.reader import EventsReader
 from agenttower.state import schema
@@ -35,6 +37,31 @@ class _StubClock(Clock):
 def test_default_cycle_cap_is_one_second() -> None:
     """FR-001: the documented MVP default is ``1.0`` seconds."""
     assert READER_CYCLE_WALLCLOCK_CAP_SECONDS == 1.0
+
+
+def test_reader_default_clock_honors_fake_clock_env(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    fake_clock = tmp_path / "clock.json"
+    fake_clock.write_text(
+        json.dumps(
+            {
+                "observed_at_iso": "2026-05-10T00:00:00.000000+00:00",
+                "monotonic": 123.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENTTOWER_TEST_EVENTS_CLOCK_FAKE", str(fake_clock))
+
+    reader = EventsReader(
+        state_db=tmp_path / "state.sqlite3",
+        events_file=tmp_path / "events.jsonl",
+        lifecycle_logger=None,
+    )
+
+    assert isinstance(reader._clock, FakeClock)
+    assert reader._clock.monotonic() == 123.0
 
 
 def test_run_one_cycle_completes_under_budget_with_no_attachments(tmp_path: Path) -> None:

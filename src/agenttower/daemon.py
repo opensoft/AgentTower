@@ -14,7 +14,7 @@ from pathlib import Path
 from . import __version__
 from .agents.mutex import AgentLockMap, RegisterLockMap
 from .agents.service import AgentService
-from .config import load_containers_block
+from .config import load_containers_block, load_events_block
 from .discovery.pane_service import PaneDiscoveryService
 from .discovery.service import DiscoveryService
 from .docker import FakeDockerAdapter
@@ -236,6 +236,7 @@ def _build_context(
     logger: LifecycleLogger,
     events_reader: object | None = None,
     follow_session_registry: object | None = None,
+    events_config: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -253,6 +254,7 @@ def _build_context(
         lifecycle_logger=logger,
         events_reader=events_reader,
         follow_session_registry=follow_session_registry,
+        events_config=events_config,
     )
 
 
@@ -458,12 +460,22 @@ def _run(args: argparse.Namespace) -> int:
         from .events.reader import EventsReader  # local import: heavy module
         from .events.session_registry import FollowSessionRegistry
 
+        events_config = load_events_block(paths.config_file)
         follow_registry = FollowSessionRegistry()
         events_reader = EventsReader(
             state_db=paths.state_db,
             events_file=paths.events_file,
             lifecycle_logger=logger,
             follow_session_registry=follow_registry,
+            cycle_cap_seconds=events_config.reader_cycle_wallclock_cap_seconds,
+            per_cycle_byte_cap_bytes=events_config.per_cycle_byte_cap_bytes,
+            per_event_excerpt_cap_bytes=events_config.per_event_excerpt_cap_bytes,
+            excerpt_truncation_marker=events_config.excerpt_truncation_marker,
+            debounce_activity_window_seconds=(
+                events_config.debounce_activity_window_seconds
+            ),
+            pane_exited_grace_seconds=events_config.pane_exited_grace_seconds,
+            long_running_grace_seconds=events_config.long_running_grace_seconds,
         )
         # C7 (review MEDIUM) — the reader thread is started BEFORE the
         # control socket binds (~10ms window). Events emitted in this
@@ -486,6 +498,7 @@ def _run(args: argparse.Namespace) -> int:
             logger=logger,
             events_reader=events_reader,
             follow_session_registry=follow_registry,
+            events_config=events_config,
         )
 
         server = _bind_control_server(paths, ctx, logger)

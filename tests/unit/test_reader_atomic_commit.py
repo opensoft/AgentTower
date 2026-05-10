@@ -193,3 +193,74 @@ def test_successful_commit_persists_event_and_advances_offset(tmp_path: Path) ->
     )
     assert offset_row is not None
     assert offset_row.byte_offset > 0
+
+
+def test_activity_window_flushes_even_when_no_new_bytes(tmp_path: Path) -> None:
+    """An activity window must still close after silence. The first cycle
+    consumes the line and advances offsets; the second cycle sees EOF and
+    flushes the expired window without advancing bytes again."""
+    conn = _open_v6(tmp_path)
+    log_path = tmp_path / "agent.log"
+    log_path.write_text("hello world\n", encoding="utf-8")
+
+    lo_state.insert_initial(
+        conn,
+        agent_id="agt_a1b2c3d4e5f6",
+        log_path=str(log_path),
+        timestamp="2026-05-10T00:00:00.000000+00:00",
+    )
+
+    events_file = tmp_path / "events.jsonl"
+    events_file.touch()
+    import os
+    os.chmod(events_file, 0o600)
+
+    reader = EventsReader(
+        state_db=tmp_path / "state.sqlite3",
+        events_file=events_file,
+        lifecycle_logger=None,
+        debounce_activity_window_seconds=1.0,
+    )
+
+    def _fake_recovery(**kwargs):
+        from agenttower.state.log_offsets import FileChangeKind
+        return ReaderCycleResult(
+            change=FileChangeKind.UNCHANGED,
+            state_mutated=False,
+            lifecycle_event_emitted=None,
+            audit_row_appended=False,
+        )
+
+    with patch(
+        "agenttower.events.reader.reader_recovery.reader_cycle_offset_recovery",
+        side_effect=_fake_recovery,
+    ):
+        first = reader.run_cycle_for_attachment(
+            conn,
+            attachment=_make_attachment(str(log_path)),
+            now_iso="2026-05-10T00:00:01.000000+00:00",
+            now_monotonic=100.0,
+        )
+        second = reader.run_cycle_for_attachment(
+            conn,
+            attachment=_make_attachment(str(log_path)),
+            now_iso="2026-05-10T00:00:03.000000+00:00",
+            now_monotonic=102.0,
+        )
+
+    assert first.events_emitted == 0
+    assert first.bytes_read == len(b"hello world\n")
+    assert second.events_emitted == 1
+    assert second.bytes_read == 0
+
+    rows, _ = select_events(
+        conn, filter=EventFilter(), cursor=None, limit=50, reverse=False
+    )
+    assert len(rows) == 1
+    assert rows[0].excerpt == "hello world"
+
+    offset_row = lo_state.select(
+        conn, agent_id="agt_a1b2c3d4e5f6", log_path=str(log_path)
+    )
+    assert offset_row is not None
+    assert offset_row.byte_offset == len(b"hello world\n")

@@ -86,10 +86,11 @@ def _reset_feat007_lifecycle_suppression() -> Iterator[None]:
 # ``tests/unit/test_logs_offset_advance_invariant.py`` enforces that no
 # production module imports the seam names.
 
-#: T102 — JSON-encoded ``{"observed_at_iso": <ISO>, "monotonic": <float>}``
-#: consumed by the reader's ``Clock`` Protocol so debounce windows,
-#: ``pane_exited`` grace, and ``long_running`` grace are deterministic
-#: in tests without real-time ``time.sleep`` calls.
+#: T102 — path to a JSON file containing
+#: ``{"observed_at_iso": <ISO>, "monotonic": <float>}``, consumed by the
+#: reader's ``Clock`` Protocol so debounce windows, ``pane_exited`` grace,
+#: and ``long_running`` grace are deterministic in tests without real-time
+#: ``time.sleep`` calls.
 AGENTTOWER_TEST_EVENTS_CLOCK_FAKE = "AGENTTOWER_TEST_EVENTS_CLOCK_FAKE"
 
 #: T003 — Unix-domain-socket path. When set, the reader replaces its

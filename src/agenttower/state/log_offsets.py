@@ -167,6 +167,14 @@ def update_file_observation(
     )
 
 
+def _require_one_updated(cur: sqlite3.Cursor, *, operation: str) -> None:
+    if cur.rowcount != 1:
+        raise sqlite3.OperationalError(
+            f"{operation}: expected to update 1 log_offsets row; "
+            f"updated {cur.rowcount}"
+        )
+
+
 def advance_offset(
     conn: sqlite3.Connection,
     *,
@@ -191,11 +199,11 @@ def advance_offset(
     this function (or via the FEAT-007 helpers ``reset`` /
     ``update_file_observation`` which DON'T touch byte/line offsets).
 
-    Behavioural mirror of :func:`advance_offset_for_test`; the only
-    difference is the name (no ``_for_test`` suffix → not flagged by
-    the FR-004 production-test-seam gate).
+    Raises ``sqlite3.OperationalError`` if the target row does not
+    exist; callers rely on this to roll back the paired event insert
+    rather than silently re-reading the same bytes next cycle.
     """
-    conn.execute(
+    cur = conn.execute(
         """
         UPDATE log_offsets
            SET byte_offset = ?, line_offset = ?, last_event_offset = ?,
@@ -215,6 +223,7 @@ def advance_offset(
             log_path,
         ),
     )
+    _require_one_updated(cur, operation="advance_offset")
 
 
 def advance_offset_for_test(
@@ -236,7 +245,7 @@ def advance_offset_for_test(
     sole production-side advancer of offsets (FR-022 / FR-023). Function name
     starts with ``advance_offset_for_test`` to make accidental imports loud.
     """
-    conn.execute(
+    cur = conn.execute(
         """
         UPDATE log_offsets
            SET byte_offset = ?, line_offset = ?, last_event_offset = ?,
@@ -256,3 +265,4 @@ def advance_offset_for_test(
             log_path,
         ),
     )
+    _require_one_updated(cur, operation="advance_offset_for_test")

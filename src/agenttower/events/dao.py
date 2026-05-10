@@ -111,8 +111,14 @@ class CursorError(ValueError):
 _MAX_SAFE_CURSOR_EVENT_ID = (1 << 53) - 1
 
 
-def encode_cursor(event_id: int, *, reverse: bool) -> str:
-    """Encode ``(event_id, reverse)`` as a base64url-encoded JSON object.
+def encode_cursor(
+    event_id: int,
+    *,
+    reverse: bool,
+    observed_at: str | None = None,
+    byte_range_start: int | None = None,
+) -> str:
+    """Encode an opaque pagination cursor as base64url JSON.
 
     The CLI treats the result as opaque; clients MUST round-trip it
     verbatim. Padding ``=`` is stripped so the cursor fits in URL/CLI
@@ -127,19 +133,27 @@ def encode_cursor(event_id: int, *, reverse: bool) -> str:
             f"event_id {event_id} exceeds safe-cursor range "
             f"({_MAX_SAFE_CURSOR_EVENT_ID})"
         )
-    payload = json.dumps(
-        {"e": event_id, "r": bool(reverse)}, separators=(",", ":")
-    ).encode("utf-8")
+    if (observed_at is None) != (byte_range_start is None):
+        raise CursorError(
+            "observed_at and byte_range_start must be supplied together"
+        )
+    payload_obj: dict[str, object] = {"e": event_id, "r": bool(reverse)}
+    if observed_at is not None:
+        if not isinstance(observed_at, str) or not observed_at:
+            raise CursorError("observed_at must be a non-empty string")
+        if (
+            not isinstance(byte_range_start, int)
+            or isinstance(byte_range_start, bool)
+            or byte_range_start < 0
+        ):
+            raise CursorError("byte_range_start must be a non-negative integer")
+        payload_obj["o"] = observed_at
+        payload_obj["b"] = byte_range_start
+    payload = json.dumps(payload_obj, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
 
 
-def decode_cursor(token: str) -> tuple[int, bool]:
-    """Decode a cursor produced by :func:`encode_cursor`.
-
-    Raises :class:`CursorError` on any malformed input. Forward-tolerant
-    of new optional keys (ignored), but strict on the documented two
-    keys' types.
-    """
+def _decode_cursor_payload(token: str) -> dict[str, object]:
     if not isinstance(token, str) or not token:
         raise CursorError("cursor must be a non-empty string")
     # Restore base64 padding (multiples of 4).
@@ -154,6 +168,10 @@ def decode_cursor(token: str) -> tuple[int, bool]:
         raise CursorError(f"cursor base64 payload is not valid JSON: {exc}") from exc
     if not isinstance(obj, dict):
         raise CursorError(f"cursor payload must be an object; got {type(obj).__name__}")
+    return obj
+
+
+def _decode_cursor_base(obj: dict[str, object]) -> tuple[int, bool]:
     if "e" not in obj or "r" not in obj:
         raise CursorError("cursor payload missing required keys 'e' and 'r'")
     e = obj["e"]
@@ -170,6 +188,35 @@ def decode_cursor(token: str) -> tuple[int, bool]:
     if not isinstance(r, bool):
         raise CursorError(f"cursor 'r' must be bool, got {type(r).__name__}")
     return e, r
+
+
+def _decode_cursor_details(token: str) -> tuple[int, bool, str | None, int | None]:
+    obj = _decode_cursor_payload(token)
+    event_id, reverse = _decode_cursor_base(obj)
+    observed_at = obj.get("o")
+    byte_range_start = obj.get("b")
+    if observed_at is None and byte_range_start is None:
+        return event_id, reverse, None, None
+    if not isinstance(observed_at, str) or not observed_at:
+        raise CursorError("cursor 'o' must be a non-empty string")
+    if (
+        not isinstance(byte_range_start, int)
+        or isinstance(byte_range_start, bool)
+        or byte_range_start < 0
+    ):
+        raise CursorError("cursor 'b' must be a non-negative integer")
+    return event_id, reverse, observed_at, byte_range_start
+
+
+def decode_cursor(token: str) -> tuple[int, bool]:
+    """Decode a cursor produced by :func:`encode_cursor`.
+
+    Raises :class:`CursorError` on any malformed input. Forward-tolerant
+    of new optional keys (ignored), but strict on the documented two
+    keys' types.
+    """
+    obj = _decode_cursor_payload(token)
+    return _decode_cursor_base(obj)
 
 
 # --------------------------------------------------------------------------
@@ -327,10 +374,10 @@ def select_events(
     ``(observed_at ASC, byte_range_start ASC, event_id ASC)`` —
     flipped when ``reverse=True``.
 
-    The cursor encodes the last seen ``event_id``; the next page
+    New cursors encode the last seen sort tuple
+    ``(observed_at, byte_range_start, event_id)`` so the next page
     returns rows strictly past it (forward) or strictly before it
-    (reverse). This is a stable substitute for OFFSET that does not
-    miss or repeat rows under concurrent writes.
+    (reverse). Older event_id-only cursors remain accepted.
     """
     if limit <= 0:
         raise ValueError(f"limit must be > 0; got {limit}")
@@ -350,18 +397,47 @@ def select_events(
         where.append("observed_at < ?")
         params.append(filter.until_iso)
     if cursor is not None:
-        cursor_event_id, cursor_reverse = decode_cursor(cursor)
+        (
+            cursor_event_id,
+            cursor_reverse,
+            cursor_observed_at,
+            cursor_byte_start,
+        ) = _decode_cursor_details(cursor)
         if cursor_reverse != reverse:
             raise CursorError(
                 "cursor direction does not match query direction; cursors are "
                 "single-direction (encode forward → use forward; encode reverse → "
                 "use reverse)"
             )
-        if reverse:
-            where.append("event_id < ?")
+        if cursor_observed_at is not None and cursor_byte_start is not None:
+            if reverse:
+                where.append(
+                    "((observed_at < ?) OR "
+                    "(observed_at = ? AND byte_range_start < ?) OR "
+                    "(observed_at = ? AND byte_range_start = ? AND event_id < ?))"
+                )
+            else:
+                where.append(
+                    "((observed_at > ?) OR "
+                    "(observed_at = ? AND byte_range_start > ?) OR "
+                    "(observed_at = ? AND byte_range_start = ? AND event_id > ?))"
+                )
+            params.extend(
+                [
+                    cursor_observed_at,
+                    cursor_observed_at,
+                    cursor_byte_start,
+                    cursor_observed_at,
+                    cursor_byte_start,
+                    cursor_event_id,
+                ]
+            )
         else:
-            where.append("event_id > ?")
-        params.append(cursor_event_id)
+            if reverse:
+                where.append("event_id < ?")
+            else:
+                where.append("event_id > ?")
+            params.append(cursor_event_id)
 
     where_clause = (" WHERE " + " AND ".join(where)) if where else ""
     order = "DESC" if reverse else "ASC"
@@ -379,7 +455,12 @@ def select_events(
     page = [_row_to_event(r) for r in rows[:limit]]
     next_cursor: Optional[str] = None
     if has_more and page:
-        next_cursor = encode_cursor(page[-1].event_id, reverse=reverse)
+        next_cursor = encode_cursor(
+            page[-1].event_id,
+            reverse=reverse,
+            observed_at=page[-1].observed_at,
+            byte_range_start=page[-1].byte_range_start,
+        )
     return EventPage(rows=page, next_cursor=next_cursor)
 
 

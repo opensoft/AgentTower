@@ -140,6 +140,14 @@ def _make_reader(tmp_path: Path, **kwargs) -> EventsReader:
     )
 
 
+class _RecordingFollowRegistry:
+    def __init__(self) -> None:
+        self.notifications: list[tuple[str, str]] = []
+
+    def notify(self, *, agent_id: str, event_type: str) -> None:
+        self.notifications.append((agent_id, event_type))
+
+
 def _fake_recovery_unchanged(**kwargs):
     return ReaderCycleResult(
         change=lo_state.FileChangeKind.UNCHANGED,
@@ -266,6 +274,43 @@ def test_pane_exited_emits_exactly_once_per_lifecycle(tmp_path: Path) -> None:
     assert conn.execute(
         "SELECT COUNT(*) FROM events WHERE event_type = 'pane_exited'"
     ).fetchone()[0] == 1
+
+
+def test_synthetic_event_does_not_notify_when_watermark_fails(
+    tmp_path: Path,
+) -> None:
+    """Followers should only wake after ``jsonl_appended_at`` is durable."""
+    conn = _open_v6(tmp_path)
+    log_path = tmp_path / "agent.log"
+    log_path.write_text("", encoding="utf-8")
+    rec = _make_attachment(str(log_path))
+    la_state.insert(conn, rec)
+    _seed_offsets(conn, str(log_path), last_output_at="2026-05-10T11:00:00.000000+00:00")
+    offset_row = lo_state.select(conn, agent_id=rec.agent_id, log_path=rec.log_path)
+    assert offset_row is not None
+
+    registry = _RecordingFollowRegistry()
+    reader = _make_reader(tmp_path, follow_session_registry=registry)
+
+    def _raise_watermark(*args, **kwargs):
+        raise sqlite3.OperationalError("simulated watermark failure")
+
+    with patch("agenttower.events.reader.mark_jsonl_appended", _raise_watermark):
+        event_id = reader._persist_synthetic_event(
+            conn,
+            attachment=rec,
+            event_type="pane_exited",
+            rule_id="pane_exited.synth.v1",
+            now_iso="2026-05-10T12:00:00.000000+00:00",
+            offset_row=offset_row,
+        )
+
+    assert event_id is not None
+    assert registry.notifications == []
+    row = conn.execute(
+        "SELECT jsonl_appended_at FROM events WHERE event_id = ?", (event_id,)
+    ).fetchone()
+    assert row == (None,)
 
 
 # --------------------------------------------------------------------------
