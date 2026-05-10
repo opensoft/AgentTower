@@ -150,6 +150,18 @@ class FakeClock:
         return float(value)
 
 
+def seam_names_currently_set() -> list[str]:
+    """Return any FEAT-008 clock-seam env var that is currently set.
+
+    Consumed by ``daemon._guard_feat008_test_seams_unset`` so the daemon
+    can refuse to start under a leaked seam without naming the env-var
+    literal itself (the AST gate at
+    ``tests/unit/test_logs_offset_advance_invariant.py`` enforces that
+    only this module references the literal).
+    """
+    return [_CLOCK_FAKE_ENV_VAR] if _CLOCK_FAKE_ENV_VAR in _os.environ else []
+
+
 def resolve_clock() -> Clock:
     """Return the appropriate :class:`Clock` implementation.
 
@@ -182,4 +194,5 @@ __all__ = [
     "SystemClock",
     "FakeClock",
     "resolve_clock",
+    "seam_names_currently_set",
 ]

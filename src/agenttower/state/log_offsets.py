@@ -167,11 +167,26 @@ def update_file_observation(
     )
 
 
-def _require_one_updated(cur: sqlite3.Cursor, *, operation: str) -> None:
-    if cur.rowcount != 1:
+def _require_row_exists(
+    conn: sqlite3.Connection,
+    *,
+    agent_id: str,
+    log_path: str,
+    operation: str,
+) -> None:
+    # SQLite's ``cursor.rowcount`` after UPDATE reflects rows *changed*, not
+    # *matched*. An UPDATE that writes identical column values returns 0
+    # even though the WHERE clause matched, so we can't use rowcount to
+    # distinguish "no row" from "no-op write." A pre-UPDATE existence
+    # probe is reliable and runs inside the caller's transaction.
+    row = conn.execute(
+        "SELECT 1 FROM log_offsets WHERE agent_id = ? AND log_path = ?",
+        (agent_id, log_path),
+    ).fetchone()
+    if row is None:
         raise sqlite3.OperationalError(
-            f"{operation}: expected to update 1 log_offsets row; "
-            f"updated {cur.rowcount}"
+            f"{operation}: no log_offsets row for "
+            f"(agent_id={agent_id!r}, log_path={log_path!r})"
         )
 
 
@@ -203,7 +218,10 @@ def advance_offset(
     exist; callers rely on this to roll back the paired event insert
     rather than silently re-reading the same bytes next cycle.
     """
-    cur = conn.execute(
+    _require_row_exists(
+        conn, agent_id=agent_id, log_path=log_path, operation="advance_offset"
+    )
+    conn.execute(
         """
         UPDATE log_offsets
            SET byte_offset = ?, line_offset = ?, last_event_offset = ?,
@@ -223,7 +241,6 @@ def advance_offset(
             log_path,
         ),
     )
-    _require_one_updated(cur, operation="advance_offset")
 
 
 def advance_offset_for_test(
@@ -245,7 +262,13 @@ def advance_offset_for_test(
     sole production-side advancer of offsets (FR-022 / FR-023). Function name
     starts with ``advance_offset_for_test`` to make accidental imports loud.
     """
-    cur = conn.execute(
+    _require_row_exists(
+        conn,
+        agent_id=agent_id,
+        log_path=log_path,
+        operation="advance_offset_for_test",
+    )
+    conn.execute(
         """
         UPDATE log_offsets
            SET byte_offset = ?, line_offset = ?, last_event_offset = ?,
@@ -265,4 +288,3 @@ def advance_offset_for_test(
             log_path,
         ),
     )
-    _require_one_updated(cur, operation="advance_offset_for_test")

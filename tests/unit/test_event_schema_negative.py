@@ -27,8 +27,12 @@ _SCHEMA_PATH = (
 @pytest.fixture(scope="module")
 def validator():
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    # format_checker is opt-in in jsonschema; enable it so the
-    # date-time format on observed_at / record_at is enforced.
+    # ``format_checker`` is opt-in in jsonschema; we wire it up so any
+    # format check the library can actually enforce fires here. Note
+    # that ``date-time`` enforcement specifically requires the optional
+    # ``rfc3339-validator`` dependency (not pinned); without it, the
+    # checker silently skips ``date-time`` — see the dedicated
+    # ``test_record_at_string_but_not_iso_fails`` skip below.
     return jsonschema.Draft202012Validator(
         schema,
         format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER,

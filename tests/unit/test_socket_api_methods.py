@@ -156,12 +156,15 @@ def test_status_does_not_re_read_schema_version(tmp_path: Path, monkeypatch) -> 
 
 
 class _ReaderSnapshot:
-    last_cycle_started_at = None
-    last_cycle_duration_ms = None
-    active_attachments = 0
-    attachments_in_failure: list[dict] = []
-    degraded_sqlite = None
-    degraded_jsonl = None
+    def __init__(self) -> None:
+        self.last_cycle_started_at = None
+        self.last_cycle_duration_ms = None
+        self.active_attachments = 0
+        # Per-instance list — keeping this as a class attribute would
+        # share the same list across every test that constructs a snapshot.
+        self.attachments_in_failure: list[dict] = []
+        self.degraded_sqlite = None
+        self.degraded_jsonl = None
 
 
 class _StoppedEventsReader:

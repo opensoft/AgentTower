@@ -139,9 +139,11 @@ def event_schema_validator():
     """Return a Draft 2020-12 validator for one event's JSONL/CLI shape.
 
     Test-only; ``jsonschema`` is in ``pyproject.toml``'s ``test`` extras
-    (T005) — runtime stays stdlib-only. ``format_checker`` is set so
-    the ``date-time`` format on ``observed_at`` / ``record_at`` is
-    actually enforced; jsonschema skips format validation by default.
+    (T005) — runtime stays stdlib-only. ``format_checker`` is wired up
+    so any format check the library can enforce fires here. Note that
+    ``date-time`` enforcement on ``observed_at`` / ``record_at``
+    specifically requires the optional ``rfc3339-validator`` dependency
+    (not pinned); without it, the checker silently skips that format.
     """
     import json
 

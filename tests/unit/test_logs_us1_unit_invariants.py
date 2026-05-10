@@ -303,7 +303,7 @@ def test_t041_advance_offset_raises_when_row_missing(primed_db: Path) -> None:
     """A production offset advance must fail if no target row exists."""
     conn = sqlite3.connect(str(primed_db), isolation_level=None)
     try:
-        with pytest.raises(sqlite3.OperationalError, match="expected to update 1"):
+        with pytest.raises(sqlite3.OperationalError, match="no log_offsets row"):
             lo_state.advance_offset(
                 conn,
                 agent_id=AGENT_ID,

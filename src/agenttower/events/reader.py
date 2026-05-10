@@ -74,6 +74,18 @@ _LOG = logging.getLogger(__name__)
 _READER_TICK_ENV_VAR = "AGENTTOWER_TEST_READER_TICK"
 
 
+def seam_names_currently_set() -> list[str]:
+    """Return the reader-tick seam env var if currently set, else ``[]``.
+
+    Consumed by ``daemon._guard_feat008_test_seams_unset`` so the daemon
+    can refuse to start under a leaked seam without naming the env-var
+    literal itself (the AST gate at
+    ``tests/unit/test_logs_offset_advance_invariant.py`` enforces that
+    only this module references the literal).
+    """
+    return [_READER_TICK_ENV_VAR] if _READER_TICK_ENV_VAR in os.environ else []
+
+
 @dataclass(frozen=True)
 class ReaderStatusSnapshot:
     """Serializable snapshot for ``agenttower status`` (data-model.md §7)."""
