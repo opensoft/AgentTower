@@ -100,22 +100,22 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Daemon socket method `events.list`
 
-- [ ] T037 [US1] Implement `_events_list` dispatcher in `src/agenttower/socket_api/methods.py` per `contracts/socket-events.md` C-EVT-001: validate filter (T009 DAO), return `agent_not_found` envelope when `target` is not in FEAT-006 registry (FR-035a), return `events_filter_invalid` for unknown types / inverted ranges, return `events_invalid_cursor` for malformed cursors. Returns `{events, next_cursor}`.
-- [ ] T038 [US1] Wire `_events_list` into the dispatcher table and add peer-uid auth check (reuse FEAT-002 pattern). Also expose the diagnostic `events.classifier_rules` method per C-EVT-005.
+- [X] T037 [US1] Implement `_events_list` dispatcher in `src/agenttower/socket_api/methods.py` per `contracts/socket-events.md` C-EVT-001: validate filter (T009 DAO), return `agent_not_found` envelope when `target` is not in FEAT-006 registry (FR-035a), return `events_filter_invalid` for unknown types / inverted ranges, return `events_invalid_cursor` for malformed cursors. Returns `{events, next_cursor}`.
+- [X] T038 [US1] Wire `_events_list` into the dispatcher table and add peer-uid auth check (reuse FEAT-002 pattern). Also expose the diagnostic `events.classifier_rules` method per C-EVT-005.
 
 ### CLI `events` (list mode)
 
-- [ ] T039 [US1] Add `events` subparser to `src/agenttower/cli.py` per `contracts/cli-events.md` C-CLI-EVT-001: flags `--target`, `--type` (repeatable), `--since`, `--until`, `--limit`, `--cursor`, `--reverse`, `--json`, plus the hidden `--classifier-rules`. Client-side validation: agent_id shape, type enum, ISO-8601, limit bounds, mutually-exclusive flag combos.
-- [ ] T040 [US1] Implement `_events_command` (human + JSON output) in `src/agenttower/cli.py`. Human format per `contracts/cli-events.md` (timestamp / agent label & id / event_type / excerpt) — FR-031 default human output. JSON output is the FR-027 / FR-032 stable contract: one event per line, NDJSON-compatible, terminating `\n`. `next_cursor` printed on stderr (`# next_cursor: <token>`) in human mode and as a final single-key JSON line in `--json` mode. FR-030 flag set wired via T039.
-- [ ] T041 [US1] Map daemon error envelopes to CLI exit codes per `contracts/socket-events.md` §"Error envelope additions" — 4 for `agent_not_found`, 6 for `events_invalid_cursor`, 7 for `events_filter_invalid`. Print human stderr message; in `--json` mode write `{"error": {...}}` to stderr (NOT stdout).
+- [X] T039 [US1] Add `events` subparser to `src/agenttower/cli.py` per `contracts/cli-events.md` C-CLI-EVT-001: flags `--target`, `--type` (repeatable), `--since`, `--until`, `--limit`, `--cursor`, `--reverse`, `--json`, plus the hidden `--classifier-rules`. Client-side validation: agent_id shape, type enum, ISO-8601, limit bounds, mutually-exclusive flag combos.
+- [X] T040 [US1] Implement `_events_command` (human + JSON output) in `src/agenttower/cli.py`. Human format per `contracts/cli-events.md` (timestamp / agent label & id / event_type / excerpt) — FR-031 default human output. JSON output is the FR-027 / FR-032 stable contract: one event per line, NDJSON-compatible, terminating `\n`. `next_cursor` printed on stderr (`# next_cursor: <token>`) in human mode and as a final single-key JSON line in `--json` mode. FR-030 flag set wired via T039.
+- [X] T041 [US1] Map daemon error envelopes to CLI exit codes per `contracts/socket-events.md` §"Error envelope additions" — 4 for `agent_not_found`, 6 for `events_invalid_cursor`, 7 for `events_filter_invalid`. Print human stderr message; in `--json` mode write `{"error": {...}}` to stderr (NOT stdout).
 
 ### US1 integration tests
 
-- [ ] T042 [P] [US1] `tests/integration/test_events_us1_inspect.py` — Acceptance Scenario 1: write one `error` line, wait one reader cycle, assert exactly one `error` event with the redacted excerpt and `observed_at >= write time`. SC-001 timing assertion: end-to-end (write → reader cycle → SQLite commit → CLI render) wall-clock ≤ 5 s on a normal local SSD-backed CI runner; the test fails if any step blows the budget.
-- [ ] T043 [P] [US1] `test_events_us1_inspect.py` — AS2: write one `error` then one `test_passed`, assert both appear in strict reader-observed order, oldest-first.
-- [ ] T044 [P] [US1] `test_events_us1_inspect.py` — AS3: write a line containing one of the FEAT-007 redaction patterns, assert the SQLite excerpt and the JSONL excerpt are both the redacted form.
-- [ ] T045 [P] [US1] `test_events_us1_inspect.py` — AS4: registered agent with no log attachment → `events --target` returns empty result, exit 0, no synthesized "no attachment" event.
-- [ ] T046 [P] [US1] `tests/integration/test_events_agent_not_found.py` — AS5 / FR-035a: `events --target agt_doesnotexist` exits 4, stderr contains `agent_not_found`. Same path for `events --follow --target agt_doesnotexist`.
+- [X] T042 [P] [US1] `tests/integration/test_events_us1_inspect.py` — Acceptance Scenario 1: write one `error` line, wait one reader cycle, assert exactly one `error` event with the redacted excerpt and `observed_at >= write time`. SC-001 timing assertion: end-to-end (write → reader cycle → SQLite commit → CLI render) wall-clock ≤ 5 s on a normal local SSD-backed CI runner; the test fails if any step blows the budget.
+- [X] T043 [P] [US1] `test_events_us1_inspect.py` — AS2: write one `error` then one `test_passed`, assert both appear in strict reader-observed order, oldest-first.
+- [X] T044 [P] [US1] `test_events_us1_inspect.py` — AS3: write a line containing one of the FEAT-007 redaction patterns, assert the SQLite excerpt and the JSONL excerpt are both the redacted form.
+- [X] T045 [P] [US1] `test_events_us1_inspect.py` — AS4: registered agent with no log attachment → `events --target` returns empty result, exit 0, no synthesized "no attachment" event.
+- [X] T046 [P] [US1] `tests/integration/test_events_agent_not_found.py` — AS5 / FR-035a: `events --target agt_doesnotexist` exits 4, stderr contains `agent_not_found`. Same path for `events --follow --target agt_doesnotexist`.
 
 **Checkpoint**: US1 is the MVP increment — list and inspect events end-to-end, with JSON output, redaction, and the `agent_not_found` error contract wired. SC-001 testable from here.
 

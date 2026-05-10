@@ -62,6 +62,9 @@ def test_status_json_output_shape(env: dict[str, str]) -> None:
         "pid",
         "start_time_utc",
         "uptime_seconds",
+        # FEAT-008 — data-model.md §7.
+        "events_reader",
+        "events_persistence",
         "socket_path",
         "state_path",
         "schema_version",

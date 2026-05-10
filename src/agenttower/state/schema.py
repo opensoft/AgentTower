@@ -437,12 +437,17 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
             f"build supports ({CURRENT_SCHEMA_VERSION}); refusing to open"
         )
     # Existing DB at current version: ensure FEAT-003 + FEAT-004 + FEAT-006
-    # + FEAT-007 tables exist in case the schema_version row got there ahead
-    # of the tables (defensive — every migration body uses IF NOT EXISTS).
+    # + FEAT-007 + FEAT-008 tables exist in case the schema_version row got
+    # there ahead of the tables (defensive — every migration body uses
+    # IF NOT EXISTS). This ALSO applies on fresh databases: a brand-new
+    # registry has its schema_version row inserted at CURRENT_SCHEMA_VERSION
+    # (so ``_apply_pending_migrations`` is skipped) and relies on this
+    # branch to create every per-feature table.
     _apply_migration_v2(conn)
     _apply_migration_v3(conn)
     _apply_migration_v4(conn)
     _apply_migration_v5(conn)
+    _apply_migration_v6(conn)
 
 
 def _chmod_new_companions(

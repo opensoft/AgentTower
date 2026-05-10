@@ -20,13 +20,14 @@ class TestDispatchTableCardinality:
         FEAT-006 explicitly adds 5 methods (FR-023): ``register_agent``,
         ``list_agents``, ``set_role``, ``set_label``, ``set_capability``.
         FEAT-007 adds 4 more (FR-038): ``attach_log``, ``detach_log``,
-        ``attach_log_status``, ``attach_log_preview``. This test pins the
-        closed FEAT-001..007 set so an accidental extra method cannot
-        sneak in beyond the spec'd surface.
+        ``attach_log_status``, ``attach_log_preview``. FEAT-008 adds 2
+        more: ``events.list``, ``events.classifier_rules``. This test
+        pins the closed FEAT-001..008 set so an accidental extra method
+        cannot sneak in beyond the spec'd surface.
         """
         from agenttower.socket_api import methods as methods_module
 
-        # The dispatch table is `DISPATCH` per the FEAT-002..007 builds.
+        # The dispatch table is `DISPATCH` per the FEAT-002..008 builds.
         dispatch = getattr(methods_module, "DISPATCH", None)
         assert dispatch is not None, "expected DISPATCH dict in socket_api/methods.py"
         assert isinstance(dispatch, dict)
@@ -47,8 +48,10 @@ class TestDispatchTableCardinality:
             "detach_log",
             "attach_log_status",
             "attach_log_preview",
+            "events.list",
+            "events.classifier_rules",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 16
+        assert len(dispatch) == 18
 
 
 # ---------------------------------------------------------------------------

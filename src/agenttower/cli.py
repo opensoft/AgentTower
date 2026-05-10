@@ -855,6 +855,67 @@ def _build_parser() -> argparse.ArgumentParser:
     detach_log.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     detach_log.set_defaults(_handler=_detach_log_command)
 
+    # ------------------------------------------------------------------ #
+    # FEAT-008 — events (FR-030 / FR-031 / FR-032 / FR-033 / FR-035a)
+    # ------------------------------------------------------------------ #
+
+    events_cmd = subparsers.add_parser(
+        "events",
+        help="list classified events from attached agents",
+        description=(
+            "list classified events emitted by the FEAT-008 reader from "
+            "attached pane logs (FEAT-008)"
+        ),
+    )
+    events_cmd.add_argument(
+        "--target",
+        default=None,
+        help="filter to one agent id (agt_<12 hex>)",
+    )
+    events_cmd.add_argument(
+        "--type",
+        action="append",
+        default=[],
+        help="filter to one event type (repeatable; e.g. --type error --type test_failed)",
+    )
+    events_cmd.add_argument(
+        "--since",
+        default=None,
+        help="lower bound on observed_at (inclusive ISO-8601 with offset)",
+    )
+    events_cmd.add_argument(
+        "--until",
+        default=None,
+        help="upper bound on observed_at (exclusive ISO-8601 with offset)",
+    )
+    events_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="page size (default 50, max 50)",
+    )
+    events_cmd.add_argument(
+        "--cursor",
+        default=None,
+        help="opaque pagination cursor returned by a previous --json response",
+    )
+    events_cmd.add_argument(
+        "--reverse",
+        action="store_true",
+        help="newest-first instead of oldest-first",
+    )
+    events_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help=JSON_LINE_HELP,
+    )
+    events_cmd.add_argument(
+        "--classifier-rules",
+        action="store_true",
+        help=argparse.SUPPRESS,  # hidden debug flag
+    )
+    events_cmd.set_defaults(_handler=_events_command)
+
     return parser
 
 
@@ -1665,12 +1726,23 @@ def _exit_code_for(code: str) -> int:
 
     ``host_context_unsupported`` is exit 1 (client-side context error —
     the operator is on the host shell, not in a bench container).
-    Every other closed-set code is exit 3 (FEAT-002 / FEAT-005
-    daemon-error convention).  ``daemon_unavailable`` is handled by
+    FEAT-008 ``events.*`` error codes use distinct exit codes per
+    ``contracts/socket-events.md`` §"Error envelope additions" so
+    scripts can distinguish ``agent_not_found`` from a generic daemon
+    error. Every other closed-set code is exit 3 (FEAT-002 / FEAT-005
+    daemon-error convention). ``daemon_unavailable`` is handled by
     callers (exit 2) before any error code is even raised.
     """
     if code == "host_context_unsupported":
         return 1
+    if code == "agent_not_found":
+        return 4
+    if code in ("events_session_unknown", "events_session_expired"):
+        return 5
+    if code == "events_invalid_cursor":
+        return 6
+    if code == "events_filter_invalid":
+        return 7
     return 3
 
 
@@ -1725,6 +1797,166 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     return int(handler(args))
+
+
+# ---------------------------------------------------------------------------
+# FEAT-008 — `agenttower events` (FR-030 / FR-031 / FR-032 / FR-035a)
+# ---------------------------------------------------------------------------
+
+
+_VALID_EVENT_TYPES = frozenset(
+    {
+        "activity", "waiting_for_input", "completed", "error",
+        "test_failed", "test_passed", "manual_review_needed",
+        "long_running", "pane_exited", "swarm_member_reported",
+    }
+)
+
+
+def _events_validate_args_local(args: argparse.Namespace) -> int | None:
+    """Client-side argument validation BEFORE any daemon round-trip.
+
+    Returns None when the args are well-formed; otherwise emits a local
+    ``bad_request`` / ``value_out_of_set`` error and returns the CLI
+    exit code (2 for argument errors per
+    ``contracts/cli-events.md`` C-CLI-EVT-001).
+    """
+    from .agents.identifiers import AGENT_ID_RE
+
+    if args.target is not None:
+        if not isinstance(args.target, str) or not AGENT_ID_RE.match(args.target):
+            _emit_local_error(
+                "value_out_of_set",
+                f"--target must match agt_<12-hex-lowercase>; got {args.target!r}",
+                args.json,
+            )
+            return 2
+
+    for t in (args.type or []):
+        if t not in _VALID_EVENT_TYPES:
+            _emit_local_error(
+                "value_out_of_set",
+                f"unknown event type {t!r}; valid: {sorted(_VALID_EVENT_TYPES)}",
+                args.json,
+            )
+            return 2
+
+    if args.limit is not None:
+        if args.limit <= 0 or args.limit > 50:
+            _emit_local_error(
+                "bad_request",
+                f"--limit must be in 1..50; got {args.limit}",
+                args.json,
+            )
+            return 2
+
+    for label, value in (("--since", args.since), ("--until", args.until)):
+        if value is not None and not _is_iso8601_with_offset(value):
+            _emit_local_error(
+                "bad_request",
+                f"{label} must be ISO-8601 with an explicit offset; got {value!r}",
+                args.json,
+            )
+            return 2
+
+    return None
+
+
+def _is_iso8601_with_offset(value: str) -> bool:
+    """Tolerant ISO-8601 sanity check: must end with ``Z`` or
+    ``±HH:MM`` and parse via ``datetime.fromisoformat``."""
+    from datetime import datetime as _dt
+
+    if not isinstance(value, str) or not value:
+        return False
+    norm = value.replace("Z", "+00:00")
+    try:
+        parsed = _dt.fromisoformat(norm)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _events_command(args: argparse.Namespace) -> int:
+    """``agenttower events`` (FEAT-008 list mode + classifier-rules debug)."""
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    if args.classifier_rules:
+        try:
+            result = send_request(
+                socket_path, "events.classifier_rules", {},
+                connect_timeout=2.0, read_timeout=5.0,
+            )
+        except DaemonUnavailable:
+            print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            return 3
+        except DaemonError as exc:
+            return _emit_daemon_error(exc, args.json)
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print("priority  rule_id                     -> event_type")
+            for r in result.get("rules", []):
+                print(
+                    f"{r['priority']:>9} {r['rule_id']:<26} -> {r['event_type']}"
+                )
+            print()
+            print("synthetic rules (not regex; reader-synthesized):")
+            for sid in result.get("synthetic_rule_ids", []):
+                print(f"  {sid}")
+        return 0
+
+    err = _events_validate_args_local(args)
+    if err is not None:
+        return err
+
+    params: dict[str, Any] = {}
+    if args.target is not None:
+        params["target"] = args.target
+    if args.type:
+        params["types"] = list(args.type)
+    if args.since is not None:
+        params["since"] = args.since
+    if args.until is not None:
+        params["until"] = args.until
+    if args.limit is not None:
+        params["limit"] = args.limit
+    if args.cursor is not None:
+        params["cursor"] = args.cursor
+    if args.reverse:
+        params["reverse"] = True
+
+    try:
+        result = send_request(
+            socket_path, "events.list", params,
+            connect_timeout=2.0, read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 3
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    events = result.get("events", []) or []
+    next_cursor = result.get("next_cursor")
+
+    if args.json:
+        for event in events:
+            print(json.dumps(event, separators=(",", ":")))
+        if next_cursor is not None:
+            print(json.dumps({"next_cursor": next_cursor}, separators=(",", ":")))
+    else:
+        for event in events:
+            ts = (event.get("observed_at") or "")[:19].replace("T", " ")
+            label = event.get("agent_id") or ""
+            etype = event.get("event_type") or ""
+            excerpt = (event.get("excerpt") or "").splitlines()[0] if event.get("excerpt") else ""
+            print(f"{ts}  {label}  {etype:<22} {excerpt}")
+        if next_cursor is not None:
+            print(f"# next_cursor: {next_cursor}", file=sys.stderr)
+
+    return 0
 
 
 if __name__ == "__main__":

@@ -502,8 +502,209 @@ def _attach_log_preview(
     )
 
 
+# ---------------------------------------------------------------------------
+# FEAT-008 — events.* methods (T037 / T038).
+# ---------------------------------------------------------------------------
+
+
+_EVENTS_VALID_TYPES = frozenset(
+    {
+        "activity", "waiting_for_input", "completed", "error",
+        "test_failed", "test_passed", "manual_review_needed",
+        "long_running", "pane_exited", "swarm_member_reported",
+    }
+)
+
+
+def _events_resolve_target(
+    ctx: DaemonContext, target: str | None
+) -> dict[str, Any] | None:
+    """Return an error envelope iff ``target`` is set AND not in the
+    FEAT-006 registry; otherwise None (the caller proceeds)."""
+    if target is None:
+        return None
+    if ctx.agent_service is None:
+        return errors.make_error(
+            errors.INTERNAL_ERROR, "agent service unavailable"
+        )
+    # The FEAT-006 list_agents signature takes a positional dict ``params``
+    # and returns a dict containing ``agents`` (a list of dicts).
+    try:
+        listing = ctx.agent_service.list_agents(
+            {"schema_version": ctx.schema_version}
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        return errors.make_error(
+            errors.INTERNAL_ERROR, f"agent service failed: {exc}"
+        )
+    rows = (
+        listing.get("agents", []) if isinstance(listing, dict) else []
+    )
+    found = any(
+        (row.get("agent_id") if isinstance(row, dict) else getattr(row, "agent_id", None))
+        == target
+        for row in rows
+    )
+    if not found:
+        return errors.make_error(
+            errors.AGENT_NOT_FOUND,
+            f"no agent registered with id {target}",
+        )
+    return None
+
+
+def _events_validate_filter(params: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate the ``events.list`` filter shape; None means OK."""
+    types = params.get("types") or []
+    if not isinstance(types, list):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID, "types must be a list"
+        )
+    for t in types:
+        if not isinstance(t, str) or t not in _EVENTS_VALID_TYPES:
+            return errors.make_error(
+                errors.EVENTS_FILTER_INVALID,
+                f"unknown event type: {t!r}",
+            )
+    since = params.get("since")
+    until = params.get("until")
+    if since is not None and not isinstance(since, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID, "since must be an ISO-8601 string"
+        )
+    if until is not None and not isinstance(until, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID, "until must be an ISO-8601 string"
+        )
+    if since is not None and until is not None and since > until:
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"since ({since}) must be <= until ({until})",
+        )
+    limit = params.get("limit")
+    if limit is not None:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            return errors.make_error(
+                errors.EVENTS_FILTER_INVALID,
+                f"limit must be a positive integer; got {limit!r}",
+            )
+    return None
+
+
+def _event_row_to_payload(row: Any, *, include_jsonl_appended_at: bool = False) -> dict[str, Any]:
+    """Render one ``EventRow`` into the FR-027 stable JSON shape."""
+    payload = {
+        "event_id": row.event_id,
+        "event_type": row.event_type,
+        "agent_id": row.agent_id,
+        "attachment_id": row.attachment_id,
+        "log_path": row.log_path,
+        "byte_range_start": row.byte_range_start,
+        "byte_range_end": row.byte_range_end,
+        "line_offset_start": row.line_offset_start,
+        "line_offset_end": row.line_offset_end,
+        "observed_at": row.observed_at,
+        "record_at": row.record_at,
+        "excerpt": row.excerpt,
+        "classifier_rule_id": row.classifier_rule_id,
+        "debounce": {
+            "window_id": row.debounce_window_id,
+            "collapsed_count": row.debounce_collapsed_count,
+            "window_started_at": row.debounce_window_started_at,
+            "window_ended_at": row.debounce_window_ended_at,
+        },
+        "schema_version": row.schema_version,
+    }
+    if include_jsonl_appended_at:
+        payload["jsonl_appended_at"] = row.jsonl_appended_at
+    return payload
+
+
+def _events_list(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.list`` — FR-030 / FR-035a per ``contracts/socket-events.md``
+    C-EVT-001."""
+    import sqlite3
+
+    from ..events.dao import (
+        CursorError,
+        EventFilter,
+        select_events,
+    )
+    from .. import events as events_pkg
+
+    target = params.get("target")
+    if target is not None and not isinstance(target, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"target must be a string; got {type(target).__name__}",
+        )
+
+    err = _events_validate_filter(params)
+    if err is not None:
+        return err
+
+    err = _events_resolve_target(ctx, target)
+    if err is not None:
+        return err
+
+    limit = int(params.get("limit") or events_pkg.DEFAULT_PAGE_SIZE)
+    if limit > events_pkg.MAX_PAGE_SIZE:
+        limit = events_pkg.MAX_PAGE_SIZE
+    cursor = params.get("cursor")
+    reverse = bool(params.get("reverse", False))
+    types = tuple(params.get("types") or [])
+    filter = EventFilter(
+        target_agent_id=target,
+        types=types,
+        since_iso=params.get("since"),
+        until_iso=params.get("until"),
+    )
+
+    conn = sqlite3.connect(str(ctx.state_path / "agenttower.sqlite3"))
+    try:
+        try:
+            rows, next_cursor = select_events(
+                conn, filter=filter, cursor=cursor, limit=limit, reverse=reverse
+            )
+        except CursorError as exc:
+            return errors.make_error(errors.EVENTS_INVALID_CURSOR, str(exc))
+    finally:
+        conn.close()
+
+    return errors.make_ok(
+        {
+            "events": [_event_row_to_payload(r) for r in rows],
+            "next_cursor": next_cursor,
+        }
+    )
+
+
+def _events_classifier_rules(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.classifier_rules`` — debug surface per C-EVT-005."""
+    from ..events import classifier_rules as cr
+
+    return errors.make_ok(
+        {
+            "rules": [
+                {
+                    "rule_id": r.rule_id,
+                    "event_type": r.event_type,
+                    "priority": r.priority,
+                }
+                for r in cr.RULES
+            ],
+            "synthetic_rule_ids": list(cr.SYNTHETIC_RULE_IDS),
+        }
+    )
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
-# FEAT-003's two, FEAT-004's two, FEAT-006's five, and FEAT-007's four.
+# FEAT-003's two, FEAT-004's two, FEAT-006's five, FEAT-007's four,
+# and FEAT-008's events.* surface.
 # FEAT-002 keys retain insertion order (FR-022).
 DISPATCH: dict[str, Handler] = {
     "ping": _ping,
@@ -522,4 +723,6 @@ DISPATCH: dict[str, Handler] = {
     "detach_log": _detach_log,
     "attach_log_status": _attach_log_status,
     "attach_log_preview": _attach_log_preview,
+    "events.list": _events_list,
+    "events.classifier_rules": _events_classifier_rules,
 }
