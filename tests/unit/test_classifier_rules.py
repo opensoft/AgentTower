@@ -11,8 +11,6 @@ one wins) are exercised in ``test_classifier_priority.py``.
 
 from __future__ import annotations
 
-import pytest
-
 from agenttower.events.classifier import classify
 from agenttower.events.classifier_rules import RULES
 

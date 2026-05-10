@@ -158,7 +158,7 @@ def test_successful_commit_persists_event_and_advances_offset(tmp_path: Path) ->
         "agenttower.events.reader.reader_recovery.reader_cycle_offset_recovery",
         side_effect=_fake_recovery,
     ):
-        result = reader.run_cycle_for_attachment(
+        reader.run_cycle_for_attachment(
             conn,
             attachment=_make_attachment(str(log_path)),
             now_iso="2026-05-10T00:00:01.000000+00:00",

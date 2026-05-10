@@ -16,7 +16,6 @@ import pytest
 from agenttower.events.dao import (
     EventFilter,
     EventRow,
-    encode_cursor,
     insert_event,
     mark_jsonl_appended,
     select_event_by_id,
@@ -105,7 +104,7 @@ def _seed_three_agents(conn: sqlite3.Connection) -> dict[str, list[int]]:
 
 def test_default_ordering_is_oldest_first(tmp_path: Path) -> None:
     conn = _open_v6(tmp_path)
-    inserted = _seed_three_agents(conn)
+    _seed_three_agents(conn)
     rows, next_cursor = select_events(
         conn, filter=EventFilter(), cursor=None, limit=50, reverse=False
     )
@@ -118,7 +117,7 @@ def test_default_ordering_is_oldest_first(tmp_path: Path) -> None:
 
 def test_target_filter(tmp_path: Path) -> None:
     conn = _open_v6(tmp_path)
-    inserted = _seed_three_agents(conn)
+    _seed_three_agents(conn)
     rows, _ = select_events(
         conn,
         filter=EventFilter(target_agent_id="agt_bbbbbbbbbbbb"),

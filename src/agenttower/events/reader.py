@@ -40,8 +40,7 @@ import os
 import socket
 import sqlite3
 import threading
-import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -59,12 +58,10 @@ from .classifier import classify
 from .dao import EventRow, insert_event, mark_jsonl_appended, select_pending_jsonl
 from .debounce import DebounceManager, PendingEvent
 from .session_registry import FollowSessionRegistry
-from ..logs import host_fs as host_fs_mod
 from ..logs import reader_recovery
 from ..socket_api.lifecycle import LifecycleLogger
 from ..state import log_attachments as la_state
 from ..state import log_offsets as lo_state
-from ..state import panes as panes_state
 
 
 _LOG = logging.getLogger(__name__)
@@ -173,6 +170,11 @@ class EventsReader:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        """Spawn the reader thread.
+
+        Idempotent: if the thread is already alive, this is a no-op.
+        The thread runs as a daemon so process exit never blocks on it.
+        """
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -182,12 +184,20 @@ class EventsReader:
         self._thread.start()
 
     def stop(self, *, timeout: float = 5.0) -> None:
+        """Signal shutdown and join the reader thread.
+
+        Sets the internal ``threading.Event`` that the run loop polls
+        between cycles, then joins with ``timeout`` (default 5 s). If
+        the thread doesn't return within the budget, the daemon=True
+        flag means it's terminated when the process exits.
+        """
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             self._thread = None
 
     def is_running(self) -> bool:
+        """Return ``True`` iff the reader thread is alive."""
         return self._thread is not None and self._thread.is_alive()
 
     # ------------------------------------------------------------------
@@ -195,6 +205,13 @@ class EventsReader:
     # ------------------------------------------------------------------
 
     def status_snapshot(self) -> ReaderStatusSnapshot:
+        """Return a thread-safe snapshot of the reader's status fields.
+
+        Consumed by the ``agenttower status`` socket method to populate
+        the ``events_reader`` and ``events_persistence`` keys per
+        ``data-model.md`` §7. Lock-protected so a follower or status
+        caller never observes a half-mutated snapshot.
+        """
         with self._lock:
             return ReaderStatusSnapshot(
                 last_cycle_started_at=self._last_cycle_started_at,
@@ -438,16 +455,17 @@ class EventsReader:
             return result
 
         # T059 — FR-021 invariant: the byte-read step MUST start at the
-        # persisted ``byte_offset``. A defensive assertion here makes
-        # any future refactor that introduces an in-memory offset
-        # cache visibly fail rather than silently emitting events for
-        # already-classified bytes.
+        # persisted ``byte_offset``. The defensive guard below uses a
+        # raise (not assert) so it survives ``python -O`` stripping —
+        # the invariant is load-bearing for correctness, not just a
+        # development aid.
         persisted_byte_offset = offset_row.byte_offset
-        assert persisted_byte_offset >= 0, (
-            f"FR-021 violation: persisted byte_offset is "
-            f"{persisted_byte_offset} for attachment "
-            f"{attachment.attachment_id}; offsets must always be >= 0"
-        )
+        if persisted_byte_offset < 0:
+            raise RuntimeError(
+                f"FR-021 violation: persisted byte_offset is "
+                f"{persisted_byte_offset} for attachment "
+                f"{attachment.attachment_id}; offsets must always be >= 0"
+            )
 
         # ----- Step 5: read bytes -----
         try:

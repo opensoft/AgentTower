@@ -369,7 +369,7 @@ def select_events(
         f"SELECT {_SELECT_FIELDS} FROM events"
         f"{where_clause}"
         f" ORDER BY observed_at {order}, byte_range_start {order}, event_id {order}"
-        f" LIMIT ?"
+        " LIMIT ?"
     )
     # Fetch one extra row to detect "more pages exist".
     params.append(limit + 1)

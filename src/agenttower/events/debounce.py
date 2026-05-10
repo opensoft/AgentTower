@@ -15,8 +15,8 @@ Public surface:
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 from . import DEBOUNCE_ACTIVITY_WINDOW_SECONDS
 from .classifier import ClassifierOutcome

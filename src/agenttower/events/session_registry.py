@@ -118,6 +118,13 @@ class FollowSessionRegistry:
         return session
 
     def get(self, session_id: str) -> Optional[FollowSession]:
+        """Return the :class:`FollowSession` for *session_id*, or None.
+
+        Thread-safe lookup. Callers that wait on the returned session's
+        ``condition`` should re-check membership after wakeup, since
+        the janitor (``gc_expired``) may remove the session during the
+        wait.
+        """
         with self._lock:
             return self._sessions.get(session_id)
 

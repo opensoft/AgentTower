@@ -15,8 +15,6 @@ get the same content.
 
 from __future__ import annotations
 
-import pytest
-
 from agenttower.events.classifier import classify, strip_ansi
 
 
