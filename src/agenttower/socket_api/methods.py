@@ -51,6 +51,11 @@ class DaemonContext:
     log_service: Any = None
     events_file: Path | None = None
     lifecycle_logger: Any = None
+    # FEAT-008 — populated at daemon boot once Phase 3 (US1) lands.
+    # Until then they remain ``None`` and the status surface reports
+    # ``running: false``. See ``data-model.md`` §7.
+    events_reader: Any = None
+    follow_session_registry: Any = None
 
 
 def _ping(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
@@ -61,6 +66,36 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
     now = datetime.now(timezone.utc)
     delta = (now - ctx.start_time_utc).total_seconds()
     uptime_seconds = max(0, int(delta))
+
+    # FEAT-008 — events_reader / events_persistence fields per
+    # data-model.md §7. The reader populates them via the
+    # ``events_reader`` and ``follow_session_registry`` attributes on
+    # the DaemonContext; until Phase 3 (US1) wires these, the fields
+    # default to a not-running state. They remain forward-compatible
+    # with future degraded-mode reporting (FR-029 / FR-040).
+    if ctx.events_reader is None:
+        events_reader = {
+            "running": False,
+            "last_cycle_started_at": None,
+            "last_cycle_duration_ms": None,
+            "active_attachments": 0,
+            "attachments_in_failure": [],
+        }
+        events_persistence = {"degraded_sqlite": None, "degraded_jsonl": None}
+    else:
+        snapshot = ctx.events_reader.status_snapshot()
+        events_reader = {
+            "running": True,
+            "last_cycle_started_at": snapshot.last_cycle_started_at,
+            "last_cycle_duration_ms": snapshot.last_cycle_duration_ms,
+            "active_attachments": snapshot.active_attachments,
+            "attachments_in_failure": snapshot.attachments_in_failure,
+        }
+        events_persistence = {
+            "degraded_sqlite": snapshot.degraded_sqlite,
+            "degraded_jsonl": snapshot.degraded_jsonl,
+        }
+
     return errors.make_ok(
         {
             "alive": True,
@@ -71,6 +106,8 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "state_path": str(ctx.state_path),
             "schema_version": ctx.schema_version,
             "daemon_version": ctx.daemon_version,
+            "events_reader": events_reader,
+            "events_persistence": events_persistence,
         }
     )
 

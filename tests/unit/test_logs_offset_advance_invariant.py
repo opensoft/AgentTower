@@ -99,6 +99,16 @@ _FEAT008_TEST_SEAM_NAMES = {
     "AGENTTOWER_TEST_READER_TICK",
 }
 
+# Each FEAT-008 seam has a single owner module (mirrors the FEAT-007
+# pattern from ``test_feat007_no_test_seam_in_production.py``). The
+# owner reads the env var; every other production module routes
+# through the owner's documented API (``Clock`` Protocol /
+# ``EventsReader`` ticker) and never names the seam directly.
+_FEAT008_SEAM_OWNERS: dict[str, pathlib.Path] = {
+    "AGENTTOWER_TEST_EVENTS_CLOCK_FAKE": SRC_ROOT / "events" / "__init__.py",
+    "AGENTTOWER_TEST_READER_TICK": SRC_ROOT / "events" / "reader.py",
+}
+
 
 def _references_feat008_test_seam(source: str) -> str | None:
     """Return the seam name iff *source* references one as a string literal."""
@@ -116,22 +126,29 @@ def _references_feat008_test_seam(source: str) -> str | None:
 def test_t004_no_production_module_references_feat008_test_seams(
     path: pathlib.Path,
 ) -> None:
-    """T004 — no production module under ``src/agenttower/`` may
-    reference the FEAT-008 test-seam env-var names.
+    """T004 — no NON-OWNER production module under ``src/agenttower/``
+    may reference the FEAT-008 test-seam env-var names.
 
-    Production code may freely call ``os.environ.get(<name>)`` for
-    any *FEAT-007* seam (``AGENTTOWER_TEST_LOG_FS_FAKE`` etc.) but
-    NOT the FEAT-008 ones; honoring those would let a production
-    daemon use a fake clock or a fake tick socket, defeating their
-    test-only purpose.
+    Each seam has a single owner module
+    (``events/__init__.py`` for the Clock seam,
+    ``events/reader.py`` for the reader-tick seam); other production
+    modules route through the owner's documented API and never name
+    the env var directly. This mirrors the FEAT-007 pattern
+    (``test_feat007_no_test_seam_in_production.py``).
     """
     source = path.read_text(encoding="utf-8")
     seam = _references_feat008_test_seam(source)
-    assert seam is None, (
+    if seam is None:
+        return
+    owner = _FEAT008_SEAM_OWNERS.get(seam)
+    if owner is not None and path.resolve() == owner.resolve():
+        return  # The seam's owner module IS allowed to reference it.
+    raise AssertionError(
         f"{path.relative_to(SRC_ROOT)} references the FEAT-008 test "
-        f"seam name {seam!r}; this seam is consumed only by the test "
-        "harness in tests/conftest.py. Production modules MUST NOT honor "
-        "or read this env var (T004 / FR-003 / FR-004)."
+        f"seam name {seam!r}; only the owner module "
+        f"{owner.relative_to(SRC_ROOT) if owner else '(none)'} is allowed to "
+        "read this env var. Other production modules must route through "
+        "the documented API (Clock Protocol / EventsReader ticker)."
     )
 
 

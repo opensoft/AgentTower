@@ -96,8 +96,24 @@ def test_status_returns_documented_shape(tmp_path: Path) -> None:
         "state_path",
         "schema_version",
         "daemon_version",
+        # FEAT-008 — data-model.md §7. With ``ctx.events_reader is
+        # None`` (no FEAT-008 reader wired in this test context), both
+        # fields are present with the documented "not running" defaults.
+        "events_reader",
+        "events_persistence",
     }
     assert set(result.keys()) == expected_keys
+    assert result["events_reader"] == {
+        "running": False,
+        "last_cycle_started_at": None,
+        "last_cycle_duration_ms": None,
+        "active_attachments": 0,
+        "attachments_in_failure": [],
+    }
+    assert result["events_persistence"] == {
+        "degraded_sqlite": None,
+        "degraded_jsonl": None,
+    }
     assert result["alive"] is True
     assert isinstance(result["pid"], int)
     assert isinstance(result["uptime_seconds"], int)

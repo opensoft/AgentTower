@@ -64,6 +64,14 @@ PIPE_PANE_FAILED: Final[str] = "pipe_pane_failed"
 ATTACHMENT_NOT_FOUND: Final[str] = "attachment_not_found"
 LOG_FILE_MISSING: Final[str] = "log_file_missing"
 
+# FEAT-008 additions (data-model.md §8). Note: AGENT_NOT_FOUND already
+# exists (FEAT-006); FEAT-008 reuses it for FR-035a `events --target`
+# unknown-agent flow.
+EVENTS_SESSION_UNKNOWN: Final[str] = "events_session_unknown"
+EVENTS_SESSION_EXPIRED: Final[str] = "events_session_expired"
+EVENTS_INVALID_CURSOR: Final[str] = "events_invalid_cursor"
+EVENTS_FILTER_INVALID: Final[str] = "events_filter_invalid"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
     {
         BAD_JSON,
@@ -112,6 +120,10 @@ CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
         PIPE_PANE_FAILED,
         ATTACHMENT_NOT_FOUND,
         LOG_FILE_MISSING,
+        EVENTS_SESSION_UNKNOWN,
+        EVENTS_SESSION_EXPIRED,
+        EVENTS_INVALID_CURSOR,
+        EVENTS_FILTER_INVALID,
     }
 )
 

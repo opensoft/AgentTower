@@ -126,6 +126,13 @@ def test_v3_to_current_preserves_feat001_through_feat004_tables(tmp_path: Path) 
         "log_offsets",
         "log_offsets_agent",
         "schema_version",
+        # FEAT-008 artifacts (events table + 4 indexes)
+        "events",
+        "idx_events_agent_eventid",
+        "idx_events_type_eventid",
+        "idx_events_observedat_eventid",
+        "idx_events_jsonl_pending",
+        "sqlite_sequence",  # AUTOINCREMENT bookkeeping table
     )
     name_filter = (
         "name NOT IN ("
