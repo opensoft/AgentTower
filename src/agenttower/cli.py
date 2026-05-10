@@ -191,6 +191,22 @@ def _config_paths(args: argparse.Namespace) -> int:
     print(f"SOCKET={resolved.path}")
     print(f"CACHE_DIR={paths.cache_dir}")
     print(f"SOCKET_SOURCE={resolved.source}")
+    # FEAT-008 FR-045: surface every [events] default with its resolved
+    # value so operators can see the effective configuration. Lines are
+    # appended to the existing FEAT-001..005 keys; FR-019 KEY ordering
+    # for the original seven entries is preserved.
+    from .config import load_events_block
+    events_cfg = load_events_block(paths.config_file)
+    print(f"EVENTS_READER_CYCLE_WALLCLOCK_CAP_SECONDS={events_cfg.reader_cycle_wallclock_cap_seconds}")
+    print(f"EVENTS_PER_CYCLE_BYTE_CAP_BYTES={events_cfg.per_cycle_byte_cap_bytes}")
+    print(f"EVENTS_PER_EVENT_EXCERPT_CAP_BYTES={events_cfg.per_event_excerpt_cap_bytes}")
+    print(f"EVENTS_DEBOUNCE_ACTIVITY_WINDOW_SECONDS={events_cfg.debounce_activity_window_seconds}")
+    print(f"EVENTS_PANE_EXITED_GRACE_SECONDS={events_cfg.pane_exited_grace_seconds}")
+    print(f"EVENTS_LONG_RUNNING_GRACE_SECONDS={events_cfg.long_running_grace_seconds}")
+    print(f"EVENTS_DEFAULT_PAGE_SIZE={events_cfg.default_page_size}")
+    print(f"EVENTS_MAX_PAGE_SIZE={events_cfg.max_page_size}")
+    print(f"EVENTS_FOLLOW_LONG_POLL_MAX_SECONDS={events_cfg.follow_long_poll_max_seconds}")
+    print(f"EVENTS_FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS={events_cfg.follow_session_idle_timeout_seconds}")
     if not paths.state_db.exists():
         print(
             "note: agenttower has not been initialized; run `agenttower config init`",
@@ -854,6 +870,76 @@ def _build_parser() -> argparse.ArgumentParser:
     detach_log.add_argument("--target", required=True, help=_AGENT_ID_HELP)
     detach_log.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
     detach_log.set_defaults(_handler=_detach_log_command)
+
+    # ------------------------------------------------------------------ #
+    # FEAT-008 — events (FR-030 / FR-031 / FR-032 / FR-033 / FR-035a)
+    # ------------------------------------------------------------------ #
+
+    events_cmd = subparsers.add_parser(
+        "events",
+        help="list classified events from attached agents",
+        description=(
+            "list classified events emitted by the FEAT-008 reader from "
+            "attached pane logs (FEAT-008)"
+        ),
+    )
+    events_cmd.add_argument(
+        "--target",
+        default=None,
+        help=(
+            "filter to one agent id (agt_<12 hex>); "
+            "run 'agenttower list-agents' to find ids. "
+            "Omit to list events from all agents."
+        ),
+    )
+    events_cmd.add_argument(
+        "--type",
+        action="append",
+        default=[],
+        help="filter to one event type (repeatable; e.g. --type error --type test_failed)",
+    )
+    events_cmd.add_argument(
+        "--since",
+        default=None,
+        help="lower bound on observed_at (inclusive ISO-8601 with offset)",
+    )
+    events_cmd.add_argument(
+        "--until",
+        default=None,
+        help="upper bound on observed_at (exclusive ISO-8601 with offset)",
+    )
+    events_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="page size (default 50, max 50)",
+    )
+    events_cmd.add_argument(
+        "--cursor",
+        default=None,
+        help="opaque pagination cursor returned by a previous --json response",
+    )
+    events_cmd.add_argument(
+        "--reverse",
+        action="store_true",
+        help="newest-first instead of oldest-first",
+    )
+    events_cmd.add_argument(
+        "--follow",
+        action="store_true",
+        help="stream new events as they are emitted",
+    )
+    events_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help=JSON_LINE_HELP,
+    )
+    events_cmd.add_argument(
+        "--classifier-rules",
+        action="store_true",
+        help=argparse.SUPPRESS,  # hidden debug flag
+    )
+    events_cmd.set_defaults(_handler=_events_command)
 
     return parser
 
@@ -1665,12 +1751,25 @@ def _exit_code_for(code: str) -> int:
 
     ``host_context_unsupported`` is exit 1 (client-side context error —
     the operator is on the host shell, not in a bench container).
-    Every other closed-set code is exit 3 (FEAT-002 / FEAT-005
-    daemon-error convention).  ``daemon_unavailable`` is handled by
+    FEAT-008 ``events.*`` error codes use distinct exit codes per
+    ``contracts/socket-events.md`` §"Error envelope additions" so
+    scripts can distinguish ``agent_not_found`` from a generic daemon
+    error. Every other closed-set code is exit 3 (FEAT-002 / FEAT-005
+    daemon-error convention). ``daemon_unavailable`` is handled by
     callers (exit 2) before any error code is even raised.
     """
     if code == "host_context_unsupported":
         return 1
+    if code == "agent_not_found":
+        return 4
+    if code == "events_session_unknown":
+        return 5
+    if code == "events_session_expired":
+        return 8
+    if code == "events_invalid_cursor":
+        return 6
+    if code == "events_filter_invalid":
+        return 7
     return 3
 
 
@@ -1725,6 +1824,351 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     return int(handler(args))
+
+
+# ---------------------------------------------------------------------------
+# FEAT-008 — `agenttower events` (FR-030 / FR-031 / FR-032 / FR-035a)
+# ---------------------------------------------------------------------------
+
+
+def _sanitize_for_terminal(s: str) -> str:
+    """Escape control bytes before printing to a terminal (CRIT-1).
+
+    Log content (event excerpts) flows through the redaction utility but
+    is otherwise byte-for-byte from the PTY stream. ANSI/OSC escape
+    sequences (``\\x1b[...m``, ``\\x1b]0;...\\x07``), carriage returns,
+    backspaces, and tabs survive redaction. If we ``print()`` them
+    verbatim, an attacker-controlled log line can clear the operator's
+    screen, spoof the terminal title, or corrupt column alignment.
+
+    This helper produces a printable ASCII-safe string by escaping every
+    C0 control byte (\\x00-\\x1f) other than the printable forms
+    documented for events (we keep nothing — the human-mode renderer
+    pre-trims to a single line, so newlines should not survive). The
+    rendering uses ``\\xNN`` escapes that are immediately readable.
+
+    JSON output is unaffected — Python's json encoder already escapes
+    these as ``\\u00xx``.
+    """
+    if not s:
+        return ""
+    out: list[str] = []
+    for ch in s:
+        codepoint = ord(ch)
+        if codepoint < 0x20 or codepoint == 0x7f:
+            # C0 control set + DEL → escape.
+            out.append(f"\\x{codepoint:02x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+_VALID_EVENT_TYPES = frozenset(
+    {
+        "activity", "waiting_for_input", "completed", "error",
+        "test_failed", "test_passed", "manual_review_needed",
+        "long_running", "pane_exited", "swarm_member_reported",
+    }
+)
+
+
+def _events_validate_args_local(args: argparse.Namespace) -> int | None:
+    """Client-side argument validation BEFORE any daemon round-trip.
+
+    Returns None when the args are well-formed; otherwise emits a local
+    ``bad_request`` / ``value_out_of_set`` error and returns the CLI
+    exit code (2 for argument errors per
+    ``contracts/cli-events.md`` C-CLI-EVT-001).
+    """
+    from .agents.identifiers import AGENT_ID_RE
+
+    if args.target is not None:
+        if not isinstance(args.target, str) or not AGENT_ID_RE.match(args.target):
+            _emit_local_error(
+                "value_out_of_set",
+                f"--target must match agt_<12-hex-lowercase>; got {args.target!r}",
+                args.json,
+            )
+            return 2
+
+    for t in (args.type or []):
+        if t not in _VALID_EVENT_TYPES:
+            _emit_local_error(
+                "value_out_of_set",
+                f"unknown event type {t!r}; valid: {sorted(_VALID_EVENT_TYPES)}",
+                args.json,
+            )
+            return 2
+
+    if args.limit is not None:
+        if args.limit <= 0 or args.limit > 50:
+            _emit_local_error(
+                "bad_request",
+                f"--limit must be in 1..50; got {args.limit}",
+                args.json,
+            )
+            return 2
+
+    for label, value in (("--since", args.since), ("--until", args.until)):
+        if value is not None and not _is_iso8601_with_offset(value):
+            _emit_local_error(
+                "bad_request",
+                f"{label} must be ISO-8601 with an explicit offset; got {value!r}",
+                args.json,
+            )
+            return 2
+
+    return None
+
+
+def _is_iso8601_with_offset(value: str) -> bool:
+    """Tolerant ISO-8601 sanity check: must end with ``Z`` or
+    ``±HH:MM`` and parse via ``datetime.fromisoformat``."""
+    from datetime import datetime as _dt
+
+    if not isinstance(value, str) or not value:
+        return False
+    norm = value.replace("Z", "+00:00")
+    try:
+        parsed = _dt.fromisoformat(norm)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _events_command(args: argparse.Namespace) -> int:
+    """``agenttower events`` (FEAT-008 list / follow / classifier-rules)."""
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    # T053: --limit / --cursor / --reverse are not allowed with --follow.
+    if args.follow and (
+        args.limit is not None or args.cursor is not None or args.reverse
+    ):
+        _emit_local_error(
+            "bad_request",
+            "--limit / --cursor / --reverse are not allowed with --follow",
+            args.json,
+        )
+        return 2
+
+    if args.follow:
+        return _events_follow_loop(args, socket_path)
+
+    if args.classifier_rules:
+        try:
+            result = send_request(
+                socket_path, "events.classifier_rules", {},
+                connect_timeout=2.0, read_timeout=5.0,
+            )
+        except DaemonUnavailable:
+            print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            return 3
+        except DaemonError as exc:
+            return _emit_daemon_error(exc, args.json)
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print("priority  rule_id                     -> event_type")
+            for r in result.get("rules", []):
+                print(
+                    f"{r['priority']:>9} {r['rule_id']:<26} -> {r['event_type']}"
+                )
+            print()
+            print("synthetic rules (not regex; reader-synthesized):")
+            for sid in result.get("synthetic_rule_ids", []):
+                print(f"  {sid}")
+        return 0
+
+    err = _events_validate_args_local(args)
+    if err is not None:
+        return err
+
+    params: dict[str, Any] = {}
+    if args.target is not None:
+        params["target"] = args.target
+    if args.type:
+        params["types"] = list(args.type)
+    if args.since is not None:
+        params["since"] = args.since
+    if args.until is not None:
+        params["until"] = args.until
+    if args.limit is not None:
+        params["limit"] = args.limit
+    if args.cursor is not None:
+        params["cursor"] = args.cursor
+    if args.reverse:
+        params["reverse"] = True
+
+    try:
+        result = send_request(
+            socket_path, "events.list", params,
+            connect_timeout=2.0, read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 3
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    events = result.get("events", []) or []
+    next_cursor = result.get("next_cursor")
+
+    if args.json:
+        for event in events:
+            print(json.dumps(event, separators=(",", ":")))
+        if next_cursor is not None:
+            print(json.dumps({"next_cursor": next_cursor}, separators=(",", ":")))
+    else:
+        for event in events:
+            ts = (event.get("observed_at") or "")[:19].replace("T", " ")
+            label = event.get("agent_id") or ""
+            etype = event.get("event_type") or ""
+            raw_excerpt = (
+                (event.get("excerpt") or "").splitlines()[0]
+                if event.get("excerpt")
+                else ""
+            )
+            # CRIT-1 — sanitize control bytes before printing to a terminal.
+            excerpt = _sanitize_for_terminal(raw_excerpt)
+            print(f"{ts}  {label}  {etype:<22} {excerpt}")
+        if next_cursor is not None:
+            print(f"# next_cursor: {next_cursor}", file=sys.stderr)
+
+    return 0
+
+
+def _events_follow_loop(args: argparse.Namespace, socket_path: Path) -> int:
+    """``agenttower events --follow`` long-poll loop (T052 / T053).
+
+    Lifecycle (per ``contracts/cli-events.md`` C-CLI-EVT-002):
+
+    1. Pre-flight client-side argument validation.
+    2. ``events.follow_open`` — print backlog if --since was set, then
+       loop on ``events.follow_next``.
+    3. SIGINT → ``events.follow_close`` → exit 0.
+    4. Daemon-unreachable mid-stream → exit 3.
+    5. SIGPIPE (``BrokenPipeError`` from a closed downstream pipe) →
+       ``events.follow_close`` → exit 0 (treat as success).
+    """
+    import signal
+
+    err = _events_validate_args_local(args)
+    if err is not None:
+        return err
+
+    open_params: dict[str, Any] = {}
+    if args.target is not None:
+        open_params["target"] = args.target
+    if args.type:
+        open_params["types"] = list(args.type)
+    if args.since is not None:
+        open_params["since"] = args.since
+
+    try:
+        opened = send_request(
+            socket_path, "events.follow_open", open_params,
+            connect_timeout=2.0, read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 3
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    session_id: str = opened["session_id"]
+    backlog_events = opened.get("backlog_events") or []
+
+    # SIGINT handler flips a flag the loop checks between calls.
+    interrupt_flag = {"set": False}
+
+    def _on_sigint(signum, frame):  # noqa: ANN001
+        interrupt_flag["set"] = True
+
+    prior_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    def _print_event(event: dict[str, Any]) -> None:
+        if args.json:
+            print(json.dumps(event, separators=(",", ":")), flush=True)
+        else:
+            ts = (event.get("observed_at") or "")[:19].replace("T", " ")
+            label = event.get("agent_id") or ""
+            etype = event.get("event_type") or ""
+            # CRIT-1 — sanitize control bytes before printing.
+            excerpt = _sanitize_for_terminal(
+                (event.get("excerpt") or "").splitlines()[0]
+                if event.get("excerpt")
+                else ""
+            )
+            print(
+                f"{_sanitize_for_terminal(ts)}  {_sanitize_for_terminal(label)}  "
+                f"{_sanitize_for_terminal(etype):<22} {excerpt}",
+                flush=True,
+            )
+
+    try:
+        # 1. Print backlog first (FR-033 — bounded backlog before live).
+        for event in backlog_events:
+            _print_event(event)
+
+        # 2. Loop on follow_next until SIGINT or daemon unavailable.
+        while not interrupt_flag["set"]:
+            try:
+                # Short server-side wait so SIGINT response is bounded
+                # by ~1 second. The CLI loops and re-issues; the daemon
+                # is happy to be polled more often than the default
+                # 30 s long-poll budget.
+                result = send_request(
+                    socket_path,
+                    "events.follow_next",
+                    {"session_id": session_id, "max_wait_seconds": 1.0},
+                    connect_timeout=2.0,
+                    read_timeout=5.0,
+                )
+            except DaemonUnavailable:
+                if interrupt_flag["set"]:
+                    break
+                print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+                return 3
+            except DaemonError as exc:
+                if exc.code in (
+                    "events_session_unknown", "events_session_expired"
+                ):
+                    return _emit_daemon_error(exc, args.json)
+                return _emit_daemon_error(exc, args.json)
+            except KeyboardInterrupt:
+                interrupt_flag["set"] = True
+                break
+
+            if interrupt_flag["set"]:
+                break
+
+            for event in result.get("events", []) or []:
+                try:
+                    _print_event(event)
+                except BrokenPipeError:
+                    # Downstream consumer closed the pipe (e.g.
+                    # ``head -n N`` finished). Treat as clean exit.
+                    return 0
+
+            if not result.get("session_open", True):
+                break
+
+        return 0
+    finally:
+        # Always best-effort close.
+        try:
+            send_request(
+                socket_path,
+                "events.follow_close",
+                {"session_id": session_id},
+                connect_timeout=1.0,
+                read_timeout=2.0,
+            )
+        except Exception:  # noqa: BLE001 — best effort
+            pass
+        signal.signal(signal.SIGINT, prior_handler)
 
 
 if __name__ == "__main__":

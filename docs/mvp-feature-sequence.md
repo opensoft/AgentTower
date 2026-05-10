@@ -226,6 +226,14 @@ Out of scope:
 
 ## FEAT-008: Event Ingestion, Classification, and Follow CLI
 
+**Status: implemented.** See
+`specs/008-event-ingestion-follow/plan.md` for the implementation
+record. Acceptance items below are tested by integration tests under
+`tests/integration/test_events_us{1..6}*.py` plus
+`test_lifecycle_separation.py`. Carry-over obligations from FEAT-007
+(T175 truncation, T176 recreation, T177 round-trip) land in
+`test_events_us4_carryover.py`.
+
 Goal: convert pane logs into durable, inspectable AgentTower events.
 
 Build:

@@ -118,7 +118,18 @@ def test_offsets_persist_across_sigterm_restart(primed) -> None:
     )
     log_path = json.loads(proc.stdout)["result"]["log_path"]
 
-    # 2. Advance offset via the test seam.
+    # 2. Write a real log file matching the size we'll seed AND grab
+    # its actual inode. The FEAT-008 events reader runs on every active
+    # attachment per cycle and would observe a TRUNCATED state if the
+    # stored size/inode didn't match the on-disk file — resetting the
+    # offsets we just stored. Keeping them aligned makes the recovery
+    # see UNCHANGED so the durability invariant we're testing here
+    # (persistent offset rows survive a daemon restart) holds.
+    Path(log_path).write_bytes(b"x" * 8192)
+    real_stat = os.stat(log_path)
+    real_inode = f"{real_stat.st_dev}:{real_stat.st_ino}"
+
+    # 3. Advance offset via the test seam.
     conn = sqlite3.connect(str(paths["state_db"]), isolation_level=None)
     try:
         log_offsets.advance_offset_for_test(
@@ -128,7 +139,7 @@ def test_offsets_persist_across_sigterm_restart(primed) -> None:
             byte_offset=4096,
             line_offset=137,
             last_event_offset=3200,
-            file_inode="234:1234567",
+            file_inode=real_inode,
             file_size_seen=8192,
             last_output_at="2026-05-08T14:23:00.000000+00:00",
             timestamp="2026-05-08T14:23:00.000000+00:00",
@@ -136,13 +147,13 @@ def test_offsets_persist_across_sigterm_restart(primed) -> None:
     finally:
         conn.close()
 
-    # 3. Stop the daemon (SIGTERM via stop_daemon_if_alive) and re-launch.
+    # 4. Stop the daemon (SIGTERM via stop_daemon_if_alive) and re-launch.
     pre_restart = _read_offsets(paths["state_db"], agent_id)
-    assert pre_restart == (4096, 137, 3200, "234:1234567", 8192)
+    assert pre_restart == (4096, 137, 3200, real_inode, 8192)
     stop_daemon_if_alive(env)
     ensure_daemon(env)
 
-    # 4. Verify offsets unchanged byte-for-byte.
+    # 5. Verify offsets unchanged byte-for-byte.
     post_restart = _read_offsets(paths["state_db"], agent_id)
     assert post_restart == pre_restart, (
         f"offsets did not survive restart: pre={pre_restart!r} post={post_restart!r}"
@@ -174,6 +185,13 @@ def test_offsets_persist_across_sigkill_restart(primed) -> None:
     finally:
         conn.close()
 
+    # Match the on-disk file to the seeded offsets so the FEAT-008
+    # reader sees UNCHANGED at restart (see SIGTERM-restart test for
+    # rationale).
+    Path(log_path).write_bytes(b"x" * 20000)
+    real_stat = os.stat(log_path)
+    real_inode = f"{real_stat.st_dev}:{real_stat.st_ino}"
+
     conn = sqlite3.connect(str(paths["state_db"]), isolation_level=None)
     try:
         log_offsets.advance_offset_for_test(
@@ -183,7 +201,7 @@ def test_offsets_persist_across_sigkill_restart(primed) -> None:
             byte_offset=12345,
             line_offset=50,
             last_event_offset=10000,
-            file_inode="1:9999",
+            file_inode=real_inode,
             file_size_seen=20000,
             last_output_at="2026-05-08T14:23:00.000000+00:00",
             timestamp="2026-05-08T14:23:00.000000+00:00",

@@ -299,6 +299,27 @@ def test_t041_fk_to_agents_blocks_orphan_offset_row(primed_db: Path) -> None:
         conn.close()
 
 
+def test_t041_advance_offset_raises_when_row_missing(primed_db: Path) -> None:
+    """A production offset advance must fail if no target row exists."""
+    conn = sqlite3.connect(str(primed_db), isolation_level=None)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="no log_offsets row"):
+            lo_state.advance_offset(
+                conn,
+                agent_id=AGENT_ID,
+                log_path="/host/log/missing.log",
+                byte_offset=10,
+                line_offset=1,
+                last_event_offset=10,
+                file_inode=None,
+                file_size_seen=10,
+                last_output_at=NOW,
+                timestamp=NOW,
+            )
+    finally:
+        conn.close()
+
+
 # ===========================================================================
 # T042 — atomic BEGIN IMMEDIATE for log_attachments + log_offsets (FR-016)
 # ===========================================================================

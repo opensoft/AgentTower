@@ -14,7 +14,7 @@ from pathlib import Path
 from . import __version__
 from .agents.mutex import AgentLockMap, RegisterLockMap
 from .agents.service import AgentService
-from .config import load_containers_block
+from .config import load_containers_block, load_events_block
 from .discovery.pane_service import PaneDiscoveryService
 from .discovery.service import DiscoveryService
 from .docker import FakeDockerAdapter
@@ -63,6 +63,42 @@ def _build_parser() -> argparse.ArgumentParser:
     run.set_defaults(_handler=_run)
 
     return parser
+
+
+def _guard_feat008_test_seams_unset() -> None:
+    """Refuse to start if a FEAT-008 test seam is set outside a test harness.
+
+    The two FEAT-008 seams (clock fake + reader tick socket) are honored
+    unconditionally by the production code they target — leaking either
+    into a real daemon would freeze the reader or skew its clock.
+
+    The seam env-var literals are owned by ``events/__init__.py`` and
+    ``events/reader.py`` (enforced by the AST gate in
+    ``tests/unit/test_logs_offset_advance_invariant.py``). This helper
+    asks each owner module which of its seams is set, then mirrors
+    ``cli._guard_production_test_seam_unset``: presence is tolerated
+    only when another ``AGENTTOWER_TEST_*`` env var is set, which the
+    pytest harness always provides (e.g. ``AGENTTOWER_TEST_DOCKER_FAKE``).
+    """
+    from .events import seam_names_currently_set as _clock_set
+    from .events.reader import seam_names_currently_set as _reader_set
+
+    leaked = [*_clock_set(), *_reader_set()]
+    if not leaked:
+        return
+    leaked_set = set(leaked)
+    companions = [
+        key
+        for key in os.environ
+        if key.startswith("AGENTTOWER_TEST_") and key not in leaked_set
+    ]
+    if companions:
+        return
+    names = ", ".join(sorted(leaked_set))
+    raise SystemExit(
+        f"error: {names} is set outside the test harness; "
+        "unset before running agenttowerd"
+    )
 
 
 def _verify_feat001_initialized(paths: Paths) -> None:
@@ -234,6 +270,9 @@ def _build_context(
     agent_service: AgentService | None,
     log_service: LogService | None,
     logger: LifecycleLogger,
+    events_reader: object | None = None,
+    follow_session_registry: object | None = None,
+    events_config: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -249,6 +288,9 @@ def _build_context(
         log_service=log_service,
         events_file=paths.events_file,
         lifecycle_logger=logger,
+        events_reader=events_reader,
+        follow_session_registry=follow_session_registry,
+        events_config=events_config,
     )
 
 
@@ -377,6 +419,7 @@ def _run(args: argparse.Namespace) -> int:
     pid_path = state_dir / PID_FILENAME
     log_path = logs_dir / LOG_FILENAME
 
+    _guard_feat008_test_seams_unset()
     _verify_feat001_initialized(paths)
 
     # Acquire the lock before any further state work (FR-028).
@@ -444,25 +487,71 @@ def _run(args: argparse.Namespace) -> int:
         except Exception:  # pragma: no cover — defensive; orphan detection is best-effort
             pass
 
-        ctx = _build_context(
-            paths=paths,
-            state_dir=state_dir,
-            shutdown_event=shutdown_event,
-            discovery_service=discovery_service,
-            pane_service=pane_service,
-            agent_service=agent_service,
-            log_service=log_service,
-            logger=logger,
+        # FEAT-008 T031 — start the events reader thread + follow
+        # session registry. The reader walks active log_attachments
+        # rows once per cycle (≤ 1 s by default; FR-001) and persists
+        # classified events. Constructed AFTER the orphan-recovery
+        # pass so it never observes stale state, and BEFORE the socket
+        # server starts accepting connections so ``agenttower status``
+        # immediately reports ``events_reader.running == true``.
+        from .events.reader import EventsReader  # local import: heavy module
+        from .events.session_registry import FollowSessionRegistry
+
+        events_config = load_events_block(paths.config_file)
+        follow_registry = FollowSessionRegistry()
+        events_reader = EventsReader(
+            state_db=paths.state_db,
+            events_file=paths.events_file,
+            lifecycle_logger=logger,
+            follow_session_registry=follow_registry,
+            cycle_cap_seconds=events_config.reader_cycle_wallclock_cap_seconds,
+            per_cycle_byte_cap_bytes=events_config.per_cycle_byte_cap_bytes,
+            per_event_excerpt_cap_bytes=events_config.per_event_excerpt_cap_bytes,
+            excerpt_truncation_marker=events_config.excerpt_truncation_marker,
+            debounce_activity_window_seconds=(
+                events_config.debounce_activity_window_seconds
+            ),
+            pane_exited_grace_seconds=events_config.pane_exited_grace_seconds,
+            long_running_grace_seconds=events_config.long_running_grace_seconds,
         )
+        # C7 (review MEDIUM) — the reader thread is started BEFORE the
+        # control socket binds (~10ms window). Events emitted in this
+        # window are durably persisted to SQLite + JSONL. The first
+        # ``events.follow_open`` call after the socket comes up sees
+        # them via the documented ``--since`` backlog mechanism. No
+        # follower can subscribe before the socket is bound, so no
+        # event is "missed" — they're just observed via the backlog
+        # path rather than the live notify.
+        events_reader.start()
+        try:
+            ctx = _build_context(
+                paths=paths,
+                state_dir=state_dir,
+                shutdown_event=shutdown_event,
+                discovery_service=discovery_service,
+                pane_service=pane_service,
+                agent_service=agent_service,
+                log_service=log_service,
+                logger=logger,
+                events_reader=events_reader,
+                follow_session_registry=follow_registry,
+                events_config=events_config,
+            )
 
-        server = _bind_control_server(paths, ctx, logger)
-        if server is None:
-            return 1
+            server = _bind_control_server(paths, ctx, logger)
+            if server is None:
+                return 1
 
-        lifecycle.write_pid_file(pid_path, os.getpid())
-        logger.emit(EVENT_DAEMON_READY, socket=str(paths.socket), pid=os.getpid())
-        _install_signal_handlers(shutdown_event)
-        _serve_until_shutdown(server, shutdown_event, logger)
+            lifecycle.write_pid_file(pid_path, os.getpid())
+            logger.emit(EVENT_DAEMON_READY, socket=str(paths.socket), pid=os.getpid())
+            _install_signal_handlers(shutdown_event)
+            _serve_until_shutdown(server, shutdown_event, logger)
+        finally:
+            # Always stop the reader thread, regardless of which phase of
+            # startup raised — bind/build_context/write_pid_file/emit all
+            # run after ``events_reader.start()``, so any of them raising
+            # would otherwise leak the thread.
+            events_reader.stop()
     finally:
         _cleanup_run(
             server=server,

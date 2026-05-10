@@ -51,6 +51,12 @@ class DaemonContext:
     log_service: Any = None
     events_file: Path | None = None
     lifecycle_logger: Any = None
+    # FEAT-008 — populated at daemon boot once Phase 3 (US1) lands.
+    # Until then they remain ``None`` and the status surface reports
+    # ``running: false``. See ``data-model.md`` §7.
+    events_reader: Any = None
+    follow_session_registry: Any = None
+    events_config: Any = None
 
 
 def _ping(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
@@ -61,6 +67,41 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
     now = datetime.now(timezone.utc)
     delta = (now - ctx.start_time_utc).total_seconds()
     uptime_seconds = max(0, int(delta))
+
+    # FEAT-008 — events_reader / events_persistence fields per
+    # data-model.md §7. The reader populates them via the
+    # ``events_reader`` and ``follow_session_registry`` attributes on
+    # the DaemonContext; until Phase 3 (US1) wires these, the fields
+    # default to a not-running state. They remain forward-compatible
+    # with future degraded-mode reporting (FR-029 / FR-040).
+    if ctx.events_reader is None:
+        events_reader = {
+            "running": False,
+            "last_cycle_started_at": None,
+            "last_cycle_duration_ms": None,
+            "active_attachments": 0,
+            "attachments_in_failure": [],
+        }
+        events_persistence = {"degraded_sqlite": None, "degraded_jsonl": None}
+    else:
+        snapshot = ctx.events_reader.status_snapshot()
+        is_running = (
+            bool(ctx.events_reader.is_running())
+            if hasattr(ctx.events_reader, "is_running")
+            else True
+        )
+        events_reader = {
+            "running": is_running,
+            "last_cycle_started_at": snapshot.last_cycle_started_at,
+            "last_cycle_duration_ms": snapshot.last_cycle_duration_ms,
+            "active_attachments": snapshot.active_attachments,
+            "attachments_in_failure": snapshot.attachments_in_failure,
+        }
+        events_persistence = {
+            "degraded_sqlite": snapshot.degraded_sqlite,
+            "degraded_jsonl": snapshot.degraded_jsonl,
+        }
+
     return errors.make_ok(
         {
             "alive": True,
@@ -71,6 +112,8 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "state_path": str(ctx.state_path),
             "schema_version": ctx.schema_version,
             "daemon_version": ctx.daemon_version,
+            "events_reader": events_reader,
+            "events_persistence": events_persistence,
         }
     )
 
@@ -465,8 +508,517 @@ def _attach_log_preview(
     )
 
 
+# ---------------------------------------------------------------------------
+# FEAT-008 — events.* methods (T037 / T038).
+# ---------------------------------------------------------------------------
+
+
+_EVENTS_VALID_TYPES = frozenset(
+    {
+        "activity", "waiting_for_input", "completed", "error",
+        "test_failed", "test_passed", "manual_review_needed",
+        "long_running", "pane_exited", "swarm_member_reported",
+    }
+)
+
+
+def _events_config_value(ctx: DaemonContext, name: str, fallback: Any) -> Any:
+    cfg = getattr(ctx, "events_config", None)
+    if cfg is None:
+        return fallback
+    return getattr(cfg, name, fallback)
+
+
+def _events_parse_iso_with_offset(
+    value: str, *, field: str
+) -> tuple[datetime | None, dict[str, Any] | None]:
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None, errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"{field} must be ISO-8601 with an explicit offset",
+        )
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None, errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"{field} must be ISO-8601 with an explicit offset",
+        )
+    return parsed.astimezone(timezone.utc), None
+
+
+def _events_resolve_target(
+    ctx: DaemonContext, target: str | None
+) -> dict[str, Any] | None:
+    """Return an error envelope iff ``target`` is set AND not in the
+    FEAT-006 registry; otherwise None (the caller proceeds)."""
+    if target is None:
+        return None
+    if ctx.agent_service is None:
+        return errors.make_error(
+            errors.INTERNAL_ERROR, "agent service unavailable"
+        )
+    # The FEAT-006 list_agents signature takes a positional dict ``params``
+    # and returns a dict containing ``agents`` (a list of dicts).
+    try:
+        listing = ctx.agent_service.list_agents(
+            {"schema_version": ctx.schema_version}
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        return errors.make_error(
+            errors.INTERNAL_ERROR, f"agent service failed: {exc}"
+        )
+    rows = (
+        listing.get("agents", []) if isinstance(listing, dict) else []
+    )
+    found = any(
+        (row.get("agent_id") if isinstance(row, dict) else getattr(row, "agent_id", None))
+        == target
+        for row in rows
+    )
+    if not found:
+        # L2 — do NOT echo the operator-supplied target id back into
+        # the error message. The client already knows what it sent;
+        # echoing back enables enumeration / log-noise amplification.
+        return errors.make_error(
+            errors.AGENT_NOT_FOUND, "target agent not found"
+        )
+    return None
+
+
+def _events_validate_filter(params: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate the ``events.list`` filter shape; None means OK."""
+    types = params.get("types") or []
+    if not isinstance(types, list):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID, "types must be a list"
+        )
+    for t in types:
+        if not isinstance(t, str) or t not in _EVENTS_VALID_TYPES:
+            return errors.make_error(
+                errors.EVENTS_FILTER_INVALID,
+                f"unknown event type: {t!r}",
+            )
+    since = params.get("since")
+    until = params.get("until")
+    if since is not None and not isinstance(since, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID, "since must be an ISO-8601 string"
+        )
+    if until is not None and not isinstance(until, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID, "until must be an ISO-8601 string"
+        )
+    since_dt = None
+    until_dt = None
+    if since is not None:
+        since_dt, err = _events_parse_iso_with_offset(since, field="since")
+        if err is not None:
+            return err
+    if until is not None:
+        until_dt, err = _events_parse_iso_with_offset(until, field="until")
+        if err is not None:
+            return err
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"since ({since}) must be <= until ({until})",
+        )
+    if "reverse" in params and not isinstance(params["reverse"], bool):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"reverse must be a boolean; got {params['reverse']!r}",
+        )
+    limit = params.get("limit")
+    if limit is not None:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            return errors.make_error(
+                errors.EVENTS_FILTER_INVALID,
+                f"limit must be a positive integer; got {limit!r}",
+            )
+    return None
+
+
+def _event_row_to_payload(row: Any, *, include_jsonl_appended_at: bool = False) -> dict[str, Any]:
+    """Render one ``EventRow`` into the FR-027 stable JSON shape."""
+    payload = {
+        "event_id": row.event_id,
+        "event_type": row.event_type,
+        "agent_id": row.agent_id,
+        "attachment_id": row.attachment_id,
+        "log_path": row.log_path,
+        "byte_range_start": row.byte_range_start,
+        "byte_range_end": row.byte_range_end,
+        "line_offset_start": row.line_offset_start,
+        "line_offset_end": row.line_offset_end,
+        "observed_at": row.observed_at,
+        "record_at": row.record_at,
+        "excerpt": row.excerpt,
+        "classifier_rule_id": row.classifier_rule_id,
+        "debounce": {
+            "window_id": row.debounce_window_id,
+            "collapsed_count": row.debounce_collapsed_count,
+            "window_started_at": row.debounce_window_started_at,
+            "window_ended_at": row.debounce_window_ended_at,
+        },
+        "schema_version": row.schema_version,
+    }
+    if include_jsonl_appended_at:
+        payload["jsonl_appended_at"] = row.jsonl_appended_at
+    return payload
+
+
+def _events_list(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.list`` — FR-030 / FR-035a per ``contracts/socket-events.md``
+    C-EVT-001."""
+    import sqlite3
+
+    from ..events.dao import (
+        CursorError,
+        EventFilter,
+        select_events,
+    )
+    from .. import events as events_pkg
+
+    target = params.get("target")
+    if target is not None and not isinstance(target, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"target must be a string; got {type(target).__name__}",
+        )
+
+    err = _events_validate_filter(params)
+    if err is not None:
+        return err
+
+    err = _events_resolve_target(ctx, target)
+    if err is not None:
+        return err
+
+    default_page_size = int(
+        _events_config_value(ctx, "default_page_size", events_pkg.DEFAULT_PAGE_SIZE)
+    )
+    max_page_size = int(
+        _events_config_value(ctx, "max_page_size", events_pkg.MAX_PAGE_SIZE)
+    )
+    limit = int(params.get("limit") or default_page_size)
+    if limit > max_page_size:
+        limit = max_page_size
+    cursor = params.get("cursor")
+    reverse = params.get("reverse", False)
+    types = tuple(params.get("types") or [])
+    filter = EventFilter(
+        target_agent_id=target,
+        types=types,
+        since_iso=params.get("since"),
+        until_iso=params.get("until"),
+    )
+
+    conn = sqlite3.connect(str(ctx.state_path / "agenttower.sqlite3"))
+    try:
+        try:
+            rows, next_cursor = select_events(
+                conn, filter=filter, cursor=cursor, limit=limit, reverse=reverse
+            )
+        except CursorError as exc:
+            return errors.make_error(errors.EVENTS_INVALID_CURSOR, str(exc))
+    finally:
+        conn.close()
+
+    return errors.make_ok(
+        {
+            "events": [_event_row_to_payload(r) for r in rows],
+            "next_cursor": next_cursor,
+        }
+    )
+
+
+def _events_classifier_rules(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.classifier_rules`` — debug surface per C-EVT-005."""
+    from ..events import classifier_rules as cr
+
+    return errors.make_ok(
+        {
+            "rules": [
+                {
+                    "rule_id": r.rule_id,
+                    "event_type": r.event_type,
+                    "priority": r.priority,
+                }
+                for r in cr.RULES
+            ],
+            "synthetic_rule_ids": list(cr.SYNTHETIC_RULE_IDS),
+        }
+    )
+
+
+def _events_follow_session_registry_or_error(
+    ctx: DaemonContext,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Return ``(registry, None)`` or ``(None, error_envelope)``."""
+    if ctx.follow_session_registry is None:
+        return None, errors.make_error(
+            errors.INTERNAL_ERROR, "follow session registry unavailable"
+        )
+    return ctx.follow_session_registry, None
+
+
+def _events_follow_open(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.follow_open`` per C-EVT-002."""
+    import sqlite3
+    import time as _time
+
+    from ..events.dao import EventFilter, select_events
+    from .. import events as events_pkg
+
+    target = params.get("target")
+    if target is not None and not isinstance(target, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"target must be a string; got {type(target).__name__}",
+        )
+    err = _events_validate_filter(params)
+    if err is not None:
+        return err
+    err = _events_resolve_target(ctx, target)
+    if err is not None:
+        return err
+    registry, err = _events_follow_session_registry_or_error(ctx)
+    if err is not None:
+        return err
+
+    types = tuple(params.get("types") or [])
+    since = params.get("since")
+
+    # Compute live_starting_event_id = current max event_id at session-open
+    # time; later events are "live."
+    db_path = ctx.state_path / "agenttower.sqlite3"
+    backlog_events: list[dict[str, Any]] = []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute("SELECT COALESCE(MAX(event_id), 0) FROM events")
+        live_starting = int(cur.fetchone()[0])
+        if since is not None:
+            backlog_rows, _ = select_events(
+                conn,
+                filter=EventFilter(
+                    target_agent_id=target, types=types, since_iso=since
+                ),
+                cursor=None,
+                limit=int(
+                    _events_config_value(
+                        ctx, "default_page_size", events_pkg.DEFAULT_PAGE_SIZE
+                    )
+                ),
+                reverse=False,
+            )
+            backlog_events = [_event_row_to_payload(r) for r in backlog_rows]
+    finally:
+        conn.close()
+
+    expires_at = _time.monotonic() + float(
+        _events_config_value(
+            ctx,
+            "follow_session_idle_timeout_seconds",
+            events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+        )
+    )
+    session = registry.open(
+        target_agent_id=target,
+        types=types,
+        since_iso=since,
+        live_starting_event_id=live_starting,
+        expires_at_monotonic=expires_at,
+    )
+    return errors.make_ok(
+        {
+            "session_id": session.session_id,
+            "backlog_events": backlog_events,
+            "live_starting_event_id": live_starting,
+        }
+    )
+
+
+def _events_follow_next(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.follow_next`` per C-EVT-003 — long-poll."""
+    import math
+    import sqlite3
+    import time as _time
+
+    from ..events.dao import EventFilter, select_events
+    from .. import events as events_pkg
+
+    session_id = params.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN, "session_id is required"
+        )
+    registry, err = _events_follow_session_registry_or_error(ctx)
+    if err is not None:
+        return err
+    session = registry.get(session_id)
+    if session is None:
+        # CRIT-4 — register the bad lookup against the sliding-window
+        # rate limiter. Generic message either way (no enumeration
+        # signal); the limiter just prevents thread-pool exhaustion
+        # under brute-force.
+        registry.is_rate_limited(now_monotonic=_time.monotonic())
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN, "unknown follow session"
+        )
+    now_mono = _time.monotonic()
+    if session.expires_at_monotonic < now_mono:
+        registry.close(session_id)
+        return errors.make_error(
+            errors.EVENTS_SESSION_EXPIRED,
+            f"follow session {session_id} expired",
+        )
+
+    # C4 (review MEDIUM) — clamp ``max_wait_seconds`` to the documented
+    # server-side budget. The CLI passes ``max_wait_seconds=1.0`` so
+    # SIGINT response stays bounded; bench-container scripts may pass
+    # higher values. We cap at FOLLOW_LONG_POLL_MAX_SECONDS so a single
+    # follower cannot hold a connection longer than the server-side
+    # documented limit, regardless of the client's read_timeout.
+    default_page_size = int(
+        _events_config_value(ctx, "default_page_size", events_pkg.DEFAULT_PAGE_SIZE)
+    )
+    follow_idle_timeout = float(
+        _events_config_value(
+            ctx,
+            "follow_session_idle_timeout_seconds",
+            events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+        )
+    )
+    follow_long_poll_max = float(
+        _events_config_value(
+            ctx,
+            "follow_long_poll_max_seconds",
+            events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS,
+        )
+    )
+    raw_max_wait = params.get("max_wait_seconds")
+    if raw_max_wait is None:
+        max_wait = follow_long_poll_max
+    elif (
+        not isinstance(raw_max_wait, (int, float))
+        or isinstance(raw_max_wait, bool)
+    ):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"max_wait_seconds must be a positive number; got {raw_max_wait!r}",
+        )
+    else:
+        max_wait = float(raw_max_wait)
+    if not math.isfinite(max_wait) or max_wait <= 0:
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"max_wait_seconds must be a positive number; got {raw_max_wait!r}",
+        )
+    max_wait = min(max_wait, follow_long_poll_max)
+    deadline = now_mono + max_wait
+
+    db_path = ctx.state_path / "agenttower.sqlite3"
+
+    while True:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            # Compute the lower bound for "new events": last_emitted (if
+            # we've seen anything) or live_starting (first call).
+            lower_bound = max(
+                session.last_emitted_event_id, session.live_starting_event_id
+            )
+            cursor_token = None
+            if lower_bound > 0:
+                from ..events.dao import encode_cursor
+
+                cursor_token = encode_cursor(lower_bound, reverse=False)
+            rows, _ = select_events(
+                conn,
+                filter=EventFilter(
+                    target_agent_id=session.target_agent_id,
+                    types=tuple(session.type_filter),
+                ),
+                cursor=cursor_token,
+                limit=default_page_size,
+                reverse=False,
+            )
+        finally:
+            conn.close()
+
+        if rows:
+            session.last_emitted_event_id = rows[-1].event_id
+            registry.refresh_expiration(
+                session_id,
+                new_expires_at_monotonic=_time.monotonic() + follow_idle_timeout,
+            )
+            return errors.make_ok(
+                {
+                    "events": [_event_row_to_payload(r) for r in rows],
+                    "session_open": True,
+                }
+            )
+
+        # No new events. Wait for either: (a) a notify from the reader
+        # post-commit (Plan §"Follow long-poll model"), or (b) a short
+        # periodic poll budget so direct DB writes (admin tools, tests)
+        # are also discovered. The poll granularity is 250 ms — short
+        # enough to keep latency well under SC-002's 1 s target while
+        # avoiding hot-spinning the DAO.
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            break
+        poll_interval = min(0.25, remaining)
+        with session.condition:
+            session.condition.wait(timeout=poll_interval)
+        # Re-check session existence (in case it was closed during wait).
+        if registry.get(session_id) is None:
+            return errors.make_ok({"events": [], "session_open": False})
+
+    registry.refresh_expiration(
+        session_id,
+        new_expires_at_monotonic=_time.monotonic() + follow_idle_timeout,
+    )
+    return errors.make_ok({"events": [], "session_open": True})
+
+
+def _events_follow_close(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.follow_close`` per C-EVT-004."""
+    import time as _time
+
+    session_id = params.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN, "session_id is required"
+        )
+    registry, err = _events_follow_session_registry_or_error(ctx)
+    if err is not None:
+        return err
+    closed = registry.close(session_id)
+    if not closed:
+        # CRIT-4 — register the bad lookup. Generic message; same
+        # rationale as ``_events_follow_next``.
+        registry.is_rate_limited(now_monotonic=_time.monotonic())
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN, "unknown follow session"
+        )
+    return errors.make_ok({})
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
-# FEAT-003's two, FEAT-004's two, FEAT-006's five, and FEAT-007's four.
+# FEAT-003's two, FEAT-004's two, FEAT-006's five, FEAT-007's four,
+# and FEAT-008's events.* surface.
 # FEAT-002 keys retain insertion order (FR-022).
 DISPATCH: dict[str, Handler] = {
     "ping": _ping,
@@ -485,4 +1037,9 @@ DISPATCH: dict[str, Handler] = {
     "detach_log": _detach_log,
     "attach_log_status": _attach_log_status,
     "attach_log_preview": _attach_log_preview,
+    "events.list": _events_list,
+    "events.follow_open": _events_follow_open,
+    "events.follow_next": _events_follow_next,
+    "events.follow_close": _events_follow_close,
+    "events.classifier_rules": _events_classifier_rules,
 }

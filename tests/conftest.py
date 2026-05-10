@@ -77,3 +77,37 @@ def _reset_feat007_lifecycle_suppression() -> Iterator[None]:
     logs_lifecycle.reset_for_test()
     yield
     logs_lifecycle.reset_for_test()
+
+
+# FEAT-008 — register the two new test seams from plan.md §R10. Both
+# are env-var driven (mirrors the FEAT-007 ``AGENTTOWER_TEST_LOG_FS_FAKE``
+# pattern). The FEAT-008 reader honors them only when the AGENTTOWER_*
+# env var is set; the AST gate at
+# ``tests/unit/test_logs_offset_advance_invariant.py`` enforces that no
+# production module imports the seam names.
+
+#: T102 — path to a JSON file containing
+#: ``{"observed_at_iso": <ISO>, "monotonic": <float>}``, consumed by the
+#: reader's ``Clock`` Protocol so debounce windows, ``pane_exited`` grace,
+#: and ``long_running`` grace are deterministic in tests without real-time
+#: ``time.sleep`` calls.
+AGENTTOWER_TEST_EVENTS_CLOCK_FAKE = "AGENTTOWER_TEST_EVENTS_CLOCK_FAKE"
+
+#: T003 — Unix-domain-socket path. When set, the reader replaces its
+#: inter-cycle ``Event.wait()`` with a ``socket.recv`` on this path.
+#: Tests write one byte to advance the reader by exactly one cycle.
+AGENTTOWER_TEST_READER_TICK = "AGENTTOWER_TEST_READER_TICK"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_feat008_test_seams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Ensure the two FEAT-008 test seams start unset for every test.
+
+    Tests that need a seam set it explicitly via ``monkeypatch.setenv``
+    inside the test body. This prevents a value leaking across tests.
+    """
+    monkeypatch.delenv(AGENTTOWER_TEST_EVENTS_CLOCK_FAKE, raising=False)
+    monkeypatch.delenv(AGENTTOWER_TEST_READER_TICK, raising=False)
+    yield

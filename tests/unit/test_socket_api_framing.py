@@ -76,8 +76,18 @@ def test_closed_code_set_contains_feat002_through_feat007_codes() -> None:
         errors.LOG_FILE_MISSING,
     }
     assert feat007 <= errors.CLOSED_CODE_SET
+    # FEAT-008 additions (data-model.md §8).
+    feat008 = {
+        errors.EVENTS_SESSION_UNKNOWN,
+        errors.EVENTS_SESSION_EXPIRED,
+        errors.EVENTS_INVALID_CURSOR,
+        errors.EVENTS_FILTER_INVALID,
+    }
+    assert feat008 <= errors.CLOSED_CODE_SET
     # No surprise codes beyond the documented sets.
-    assert errors.CLOSED_CODE_SET == feat002 | feat003 | feat004 | feat006 | feat007
+    assert errors.CLOSED_CODE_SET == (
+        feat002 | feat003 | feat004 | feat006 | feat007 | feat008
+    )
 
 
 @pytest.mark.parametrize(

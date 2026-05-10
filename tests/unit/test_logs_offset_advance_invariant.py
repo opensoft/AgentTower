@@ -83,3 +83,143 @@ def test_t080_advance_seam_function_signature_is_test_only_named() -> None:
     assert advance_offset_for_test.__name__ == "advance_offset_for_test"
     assert advance_offset_for_test.__doc__
     assert "TEST SEAM" in advance_offset_for_test.__doc__
+
+
+# FEAT-008 T004 — extend the AST gate to enforce the broader FR-003 /
+# FR-004 prohibitions: (a) no production module under ``src/agenttower/``
+# may import the FEAT-008 test-seam env-var names; (b) no production
+# module under ``src/agenttower/events/`` may emit raw INSERT / UPDATE
+# SQL against ``log_attachments`` or ``log_offsets`` (the reader must
+# go through FEAT-007 helpers and the documented ``lo_state.advance_*``
+# API).
+
+
+_FEAT008_TEST_SEAM_NAMES = {
+    "AGENTTOWER_TEST_EVENTS_CLOCK_FAKE",
+    "AGENTTOWER_TEST_READER_TICK",
+}
+
+# Each FEAT-008 seam has a single owner module (mirrors the FEAT-007
+# pattern from ``test_feat007_no_test_seam_in_production.py``). The
+# owner reads the env var; every other production module routes
+# through the owner's documented API (``Clock`` Protocol /
+# ``EventsReader`` ticker) and never names the seam directly.
+_FEAT008_SEAM_OWNERS: dict[str, pathlib.Path] = {
+    "AGENTTOWER_TEST_EVENTS_CLOCK_FAKE": SRC_ROOT / "events" / "__init__.py",
+    "AGENTTOWER_TEST_READER_TICK": SRC_ROOT / "events" / "reader.py",
+}
+
+
+def _references_feat008_test_seam(source: str) -> str | None:
+    """Return the seam name iff *source* references one as a string literal."""
+    for seam in _FEAT008_TEST_SEAM_NAMES:
+        if seam in source:
+            return seam
+    return None
+
+
+@pytest.mark.parametrize(
+    "path",
+    _iter_production_modules(),
+    ids=lambda p: str(p.relative_to(SRC_ROOT)),
+)
+def test_t004_no_production_module_references_feat008_test_seams(
+    path: pathlib.Path,
+) -> None:
+    """T004 — no NON-OWNER production module under ``src/agenttower/``
+    may reference the FEAT-008 test-seam env-var names.
+
+    Each seam has a single owner module
+    (``events/__init__.py`` for the Clock seam,
+    ``events/reader.py`` for the reader-tick seam); other production
+    modules route through the owner's documented API and never name
+    the env var directly. This mirrors the FEAT-007 pattern
+    (``test_feat007_no_test_seam_in_production.py``).
+    """
+    source = path.read_text(encoding="utf-8")
+    seam = _references_feat008_test_seam(source)
+    if seam is None:
+        return
+    owner = _FEAT008_SEAM_OWNERS.get(seam)
+    if owner is not None and path.resolve() == owner.resolve():
+        return  # The seam's owner module IS allowed to reference it.
+    raise AssertionError(
+        f"{path.relative_to(SRC_ROOT)} references the FEAT-008 test "
+        f"seam name {seam!r}; only the owner module "
+        f"{owner.relative_to(SRC_ROOT) if owner else '(none)'} is allowed to "
+        "read this env var. Other production modules must route through "
+        "the documented API (Clock Protocol / EventsReader ticker)."
+    )
+
+
+_FORBIDDEN_SQL_PATTERNS = (
+    "INSERT INTO log_attachments",
+    "UPDATE log_attachments",
+    "INSERT INTO log_offsets",
+    "UPDATE log_offsets",
+)
+
+_EVENTS_PKG_ROOT = SRC_ROOT / "events"
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(_EVENTS_PKG_ROOT.rglob("*.py")) if _EVENTS_PKG_ROOT.exists() else [],
+    ids=lambda p: str(p.relative_to(SRC_ROOT)),
+)
+def test_t004_events_package_emits_no_raw_log_attachments_or_log_offsets_sql(
+    path: pathlib.Path,
+) -> None:
+    """T004 — modules under ``src/agenttower/events/`` MUST NOT emit raw
+    INSERT/UPDATE SQL against ``log_attachments`` or ``log_offsets``.
+
+    The reader goes through FEAT-007 helpers
+    (``reader_cycle_offset_recovery``) and the documented
+    ``state.log_offsets`` advance API. Direct SQL would silently bypass
+    the FR-003 / FR-004 invariants.
+
+    The check parses the AST and inspects ``Constant`` (string-literal)
+    nodes only — docstrings and comments may freely discuss the SQL
+    shapes (the gate is about emitted SQL, not prose). To avoid the
+    obvious workaround of using a docstring with assignment, we exclude
+    the **module docstring and function/class docstrings** but check
+    every other string constant.
+    """
+    source = path.read_text(encoding="utf-8")
+    # Fast path: no mention of the forbidden patterns anywhere → safe.
+    if not any(p.lower() in source.lower() for p in _FORBIDDEN_SQL_PATTERNS):
+        return
+
+    tree = ast.parse(source, filename=str(path))
+
+    # Collect every node that is a docstring (first stmt of Module /
+    # FunctionDef / AsyncFunctionDef / ClassDef whose value is a
+    # Constant string). Those are excluded from the check.
+    docstring_node_ids: set[int] = set()
+    for parent in ast.walk(tree):
+        if isinstance(
+            parent,
+            (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            body = getattr(parent, "body", []) or []
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                docstring_node_ids.add(id(body[0].value))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if id(node) in docstring_node_ids:
+            continue
+        for pattern in _FORBIDDEN_SQL_PATTERNS:
+            if pattern.lower() in node.value.lower():
+                raise AssertionError(
+                    f"{path.relative_to(SRC_ROOT)} emits a string literal "
+                    f"matching {pattern!r}; this violates FR-003 / FR-004. "
+                    "Route writes through agenttower.logs.reader_recovery and "
+                    "agenttower.state.log_offsets helpers instead."
+                )

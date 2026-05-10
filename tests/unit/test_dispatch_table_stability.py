@@ -35,6 +35,12 @@ EXPECTED_ORDER = [
     "detach_log",
     "attach_log_status",
     "attach_log_preview",
+    # FEAT-008.
+    "events.list",
+    "events.follow_open",
+    "events.follow_next",
+    "events.follow_close",
+    "events.classifier_rules",
 ]
 
 
@@ -42,5 +48,5 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_sixteen_entries() -> None:
-    assert len(DISPATCH) == 16
+def test_dispatch_table_is_exactly_twentyone_entries() -> None:
+    assert len(DISPATCH) == 21

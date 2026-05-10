@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -293,11 +293,81 @@ def _apply_migration_v5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_v6(conn: sqlite3.Connection) -> None:
+    """FEAT-008 — add the durable ``events`` table and its indexes.
+
+    See ``specs/008-event-ingestion-follow/data-model.md`` §2 for the
+    column reference. Idempotent (``IF NOT EXISTS``); the table starts
+    empty (no backfill).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            event_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type         TEXT NOT NULL CHECK (event_type IN (
+                'activity', 'waiting_for_input', 'completed', 'error',
+                'test_failed', 'test_passed', 'manual_review_needed',
+                'long_running', 'pane_exited', 'swarm_member_reported'
+            )),
+            agent_id           TEXT NOT NULL,
+            attachment_id      TEXT NOT NULL,
+            log_path           TEXT NOT NULL,
+            byte_range_start   INTEGER NOT NULL CHECK (byte_range_start >= 0),
+            byte_range_end     INTEGER NOT NULL CHECK (byte_range_end >= byte_range_start),
+            line_offset_start  INTEGER NOT NULL CHECK (line_offset_start >= 0),
+            line_offset_end    INTEGER NOT NULL CHECK (line_offset_end >= line_offset_start),
+            observed_at        TEXT NOT NULL,
+            -- P7 (review MEDIUM) — record_at is reserved for a future
+            -- non-breaking schema bump; in MVP it MUST always be NULL
+            -- (Clarifications Q3). Defense-in-depth: enforce at the
+            -- DB layer so a buggy client cannot accidentally write
+            -- a non-NULL value.
+            record_at          TEXT CHECK (record_at IS NULL),
+            excerpt            TEXT NOT NULL,
+            classifier_rule_id TEXT NOT NULL,
+            debounce_window_id          TEXT,
+            debounce_collapsed_count    INTEGER NOT NULL DEFAULT 1
+                                        CHECK (debounce_collapsed_count >= 1),
+            debounce_window_started_at  TEXT,
+            debounce_window_ended_at    TEXT,
+            schema_version     INTEGER NOT NULL DEFAULT 1
+                               CHECK (schema_version >= 1),
+            jsonl_appended_at  TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_events_agent_eventid
+            ON events (agent_id, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_events_type_eventid
+            ON events (event_type, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_events_observedat_eventid
+            ON events (observed_at, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_events_jsonl_pending
+            ON events (event_id) WHERE jsonl_appended_at IS NULL
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
     3: _apply_migration_v3,
     4: _apply_migration_v4,
     5: _apply_migration_v5,
+    6: _apply_migration_v6,
 }
 
 
@@ -372,12 +442,17 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
             f"build supports ({CURRENT_SCHEMA_VERSION}); refusing to open"
         )
     # Existing DB at current version: ensure FEAT-003 + FEAT-004 + FEAT-006
-    # + FEAT-007 tables exist in case the schema_version row got there ahead
-    # of the tables (defensive — every migration body uses IF NOT EXISTS).
+    # + FEAT-007 + FEAT-008 tables exist in case the schema_version row got
+    # there ahead of the tables (defensive — every migration body uses
+    # IF NOT EXISTS). This ALSO applies on fresh databases: a brand-new
+    # registry has its schema_version row inserted at CURRENT_SCHEMA_VERSION
+    # (so ``_apply_pending_migrations`` is skipped) and relies on this
+    # branch to create every per-feature table.
     _apply_migration_v2(conn)
     _apply_migration_v3(conn)
     _apply_migration_v4(conn)
     _apply_migration_v5(conn)
+    _apply_migration_v6(conn)
 
 
 def _chmod_new_companions(

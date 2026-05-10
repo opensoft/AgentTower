@@ -98,7 +98,10 @@ class TestSocketSourceLine:
         proc = _run(env, "config", "paths")
         assert proc.returncode == 0
         lines = proc.stdout.rstrip("\n").splitlines()
-        assert lines[-1] == "SOCKET_SOURCE=host_default"
+        # FEAT-008 appends EVENTS_* lines after SOCKET_SOURCE; the
+        # SOCKET_SOURCE token now lives on line 7 of the FEAT-001..005
+        # block.
+        assert lines[6] == "SOCKET_SOURCE=host_default"
 
     def test_env_override_yields_env_override(self, env, tmp_path):
         # Materialize a real Unix socket so the validator passes
@@ -112,7 +115,7 @@ class TestSocketSourceLine:
             proc = _run(env, "config", "paths")
             assert proc.returncode == 0
             lines = proc.stdout.rstrip("\n").splitlines()
-            assert lines[-1] == "SOCKET_SOURCE=env_override"
+            assert lines[6] == "SOCKET_SOURCE=env_override"
             # And SOCKET= line reflects the override
             socket_line = next(line for line in lines if line.startswith("SOCKET="))
             assert socket_line == f"SOCKET={sock_path}"
