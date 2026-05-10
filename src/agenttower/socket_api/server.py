@@ -78,11 +78,6 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             if expected_uid >= 0 and observed_uid != expected_uid:
                 # Emit lifecycle event and refuse without dispatching.
                 self._emit_uid_mismatch(observed_uid=observed_uid, expected_uid=expected_uid)
-                envelope = errors.make_error(
-                    errors.INTERNAL_ERROR,
-                    "socket peer uid mismatch; connection refused",
-                )
-                self._write_response(envelope)
                 return
 
         envelope = self._read_and_dispatch()

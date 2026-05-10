@@ -529,7 +529,12 @@ class PaneDiscoveryService:
                         socket_peer_uid=daemon_uid,
                     )
                 except Exception:  # pragma: no cover — defensive
-                    pass
+                    self._emit_lifecycle(
+                        "audit_append_failed",
+                        method="pane_reconcile.stale_cascade",
+                        agent_id=record.agent_id,
+                        attachment_id=record.attachment_id,
+                    )
 
         return completed_at
 

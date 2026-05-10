@@ -8,7 +8,9 @@ NOT escape the resolved Source root (symlink-escape defense, FR-050).
 Returns a dataclass carrying both the host-side path AND the container-side
 path so the daemon's `tmux pipe-pane` shell construction can write the
 container-side path verbatim while the daemon's mode invariants apply to
-the host-side path.
+the host-side path. The supplied path may be either the container-visible
+path or the host-visible path; the deepest matching mount decides the
+mapping.
 """
 
 from __future__ import annotations
@@ -106,18 +108,19 @@ def _is_under(path: str, root: str) -> bool:
 
 def prove_host_visible(
     container_mounts_json: str,
-    container_side_path: str,
+    requested_path: str,
     *,
     require_writable: bool = True,
 ) -> HostVisibilityProof:
-    """Prove ``container_side_path`` is host-visible via the bound container's mounts.
+    """Prove ``requested_path`` is host-visible via the bound container's mounts.
 
     Algorithm (Research R-004 + FR-007 + FR-050 + FR-056 + FR-063):
     1. Parse the cached ``Mounts`` JSON; cap at MAX_MOUNT_ENTRIES.
     2. Filter to ``Type ∈ {bind, volume}``.
-    3. For each candidate, test whether ``container_side_path`` lies under
-       ``mount["Destination"]`` (deepest-prefix-wins).
-    4. Compute ``host_side = mount["Source"] + relative_suffix``.
+    3. For each candidate, test whether the requested path lies under either
+       ``mount["Destination"]`` (container-side input) or ``mount["Source"]``
+       (host-side input), with deepest-prefix-wins.
+    4. Compute the opposite side using the relative suffix.
     5. Resolve through up to ``MAX_REALPATH_HOPS`` realpath hops (FR-056).
     6. Verify the resolved path stays under the resolved Source root (FR-050
        symlink-escape defense).
@@ -127,13 +130,13 @@ def prove_host_visible(
     Raises :class:`LogPathNotHostVisible` on any failure with an actionable
     message. On success returns the proof dataclass.
     """
-    if not container_side_path.startswith("/"):
+    if not requested_path.startswith("/"):
         raise LogPathNotHostVisible(
-            f"container_side_path must be absolute; got {container_side_path!r}"
+            f"path must be absolute; got {requested_path!r}"
         )
 
     mounts = _parse_mounts(container_mounts_json)
-    candidates: list[tuple[int, dict[str, Any]]] = []
+    candidates: list[tuple[int, str, dict[str, Any]]] = []
     for mount in mounts:
         if not isinstance(mount, dict):
             continue
@@ -150,8 +153,10 @@ def prove_host_visible(
             continue
         if not destination.startswith("/") or not source.startswith("/"):
             continue
-        if _is_under(container_side_path, destination):
-            candidates.append((len(destination), mount))
+        if _is_under(requested_path, destination):
+            candidates.append((len(destination), "container", mount))
+        if _is_under(requested_path, source):
+            candidates.append((len(source), "host", mount))
 
     if not candidates:
         # Surface the observed mount destinations so the operator can compare
@@ -166,30 +171,51 @@ def prove_host_visible(
                 and (m.get("Destination") or m.get("target"))
             }
         )
+        observed_sources = sorted(
+            {
+                str(m.get("Source") or m.get("source"))
+                for m in mounts
+                if isinstance(m, dict)
+                and (m.get("Source") or m.get("source"))
+            }
+        )
         observed_repr = ", ".join(observed) if observed else "(none)"
+        source_repr = ", ".join(observed_sources) if observed_sources else "(none)"
         raise LogPathNotHostVisible(
-            f"no bind/volume mount covers container path {container_side_path!r}; "
-            f"observed mount destinations in this container: {observed_repr}. "
+            f"no bind/volume mount covers path {requested_path!r}; "
+            f"observed mount destinations: {observed_repr}; "
+            f"observed mount sources: {source_repr}. "
             f"The bench container template must mount the canonical log "
             f"directory at the requested destination."
         )
 
     # Deepest-prefix-wins.
     candidates.sort(key=lambda pair: pair[0], reverse=True)
-    _, mount = candidates[0]
+    _, path_kind, mount = candidates[0]
     destination_raw = mount.get("Destination") or mount.get("target")
     source_raw = mount.get("Source") or mount.get("source")
     destination = str(destination_raw).rstrip("/") or "/"
     source = str(source_raw).rstrip("/") or "/"
 
-    if container_side_path == destination:
-        relative = ""
+    if path_kind == "container":
+        container_path = requested_path
+        if requested_path == destination:
+            relative = ""
+        else:
+            relative = requested_path[len(destination):]
+            if not relative.startswith("/"):
+                relative = "/" + relative
+        raw_host_path = source + relative
     else:
-        relative = container_side_path[len(destination):]
-        if not relative.startswith("/"):
-            relative = "/" + relative
+        raw_host_path = requested_path
+        if requested_path == source:
+            relative = ""
+        else:
+            relative = requested_path[len(source):]
+            if not relative.startswith("/"):
+                relative = "/" + relative
+        container_path = destination + relative
 
-    raw_host_path = source + relative
     resolved_source = _resolve_source_realpath(source)
     resolved_host_path = os.path.realpath(raw_host_path)
 
@@ -221,7 +247,7 @@ def prove_host_visible(
 
     return HostVisibilityProof(
         host_path=resolved_host_path,
-        container_path=container_side_path,
+        container_path=container_path,
         mount_destination=destination,
         mount_source=resolved_source,
     )

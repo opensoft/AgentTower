@@ -57,6 +57,25 @@ def host_canonical_log_path_for(
     return host_canonical_log_root_for(home) / container_id / f"{agent_id}.log"
 
 
+def container_home_for_user(container_user: str) -> Path:
+    """Return the canonical bench home for ``container_user``."""
+    if container_user == "root":
+        return Path("/root")
+    return Path("/home") / container_user
+
+
+def container_canonical_log_root_for(container_user: str) -> Path:
+    """Return the canonical in-container log root for ``container_user``."""
+    return container_home_for_user(container_user) / _LOG_ROOT_REL
+
+
+def container_canonical_log_path_for(
+    container_user: str, container_id: str, agent_id: str
+) -> Path:
+    """Return the FR-005/FR-054 canonical in-container log path."""
+    return container_canonical_log_root_for(container_user) / container_id / f"{agent_id}.log"
+
+
 def daemon_owned_roots_for(home: str | os.PathLike[str]) -> tuple[Path, ...]:
     """Return the absolute daemon-owned root prefixes under ``home`` (FR-052).
 

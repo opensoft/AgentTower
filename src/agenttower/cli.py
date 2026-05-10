@@ -728,7 +728,8 @@ def _build_parser() -> argparse.ArgumentParser:
     register_self.add_argument(
         "--log",
         default=argparse.SUPPRESS,
-        help="(with --attach-log) explicit host-visible log path; default = "
+        help="(with --attach-log) explicit log path (host-visible or "
+        "container-visible through the bench mount); default = "
         "~/.local/state/opensoft/agenttower/logs/<container>/<agent>.log",
     )
     register_self.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
@@ -827,7 +828,8 @@ def _build_parser() -> argparse.ArgumentParser:
     attach_log.add_argument(
         "--log",
         default=argparse.SUPPRESS,
-        help="explicit host-visible log path; defaults to "
+        help="explicit log path (host-visible or container-visible through "
+        "the bench mount); defaults to "
         "~/.local/state/opensoft/agenttower/logs/<container>/<agent>.log",
     )
     attach_log.add_argument(

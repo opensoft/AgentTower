@@ -202,7 +202,7 @@ def select_most_recent_for_agent(
     cur = conn.execute(
         f"SELECT {_COLUMNS} FROM log_attachments "
         "WHERE agent_id = ? "
-        "ORDER BY last_status_at DESC LIMIT 1",
+        "ORDER BY last_status_at DESC, created_at DESC, attachment_id DESC LIMIT 1",
         (agent_id,),
     )
     row = cur.fetchone()

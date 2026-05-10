@@ -23,6 +23,7 @@ events are observability signals, not audit rows.
 from __future__ import annotations
 
 import threading
+import json
 from typing import Any, Optional
 
 from ..socket_api.lifecycle import (
@@ -54,7 +55,7 @@ class _SuppressionState:
         # (agent_id, log_path, prior_inode_or_None, new_inode) → True iff a
         # rotation event was emitted for this rotation.
         self._rotated: set[tuple[str, str, Optional[str], Optional[str]]] = set()
-        # (container_id, pane_composite_str, observed_pipe_target) → True iff
+        # (container_id, pane_composite_key_json, observed_pipe_target) → True iff
         # an orphan event was emitted in this daemon lifetime.
         self._orphans: set[tuple[str, str, str]] = set()
 
@@ -97,10 +98,17 @@ class _SuppressionState:
             return True
 
     def should_emit_orphan(
-        self, container_id: str, pane_composite_key: str, observed_pipe_target: str
+        self,
+        container_id: str,
+        pane_composite_key: dict[str, object],
+        observed_pipe_target: str,
     ) -> bool:
         with self._guard:
-            key = (container_id, pane_composite_key, observed_pipe_target)
+            key = (
+                container_id,
+                json.dumps(pane_composite_key, sort_keys=True, separators=(",", ":")),
+                observed_pipe_target,
+            )
             if key in self._orphans:
                 return False
             self._orphans.add(key)
@@ -224,7 +232,7 @@ def emit_log_attachment_orphan_detected(
     logger: LifecycleLogger | None,
     *,
     container_id: str,
-    pane_composite_key: str,
+    pane_composite_key: dict[str, object],
     observed_pipe_target: str,
     pane_short_form: str,
 ) -> None:

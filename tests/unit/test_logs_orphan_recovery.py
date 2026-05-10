@@ -78,7 +78,7 @@ def test_pane_with_no_active_pipe_is_not_orphan(state_db: Path, tmp_path: Path) 
     container_id = "c" * 64
     _seed_active_container(state_db, container_id=container_id)
     # Pane exists but pane_pipe=0.
-    runner = _StubRunner(stdout="main:0.0 0 \n")
+    runner = _StubRunner(stdout="main:0.0 %17 0 \n")
     logger = _RecordingLogger()
     count = detect_orphans(
         connection_factory=lambda: sqlite3.connect(str(state_db)),
@@ -94,7 +94,7 @@ def test_pane_pipe_to_foreign_path_is_not_orphan(state_db: Path, tmp_path: Path)
     container_id = "c" * 64
     _seed_active_container(state_db, container_id=container_id)
     # Pipe targets /tmp/random.log — not under canonical-prefix.
-    runner = _StubRunner(stdout="main:0.0 1 cat >> /tmp/random.log\n")
+    runner = _StubRunner(stdout="main:0.0 %17 1 cat >> /tmp/random.log\n")
     logger = _RecordingLogger()
     count = detect_orphans(
         connection_factory=lambda: sqlite3.connect(str(state_db)),
@@ -161,7 +161,7 @@ def test_canonical_pipe_with_log_attachments_row_is_not_orphan(
     # the bare path without quotes, matching what the daemon would have
     # written.
     import shlex as _shlex
-    runner = _StubRunner(stdout=f"main:0.0 1 cat >> {_shlex.quote(canonical)}\n")
+    runner = _StubRunner(stdout=f"main:0.0 %17 1 cat >> {_shlex.quote(canonical)}\n")
     logger = _RecordingLogger()
     count = detect_orphans(
         connection_factory=lambda: sqlite3.connect(str(state_db)),
@@ -191,7 +191,7 @@ def test_canonical_pipe_without_log_attachments_row_is_orphan(
     # the bare path without quotes, matching what the daemon would have
     # written.
     import shlex as _shlex
-    runner = _StubRunner(stdout=f"main:0.0 1 cat >> {_shlex.quote(canonical)}\n")
+    runner = _StubRunner(stdout=f"main:0.0 %17 1 cat >> {_shlex.quote(canonical)}\n")
     logger = _RecordingLogger()
 
     count = detect_orphans(
@@ -224,7 +224,7 @@ def test_orphan_event_suppressed_on_repeat(state_db: Path, tmp_path: Path) -> No
     # the bare path without quotes, matching what the daemon would have
     # written.
     import shlex as _shlex
-    runner = _StubRunner(stdout=f"main:0.0 1 cat >> {_shlex.quote(canonical)}\n")
+    runner = _StubRunner(stdout=f"main:0.0 %17 1 cat >> {_shlex.quote(canonical)}\n")
     logger = _RecordingLogger()
 
     detect_orphans(
@@ -276,7 +276,7 @@ def test_substring_canonical_path_classified_foreign_fr054(
     )
     # Pipe contains the canonical path AS A SUBSTRING but isn't strict equality.
     evil = f"cat >> /tmp/innocent.log; cat >> '{canonical}'"
-    runner = _StubRunner(stdout=f"main:0.0 1 {evil}\n")
+    runner = _StubRunner(stdout=f"main:0.0 %17 1 {evil}\n")
     logger = _RecordingLogger()
 
     count = detect_orphans(

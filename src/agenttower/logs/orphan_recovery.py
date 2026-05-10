@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Iterable
 
 from ..socket_api.lifecycle import LifecycleLogger
-from .canonical_paths import host_canonical_log_root_for
+from .canonical_paths import (
+    container_canonical_log_root_for,
+    host_canonical_log_root_for,
+)
 from .docker_exec import DockerExecRunner
 from .lifecycle import emit_log_attachment_orphan_detected
 from .pipe_pane import _exec_env_args
@@ -38,14 +41,11 @@ def _bench_containers(conn: sqlite3.Connection) -> Iterable[tuple[str, str, str]
 
 
 def _expected_container_side_log_for(
-    *, daemon_home: Path, container_id: str, agent_id: str
+    *, container_user: str, container_id: str, agent_id: str
 ) -> str:
     """Reproduce the FR-005 default container-side path for a given (container, agent)."""
-    # In the canonical bench template, host==container path under
-    # $HOME/.local/state/opensoft/agenttower/logs/. We compute the expected
-    # container-side path the daemon WOULD have generated.
     return str(
-        host_canonical_log_root_for(daemon_home) / container_id / f"{agent_id}.log"
+        container_canonical_log_root_for(container_user) / container_id / f"{agent_id}.log"
     )
 
 
@@ -67,7 +67,6 @@ def detect_orphans(
     The daemon NEVER auto-attaches an orphan: the operator must run
     ``attach-log`` deliberately to bind it.
     """
-    canonical_prefix = str(host_canonical_log_root_for(daemon_home)) + "/"
     emitted = 0
 
     # One SQLite connection covers the entire orphan pass: it owns the
@@ -76,6 +75,10 @@ def detect_orphans(
     # parser raises mid-loop.
     with closing(connection_factory()) as conn:
         for container_id, container_user, _name in _bench_containers(conn):
+            canonical_prefixes = [
+                str(container_canonical_log_root_for(container_user) / container_id) + "/",
+                str(host_canonical_log_root_for(daemon_home) / container_id) + "/",
+            ]
             # Run a per-container `tmux list-panes -a` to enumerate every pane
             # across every session. The FR-043 contract is best-effort: if
             # tmux is missing or the container has no live tmux server, we
@@ -89,15 +92,15 @@ def detect_orphans(
                 if not stripped:
                     continue
                 # Output shape (custom format below):
-                # "<pane_short> <pipe_pipe_flag> <pipe_command>".
+                # "<pane_short> <pane_id> <pane_pipe_flag> <pipe_command>".
                 # The pipe_command may contain spaces; everything after the
-                # second token is the pipe command.
-                parts = stripped.split(" ", 2)
-                if len(parts) < 2:
+                # third token is the pipe command.
+                parts = stripped.split(" ", 3)
+                if len(parts) < 3:
                     continue
                 pane_short = parts[0]
-                pipe_flag = parts[1]
-                pipe_cmd = parts[2] if len(parts) >= 3 else ""
+                pipe_flag = parts[2]
+                pipe_cmd = parts[3] if len(parts) >= 4 else ""
 
                 if pipe_flag != "1":
                     continue
@@ -106,25 +109,36 @@ def detect_orphans(
 
                 # Quick prefix filter: only inspect pipes that target the
                 # canonical-log root. Foreign pipes are not orphans.
-                if canonical_prefix not in pipe_cmd:
+                matched_prefix = next(
+                    (prefix for prefix in canonical_prefixes if prefix in pipe_cmd),
+                    None,
+                )
+                if matched_prefix is None:
                     continue
 
                 # Resolve the orphan to a (container_id, agent_id) by parsing
                 # the canonical path out of the pipe command.
                 agent_id = _extract_agent_id_from_pipe_command(
-                    pipe_cmd, container_id=container_id, daemon_home=daemon_home
+                    pipe_cmd, canonical_root=matched_prefix.rstrip("/")
                 )
                 if agent_id is None:
                     continue
 
                 # Strict canonical-target match (FR-054).
-                expected = _expected_container_side_log_for(
-                    daemon_home=daemon_home,
+                expected_container = _expected_container_side_log_for(
+                    container_user=container_user,
                     container_id=container_id,
                     agent_id=agent_id,
                 )
-                classification = classify_pipe_target(pipe_cmd, expected)
-                if not classification.is_canonical:
+                expected_host = str(
+                    host_canonical_log_root_for(daemon_home)
+                    / container_id
+                    / f"{agent_id}.log"
+                )
+                classification = classify_pipe_target(pipe_cmd, expected_container)
+                if not classification.is_canonical and not classify_pipe_target(
+                    pipe_cmd, expected_host
+                ).is_canonical:
                     # Substring match without strict equality → foreign
                     # target; not an orphan.
                     continue
@@ -139,7 +153,11 @@ def detect_orphans(
                     continue
 
                 # ORPHAN.
-                pane_composite_key = f"{container_id}:{pane_short}"
+                pane_composite_key = _lookup_pane_composite_key(
+                    conn,
+                    container_id=container_id,
+                    pane_short=pane_short,
+                )
                 sanitized = sanitize_prior_pipe_target(pipe_cmd)
                 emit_log_attachment_orphan_detected(
                     lifecycle_logger,
@@ -154,7 +172,7 @@ def detect_orphans(
 
 def _build_list_panes_all_argv(container_user: str, container_id: str) -> list[str]:
     """Argv for ``tmux list-panes -a`` with the FR-043 enumeration format."""
-    fmt = "#{session_name}:#{window_index}.#{pane_index} #{pane_pipe} #{pane_pipe_command}"
+    fmt = "#{session_name}:#{window_index}.#{pane_index} #{pane_id} #{pane_pipe} #{pane_pipe_command}"
     inner = f"tmux list-panes -a -F {shlex.quote(fmt)}"
     return [
         "docker",
@@ -170,11 +188,10 @@ def _build_list_panes_all_argv(container_user: str, container_id: str) -> list[s
 
 
 def _extract_agent_id_from_pipe_command(
-    pipe_cmd: str, *, container_id: str, daemon_home: Path
+    pipe_cmd: str, *, canonical_root: str
 ) -> str | None:
     """Pull the ``agt_<12-hex>`` agent id out of ``cat >> <canonical>/<id>.log``."""
-    canonical_root = str(host_canonical_log_root_for(daemon_home))
-    needle = f"{canonical_root}/{container_id}/"
+    needle = canonical_root.rstrip("/") + "/"
     idx = pipe_cmd.find(needle)
     if idx < 0:
         return None
@@ -186,6 +203,38 @@ def _extract_agent_id_from_pipe_command(
     if len(tail) == 16 and tail.startswith("agt_"):
         return tail
     return None
+
+
+def _lookup_pane_composite_key(
+    conn: sqlite3.Connection, *, container_id: str, pane_short: str
+) -> dict[str, object]:
+    """Best-effort reconstruction of the full FEAT-004 pane composite key."""
+    session_name, rest = pane_short.split(":", 1)
+    window_index_str, pane_index_str = rest.split(".", 1)
+    window_index = int(window_index_str)
+    pane_index = int(pane_index_str)
+    row = conn.execute(
+        """
+        SELECT tmux_socket_path, tmux_pane_id
+          FROM panes
+         WHERE container_id = ?
+           AND tmux_session_name = ?
+           AND tmux_window_index = ?
+           AND tmux_pane_index = ?
+           AND active = 1
+         ORDER BY last_scanned_at DESC
+         LIMIT 1
+        """,
+        (container_id, session_name, window_index, pane_index),
+    ).fetchone()
+    return {
+        "container_id": container_id,
+        "tmux_socket_path": row[0] if row is not None else "",
+        "tmux_session_name": session_name,
+        "tmux_window_index": window_index,
+        "tmux_pane_index": pane_index,
+        "tmux_pane_id": row[1] if row is not None else "",
+    }
 
 
 def _attachment_exists_for(

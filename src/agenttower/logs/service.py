@@ -28,7 +28,10 @@ from ..state import log_offsets as lo_state
 from . import audit as audit_mod
 from . import lifecycle as lifecycle_mod
 from . import path_validation
-from .canonical_paths import host_canonical_log_path_for
+from .canonical_paths import (
+    container_canonical_log_path_for,
+    host_canonical_log_path_for,
+)
 from .docker_exec import DockerExecRunner, DockerExecResult
 from .host_visibility import (
     HostVisibilityProof,
@@ -179,66 +182,17 @@ class LogService:
         agent_id = _require_string(params, "agent_id", method_name="attach_log")
         validate_agent_id_shape(agent_id)
 
-        # log_path is optional; absent → use canonical (FR-005).
-        log_path_supplied = "log_path" in params
-        log_path: str | None = None
-        if log_path_supplied:
-            raw = params["log_path"]
-            if not isinstance(raw, str):
-                raise RegistrationError(
-                    "bad_request", "attach_log: params.log_path must be a string"
-                )
-            try:
-                log_path = path_validation.validate_log_path(
-                    raw, home=self.daemon_home
-                )
-            except LogPathInvalid as exc:
-                raise RegistrationError("log_path_invalid", str(exc)) from exc
-
         # Resolve agent → bound container + pane (FR-001..FR-004).
         agent_record = self._resolve_active_agent(agent_id)
         container_record = self._resolve_active_container(agent_record.container_id)
         self._require_active_pane(agent_record)
 
-        # Compute container-side and host-side paths.
-        if log_path is None:
-            # FR-005 default: canonical path on host; container-side equals it
-            # under the assumption the canonical bind-mount is in place.
-            host_canonical = host_canonical_log_path_for(
-                self.daemon_home, agent_record.container_id, agent_id
-            )
-            log_path = str(host_canonical)
-            # The container-side path will be derived from host-visibility proof
-            # below — we pass the canonical container-side value in this default
-            # branch by assuming the same path inside the container (the bench
-            # template mounts $HOME/.local/state/.../logs at the same in-container
-            # path).
-            container_side_path = str(host_canonical)
-        else:
-            # Explicit path: the operator supplies the CONTAINER-side path
-            # (per FR-007: it's the path the `cat >>` shell writes to inside
-            # the container). Host-visibility proof maps it to the host path.
-            container_side_path = log_path
-
-        # FR-007 / FR-050 / FR-056 / FR-063 host-visibility proof.
-        try:
-            proof = prove_host_visible(
-                container_record["mounts_json"],
-                container_side_path,
-                require_writable=True,
-            )
-        except LogPathNotHostVisible as exc:
-            # FR-063: emit lifecycle event when the cap was exceeded.
-            if "max" in str(exc) and "FR-063" in str(exc):
-                lifecycle_mod.emit_mounts_json_oversized(
-                    self.lifecycle_logger,
-                    container_id=agent_record.container_id,
-                    observed_count=-1,  # parser doesn't expose count here
-                    max_count=256,
-                )
-            raise RegistrationError("log_path_not_host_visible", str(exc)) from exc
-
-        host_path = proof.host_path
+        log_path_supplied, proof, host_path = self._resolve_attach_target(
+            params,
+            method_name="attach_log",
+            agent_record=agent_record,
+            container_record=container_record,
+        )
 
         # FR-013 tmux availability check (cached on container row).
         if container_record.get("tmux_present") is False:
@@ -262,6 +216,63 @@ class LogService:
                 socket_peer_uid=socket_peer_uid,
                 explicit_log_supplied=log_path_supplied,
                 defer_audit=defer_audit,
+                conn=None,
+                manage_transaction=True,
+            )
+
+    def attach_log_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        params: dict[str, Any],
+        agent_record: Any,
+        container_record: dict[str, Any],
+        socket_peer_uid: int,
+        source: str = "register_self",
+        defer_audit: bool = True,
+    ) -> dict[str, Any]:
+        """Attach inside an existing caller-owned SQLite transaction."""
+        _check_unknown_keys(
+            params, self._ATTACH_ALLOWED_KEYS, method_name="attach_log"
+        )
+        _check_schema_version(
+            params,
+            daemon_schema_version=self.schema_version,
+            method_name="attach_log",
+        )
+        agent_id = _require_string(params, "agent_id", method_name="attach_log")
+        validate_agent_id_shape(agent_id)
+        if agent_id != agent_record.agent_id:
+            raise RegistrationError(
+                "bad_request",
+                "attach_log: params.agent_id must match the active registration target",
+            )
+        log_path_supplied, proof, host_path = self._resolve_attach_target(
+            params,
+            method_name="attach_log",
+            agent_record=agent_record,
+            container_record=container_record,
+        )
+        if container_record.get("tmux_present") is False:
+            raise RegistrationError(
+                "tmux_unavailable",
+                f"tmux is not available in container {agent_record.container_id!r}",
+            )
+
+        agent_lock = self.agent_locks.for_key(agent_id)
+        path_lock = self.log_path_locks.for_key(host_path) if log_path_supplied else None
+        with acquire_in_order(agent_lock, path_lock):
+            return self._attach_log_locked(
+                agent_record=agent_record,
+                container_record=container_record,
+                proof=proof,
+                host_path=host_path,
+                source=source,
+                socket_peer_uid=socket_peer_uid,
+                explicit_log_supplied=log_path_supplied,
+                defer_audit=defer_audit,
+                conn=conn,
+                manage_transaction=False,
             )
 
     def _attach_log_locked(
@@ -275,6 +286,8 @@ class LogService:
         socket_peer_uid: int,
         explicit_log_supplied: bool,
         defer_audit: bool = False,
+        conn: sqlite3.Connection | None = None,
+        manage_transaction: bool = True,
     ) -> dict[str, Any]:
         """Inner attach pipeline; runs under acquired locks."""
         deferred_audit: dict[str, Any] | None = None
@@ -291,9 +304,12 @@ class LogService:
         container_id = agent_record.container_id
         pane_short_form = self._pane_short_form(agent_record)
 
-        conn = self.connection_factory()
+        owned_conn = conn is None
+        if conn is None:
+            conn = self.connection_factory()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            if manage_transaction:
+                conn.execute("BEGIN IMMEDIATE")
 
             # Re-check: another agent owns this path active? (FR-009)
             existing_active_other = la_state.select_active_by_log_path(
@@ -346,7 +362,8 @@ class LogService:
                     container_user, container_id, pane_short_form,
                     proof.container_path,
                 )
-                conn.execute("COMMIT")
+                if manage_transaction:
+                    conn.execute("COMMIT")
                 return self._render_attach_result(
                     existing, byte_offset=0, line_offset=0, is_new=False, prior_status=existing.status,
                     extra_offset_load=True, conn_for_offset=None,
@@ -472,7 +489,8 @@ class LogService:
                     source=source,
                     socket_peer_uid=socket_peer_uid,
                 )
-                conn.execute("COMMIT")
+                if manage_transaction:
+                    conn.execute("COMMIT")
                 # Pass ``last_status_at=now`` so the JSON envelope reflects
                 # the just-applied status transition (stale/detached → active)
                 # rather than the pre-mutation timestamp from ``existing``.
@@ -527,7 +545,8 @@ class LogService:
                 socket_peer_uid=socket_peer_uid,
             )
 
-            conn.execute("COMMIT")
+            if manage_transaction:
+                conn.execute("COMMIT")
             result = self._render_attach_result(
                 new_record, byte_offset=0, line_offset=0, is_new=True,
                 prior_status=(supersede_target.status if supersede_target else None),
@@ -536,16 +555,18 @@ class LogService:
                 result["__deferred_audit__"] = deferred_audit
             return result
         except RegistrationError:
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            if manage_transaction:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise
         except sqlite3.OperationalError as exc:
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            if manage_transaction:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             # FR-042 SQLITE_BUSY → internal_error (no retry, no swallow).
             if "database is locked" in str(exc) or "busy" in str(exc).lower():
                 raise RegistrationError(
@@ -554,13 +575,15 @@ class LogService:
                 ) from exc
             raise RegistrationError("internal_error", str(exc)) from exc
         except Exception as exc:
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            if manage_transaction:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise RegistrationError("internal_error", str(exc)) from exc
         finally:
-            conn.close()
+            if owned_conn:
+                conn.close()
 
     def _allocate_attachment_id(self, conn: sqlite3.Connection) -> str:
         """Generate a fresh attachment_id; bounded retry on PK collision."""
@@ -654,21 +677,27 @@ class LogService:
             offset_row = lo_state.select(
                 conn, agent_id=agent_id, log_path=existing.log_path
             )
-
-            audit_mod.append_log_attachment_change(
-                self.events_file,
-                attachment_id=existing.attachment_id,
-                agent_id=agent_id,
-                prior_status="active",
-                new_status="detached",
-                prior_path=existing.log_path,
-                new_path=existing.log_path,
-                prior_pipe_target=None,
-                source="explicit",
-                socket_peer_uid=socket_peer_uid,
-            )
-
             conn.execute("COMMIT")
+            try:
+                audit_mod.append_log_attachment_change(
+                    self.events_file,
+                    attachment_id=existing.attachment_id,
+                    agent_id=agent_id,
+                    prior_status="active",
+                    new_status="detached",
+                    prior_path=existing.log_path,
+                    new_path=existing.log_path,
+                    prior_pipe_target=None,
+                    source="explicit",
+                    socket_peer_uid=socket_peer_uid,
+                )
+            except Exception:  # pragma: no cover - defensive
+                self._emit_lifecycle(
+                    "audit_append_failed",
+                    method="detach_log",
+                    agent_id=agent_id,
+                    attachment_id=existing.attachment_id,
+                )
             return {
                 "agent_id": agent_id,
                 "attachment_id": existing.attachment_id,
@@ -897,6 +926,72 @@ class LogService:
             "tmux_present": True,
         }
 
+    def _resolve_attach_target(
+        self,
+        params: dict[str, Any],
+        *,
+        method_name: str,
+        agent_record: Any,
+        container_record: dict[str, Any],
+    ) -> tuple[bool, HostVisibilityProof, str]:
+        """Resolve the requested/default attach target into proof + host path."""
+        log_path_supplied = "log_path" in params
+        requested_path: str
+        if log_path_supplied:
+            raw = params["log_path"]
+            if not isinstance(raw, str):
+                raise RegistrationError(
+                    "bad_request", f"{method_name}: params.log_path must be a string"
+                )
+            try:
+                requested_path = path_validation.validate_log_path(
+                    raw, home=self.daemon_home
+                )
+            except LogPathInvalid as exc:
+                raise RegistrationError("log_path_invalid", str(exc)) from exc
+        else:
+            requested_path = str(
+                container_canonical_log_path_for(
+                    container_record["bench_user"],
+                    agent_record.container_id,
+                    agent_record.agent_id,
+                )
+            )
+        candidate_paths = [requested_path]
+        if not log_path_supplied:
+            candidate_paths.append(
+                str(
+                    host_canonical_log_path_for(
+                        self.daemon_home,
+                        agent_record.container_id,
+                        agent_record.agent_id,
+                    )
+                )
+            )
+        proof: HostVisibilityProof | None = None
+        last_exc: LogPathNotHostVisible | None = None
+        for candidate in candidate_paths:
+            try:
+                proof = prove_host_visible(
+                    container_record["mounts_json"],
+                    candidate,
+                    require_writable=True,
+                )
+                break
+            except LogPathNotHostVisible as exc:
+                last_exc = exc
+        if proof is None:
+            assert last_exc is not None
+            if "max" in str(last_exc) and "FR-063" in str(last_exc):
+                lifecycle_mod.emit_mounts_json_oversized(
+                    self.lifecycle_logger,
+                    container_id=agent_record.container_id,
+                    observed_count=-1,
+                    max_count=256,
+                )
+            raise RegistrationError("log_path_not_host_visible", str(last_exc)) from last_exc
+        return log_path_supplied, proof, proof.host_path
+
     def _require_active_pane(self, agent_record: Any) -> None:
         """FR-003: bound pane MUST be active=1."""
         conn = self.connection_factory()
@@ -998,6 +1093,19 @@ class LogService:
                 "internal_error",
                 f"failed to ensure host log file mode: {exc}",
             ) from exc
+
+    def _emit_lifecycle(self, event: str, **kwargs: Any) -> None:
+        if self.lifecycle_logger is None:
+            return
+        sanitized: dict[str, str] = {}
+        for key, value in kwargs.items():
+            text = str(value).replace("\x00", "")
+            text = "".join(ch for ch in text if ord(ch) >= 32 or ch in ("\t",))
+            sanitized[key] = text[:2048]
+        try:
+            self.lifecycle_logger.emit(event, **sanitized)
+        except Exception:
+            pass
 
     def _file_consistency_intact(
         self, host_path: str, stored_inode: str | None, stored_size_seen: int

@@ -350,6 +350,8 @@ class AgentService:
 
             audit_event: dict[str, Any] | None = None
             outcome: dict[str, Any]
+            attach_log_outcome: dict[str, Any] | None = None
+            deferred_attach_audit: dict[str, Any] | None = None
 
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -482,6 +484,43 @@ class AgentService:
                         }
 
                 final_record = _select_agent_full_by_id(conn, agent_id=final_agent_id)
+
+                if attach_log_envelope is not None:
+                    if not isinstance(attach_log_envelope, dict):
+                        raise RegistrationError(
+                            "bad_request",
+                            "params.attach_log must be an object",
+                        )
+                    if self.log_service is None:
+                        raise RegistrationError(
+                            "internal_error",
+                            "log service is not wired into the daemon",
+                        )
+                    assert final_record is not None
+                    container_record = self._select_active_container_for_attach(
+                        conn, container_id=final_record.agent.container_id
+                    )
+                    attach_params: dict[str, Any] = {
+                        "agent_id": final_record.agent.agent_id,
+                    }
+                    if "log_path" in attach_log_envelope:
+                        attach_params["log_path"] = attach_log_envelope["log_path"]
+                    if client_schema_version is not None:
+                        attach_params["schema_version"] = client_schema_version
+                    attach_result = self.log_service.attach_log_in_transaction(
+                        conn,
+                        params=attach_params,
+                        agent_record=final_record.agent,
+                        container_record=container_record,
+                        socket_peer_uid=socket_peer_uid,
+                        source="register_self",
+                        defer_audit=True,
+                    )
+                    deferred_attach_audit = attach_result.pop(
+                        "__deferred_audit__", None
+                    )
+                    attach_log_outcome = attach_result
+
                 conn.execute("COMMIT")
             except RegistrationError:
                 conn.execute("ROLLBACK")
@@ -494,57 +533,6 @@ class AgentService:
             outcome = _agent_full_record_to_register_payload(
                 final_record, created_or_reactivated=created_or_reactivated
             )
-
-            # FEAT-007 US4 / FR-034 / FR-035: if the wire envelope carried
-            # ``attach_log``, run the FEAT-007 attach pipeline NOW. The
-            # register transaction has already committed; we run attach in
-            # its own BEGIN IMMEDIATE with ``defer_audit=True`` so the
-            # FEAT-007 audit append is staged rather than emitted. After
-            # both writes succeed, we append both audit rows in the
-            # FR-035 order: FEAT-006 ``agent_role_change`` FIRST,
-            # FEAT-007 ``log_attachment_change`` SECOND. On FEAT-007
-            # failure we DELETE the just-created agent row to satisfy
-            # FR-034 fail-the-call.
-            attach_log_outcome: dict[str, Any] | None = None
-            deferred_attach_audit: dict[str, Any] | None = None
-            if attach_log_envelope is not None:
-                if not isinstance(attach_log_envelope, dict):
-                    if created_or_reactivated == "created":
-                        self._cleanup_agent_row(final_record.agent.agent_id)
-                    raise RegistrationError(
-                        "bad_request",
-                        "params.attach_log must be an object",
-                    )
-                if self.log_service is None:
-                    if created_or_reactivated == "created":
-                        self._cleanup_agent_row(final_record.agent.agent_id)
-                    raise RegistrationError(
-                        "internal_error",
-                        "log service is not wired into the daemon",
-                    )
-                attach_params: dict[str, Any] = {
-                    "agent_id": final_record.agent.agent_id,
-                }
-                if "log_path" in attach_log_envelope:
-                    attach_params["log_path"] = attach_log_envelope["log_path"]
-                if client_schema_version is not None:
-                    attach_params["schema_version"] = client_schema_version
-                try:
-                    attach_result = self.log_service.attach_log(
-                        attach_params,
-                        socket_peer_uid=socket_peer_uid,
-                        source="register_self",
-                        defer_audit=True,
-                    )
-                except RegistrationError:
-                    # FR-034 fail-the-call: cleanup the agent row.
-                    if created_or_reactivated == "created":
-                        self._cleanup_agent_row(final_record.agent.agent_id)
-                    raise
-                deferred_attach_audit = attach_result.pop(
-                    "__deferred_audit__", None
-                )
-                attach_log_outcome = attach_result
 
             # FR-035: append FEAT-006 audit row FIRST.
             if audit_event is not None:
@@ -744,6 +732,30 @@ class AgentService:
                 "pane_unknown_to_daemon",
                 "bound pane is absent or inactive in the FEAT-004 registry",
             )
+
+    def _select_active_container_for_attach(
+        self, conn: sqlite3.Connection, *, container_id: str
+    ) -> dict[str, Any]:
+        """Fetch the FEAT-007 container fields on the caller's transaction."""
+        row = conn.execute(
+            """
+            SELECT active, mounts_json, config_user
+              FROM containers
+             WHERE container_id = ?
+            """,
+            (container_id,),
+        ).fetchone()
+        if row is None or not bool(row[0]):
+            raise RegistrationError(
+                "agent_inactive",
+                f"container {container_id!r} is inactive",
+            )
+        bench_user = row[2] or "root"
+        return {
+            "mounts_json": row[1] or "[]",
+            "bench_user": bench_user,
+            "tmux_present": True,
+        }
 
     def _validate_parent_for_swarm(
         self, conn: sqlite3.Connection, *, parent_agent_id: str

@@ -197,6 +197,7 @@ EVENT_LOG_FILE_RETURNED = "log_file_returned"
 EVENT_LOG_ATTACHMENT_ORPHAN_DETECTED = "log_attachment_orphan_detected"
 EVENT_MOUNTS_JSON_OVERSIZED = "mounts_json_oversized"
 EVENT_SOCKET_PEER_UID_MISMATCH = "socket_peer_uid_mismatch"
+EVENT_AUDIT_APPEND_FAILED = "audit_append_failed"
 
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
@@ -218,6 +219,7 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         EVENT_LOG_ATTACHMENT_ORPHAN_DETECTED,
         EVENT_MOUNTS_JSON_OVERSIZED,
         EVENT_SOCKET_PEER_UID_MISMATCH,
+        EVENT_AUDIT_APPEND_FAILED,
     }
 )
 
