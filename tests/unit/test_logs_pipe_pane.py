@@ -138,6 +138,15 @@ class TestSanitizePipePaneStderr:
     def test_normalizes_newlines_to_spaces(self) -> None:
         out = sanitize_pipe_pane_stderr("line1\nline2")
         assert "\n" not in out
+        assert out == "line1 line2"
+
+    def test_normalizes_tabs_to_spaces(self) -> None:
+        # Doc + impl agreement: TAB / CR / LF all collapse to a single
+        # space so the sanitized message renders as one line.
+        out = sanitize_pipe_pane_stderr("col1\tcol2\rcol3")
+        assert "\t" not in out
+        assert "\r" not in out
+        assert out == "col1 col2 col3"
 
     def test_accepts_bytes_input(self) -> None:
         out = sanitize_pipe_pane_stderr(b"hello")

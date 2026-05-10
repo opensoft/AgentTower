@@ -76,8 +76,19 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             except OSError:
                 expected_uid = -1
             if expected_uid >= 0 and observed_uid != expected_uid:
-                # Emit lifecycle event and refuse without dispatching.
+                # Emit lifecycle event and refuse without dispatching. Write
+                # a closed-set error envelope so the client sees a normal
+                # protocol response instead of an empty read (which would
+                # surface as ``DaemonUnavailable(kind="protocol_error")``).
+                # The message is intentionally generic — the lifecycle log
+                # carries the observed/expected uids for forensics.
                 self._emit_uid_mismatch(observed_uid=observed_uid, expected_uid=expected_uid)
+                self._write_response(
+                    errors.make_error(
+                        errors.INTERNAL_ERROR,
+                        "request refused: peer credential check failed",
+                    )
+                )
                 return
 
         envelope = self._read_and_dispatch()

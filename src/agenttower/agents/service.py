@@ -640,37 +640,6 @@ class AgentService:
             f"agent_id PK collision retry budget exhausted ({_AGENT_ID_RETRY_LIMIT})",
         ) from last_exc
 
-    def _cleanup_agent_row(self, agent_id: str) -> None:
-        """FR-034 fail-the-call: delete the just-created agent row.
-
-        Called after a register transaction has already committed and the
-        downstream FEAT-007 attach raised. We open a fresh ``BEGIN
-        IMMEDIATE`` and DELETE the row by primary key. Failures here are
-        swallowed-and-logged because we are already on the error path
-        and cannot meaningfully roll back further.
-        """
-        conn = self.connection_factory()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("DELETE FROM agents WHERE agent_id = ?", (agent_id,))
-            conn.execute("COMMIT")
-        except Exception:  # pragma: no cover — defensive
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
-            self._emit_lifecycle(
-                "audit_append_failed",
-                method="register_agent.cleanup",
-                agent_id=agent_id,
-                reason="cleanup-rollback failed",
-            )
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
     def _safe_append_audit(
         self,
         *,

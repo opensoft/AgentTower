@@ -229,3 +229,47 @@ def test_dispatch_handles_internal_exception_gracefully() -> None:
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == errors.INTERNAL_ERROR
     assert "RuntimeError" in envelope["error"]["message"]
+
+
+def test_handle_writes_envelope_on_uid_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-058 / Copilot review: a peer with mismatched SO_PEERCRED uid MUST get
+    a closed-set ``internal_error`` envelope, not an empty close.
+
+    Pre-fix the handler returned silently on mismatch; the client then saw
+    an empty read and surfaced ``DaemonUnavailable(kind="protocol_error")``,
+    which is misleading for what is in fact an authorization refusal.
+    """
+    handler, wfile = _make_handler(b'{"method": "ping"}\n')
+
+    # Synthesize a non-None ``connection`` attribute so the uid check
+    # branch fires; the value is never inspected because we monkeypatch
+    # the helper that reads from it.
+    handler.connection = object()  # type: ignore[assignment]
+
+    monkeypatch.setattr(server_module, "_peer_uid_from_socket", lambda _conn: 9999)
+    monkeypatch.setattr(server_module.os, "geteuid", lambda: 1000)
+
+    handler.handle()
+
+    payload = wfile.buffer.rstrip(b"\n")
+    envelope = json.loads(payload.decode("utf-8"))
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == errors.INTERNAL_ERROR
+    # Generic message; lifecycle log carries the observed/expected uids.
+    assert "peer credential" in envelope["error"]["message"].lower()
+
+
+def test_handle_dispatches_normally_when_peer_uid_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sanity counter-test: a matching peer uid must NOT short-circuit dispatch."""
+    handler, wfile = _make_handler(b'{"method": "ping"}\n')
+    handler.connection = object()  # type: ignore[assignment]
+
+    monkeypatch.setattr(server_module, "_peer_uid_from_socket", lambda _conn: 1000)
+    monkeypatch.setattr(server_module.os, "geteuid", lambda: 1000)
+
+    handler.handle()
+
+    envelope = json.loads(wfile.buffer.rstrip(b"\n").decode("utf-8"))
+    assert envelope == {"ok": True, "result": {}}

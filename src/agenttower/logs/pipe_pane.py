@@ -137,8 +137,10 @@ def render_pipe_command_for_audit(
 def sanitize_pipe_pane_stderr(stderr: bytes | str) -> str:
     """Return a sanitized stderr excerpt suitable for ``pipe_pane_failed`` messages.
 
-    NUL-strip, drop C0 control bytes (preserve TAB and newline → space), cap at
-    :data:`_STDERR_CAP` chars (FR-012 / FR-062).
+    Strips NUL bytes, drops other C0 control bytes / DEL, and normalizes
+    whitespace control characters (TAB, CR, LF) to a single space so the
+    message renders as one line in operator-facing output. Result is
+    capped at :data:`_STDERR_CAP` chars (FR-012 / FR-062).
     """
     if isinstance(stderr, bytes):
         text = stderr.decode("utf-8", errors="replace")

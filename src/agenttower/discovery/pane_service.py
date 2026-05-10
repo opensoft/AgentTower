@@ -516,6 +516,11 @@ class PaneDiscoveryService:
                 daemon_uid = -1
             for record in cascaded_attachments:
                 try:
+                    # Preserve the attachment's persisted ``source`` and
+                    # ``prior_pipe_target`` so a register-self attachment
+                    # that later goes stale audits as ``register_self`` (not
+                    # synthetic ``explicit``) and any captured prior pipe
+                    # target survives the cascade event.
                     logs_audit.append_log_attachment_change(
                         self._events_file,
                         attachment_id=record.attachment_id,
@@ -524,8 +529,8 @@ class PaneDiscoveryService:
                         new_status="stale",
                         prior_path=record.log_path,
                         new_path=record.log_path,
-                        prior_pipe_target=None,
-                        source="explicit",
+                        prior_pipe_target=record.prior_pipe_target,
+                        source=record.source,
                         socket_peer_uid=daemon_uid,
                     )
                 except Exception:  # pragma: no cover — defensive
