@@ -910,7 +910,18 @@ class EventsReader:
         """Insert one synthetic event row + advance the offsets row's
         timestamp (no byte/line offset change). Returns the new
         ``event_id``, or None on commit failure (which is surfaced as
-        ``degraded_sqlite``)."""
+        ``degraded_sqlite``).
+
+        P6 (review MEDIUM) — the two-transaction shape (insert in tx1,
+        JSONL append between, watermark UPDATE in tx2) is structurally
+        identical to the byte-driven path and is INTENTIONAL: the
+        JSONL append depends on the event_id assigned by the first
+        commit, and we cannot append-then-commit-watermark inside one
+        SQLite transaction because JSONL is a separate filesystem
+        artifact. The H2/H3 fixes ensure the watermark UPDATE is
+        durable BEFORE notify() fires, so followers never observe a
+        row whose ``jsonl_appended_at`` is NULL.
+        """
         synth = EventRow(
             event_id=0,
             event_type=event_type,

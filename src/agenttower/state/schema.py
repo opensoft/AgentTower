@@ -317,7 +317,12 @@ def _apply_migration_v6(conn: sqlite3.Connection) -> None:
             line_offset_start  INTEGER NOT NULL CHECK (line_offset_start >= 0),
             line_offset_end    INTEGER NOT NULL CHECK (line_offset_end >= line_offset_start),
             observed_at        TEXT NOT NULL,
-            record_at          TEXT,
+            -- P7 (review MEDIUM) — record_at is reserved for a future
+            -- non-breaking schema bump; in MVP it MUST always be NULL
+            -- (Clarifications Q3). Defense-in-depth: enforce at the
+            -- DB layer so a buggy client cannot accidentally write
+            -- a non-NULL value.
+            record_at          TEXT CHECK (record_at IS NULL),
             excerpt            TEXT NOT NULL,
             classifier_rule_id TEXT NOT NULL,
             debounce_window_id          TEXT,

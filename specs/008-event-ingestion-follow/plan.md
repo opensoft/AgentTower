@@ -181,7 +181,7 @@ CREATE TABLE events (
     line_offset_start  INTEGER NOT NULL,
     line_offset_end    INTEGER NOT NULL,
     observed_at        TEXT NOT NULL,
-    record_at          TEXT,                       -- always NULL in MVP
+    record_at          TEXT CHECK (record_at IS NULL),   -- MVP-enforced
     excerpt            TEXT NOT NULL,              -- redacted, ≤ excerpt cap
     classifier_rule_id TEXT NOT NULL,
     debounce_window_id          TEXT,

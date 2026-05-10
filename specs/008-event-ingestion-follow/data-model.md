@@ -81,7 +81,7 @@ CREATE INDEX idx_events_jsonl_pending
 | `line_offset_start` | INTEGER | no | Inclusive line index (0-based) at cycle entry. |
 | `line_offset_end` | INTEGER | no | Exclusive line index after this record was consumed. |
 | `observed_at` | TEXT | no | ISO-8601 microsecond UTC. Reader clock at classification. Always populated (Clarifications Q3). |
-| `record_at` | TEXT | yes | Best-effort source time. Always NULL in MVP (Clarifications Q3). Column exists to keep schema stable for future extension. |
+| `record_at` | TEXT | yes | Best-effort source time. Always NULL in MVP (Clarifications Q3); enforced by SQL `CHECK (record_at IS NULL)`. Column exists to keep schema stable for future extension. |
 | `excerpt` | TEXT | no | Redacted, capped at `per_event_excerpt_cap_bytes` (default 1024) including the truncation marker. Empty string allowed for synthesized `pane_exited` / `long_running`. |
 | `classifier_rule_id` | TEXT | no | Stable rule identifier from `events/classifier_rules.py` (e.g., `error.traceback.v1`) or one of the synthetic ids (`pane_exited.synth.v1`, `long_running.synth.v1`). |
 | `debounce_window_id` | TEXT | yes | 12-hex opaque id. NULL for non-collapsible classes. |

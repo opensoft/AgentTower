@@ -219,5 +219,39 @@ class FollowSessionRegistry:
         with self._lock:
             return len(self._sessions)
 
+    def session_lag_snapshot(
+        self, *, current_max_event_id: int
+    ) -> list[dict[str, object]]:
+        """C6 (review MEDIUM) — backpressure visibility.
+
+        Returns one dict per active session with ``session_id``,
+        ``last_emitted_event_id``, and ``lag`` (events the session
+        is behind the daemon's current max). The reader (or the
+        daemon's status surface) can use this to flag slow followers
+        rather than silently letting them lag.
+
+        ``current_max_event_id`` is the largest ``event_id`` currently
+        visible in the events table (caller queries via
+        ``SELECT MAX(event_id) FROM events``). Per-session lag is
+        ``max(current_max - max(last_emitted, live_starting), 0)``.
+        """
+        with self._lock:
+            sessions = list(self._sessions.values())
+        out: list[dict[str, object]] = []
+        for session in sessions:
+            anchor = max(
+                session.last_emitted_event_id, session.live_starting_event_id
+            )
+            lag = max(current_max_event_id - anchor, 0)
+            out.append(
+                {
+                    "session_id": session.session_id,
+                    "last_emitted_event_id": session.last_emitted_event_id,
+                    "live_starting_event_id": session.live_starting_event_id,
+                    "lag": lag,
+                }
+            )
+        return out
+
 
 __all__ = ["FollowSession", "FollowSessionRegistry", "matches_filter"]

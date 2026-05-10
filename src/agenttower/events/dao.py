@@ -30,7 +30,7 @@ import base64
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import NamedTuple, Optional
 
 
 # Closed-set ``event_type`` values mirror the spec's FR-008 catalogue.
@@ -299,6 +299,19 @@ def _row_to_event(row: tuple) -> EventRow:
     )
 
 
+class EventPage(NamedTuple):
+    """P3 (review MEDIUM) — named result of :func:`select_events`.
+
+    NamedTuple subclass so callers can either use named access
+    (``page.rows`` / ``page.next_cursor``) or continue tuple-unpacking
+    (``rows, next_cursor = select_events(...)``). Both forms work
+    interchangeably; new code SHOULD prefer named access.
+    """
+
+    rows: list[EventRow]
+    next_cursor: Optional[str]
+
+
 def select_events(
     conn: sqlite3.Connection,
     *,
@@ -306,7 +319,7 @@ def select_events(
     cursor: Optional[str],
     limit: int,
     reverse: bool,
-) -> tuple[list[EventRow], Optional[str]]:
+) -> EventPage:
     """Page through events.
 
     Returns ``(rows, next_cursor)``; ``next_cursor`` is None when this
@@ -367,7 +380,7 @@ def select_events(
     next_cursor: Optional[str] = None
     if has_more and page:
         next_cursor = encode_cursor(page[-1].event_id, reverse=reverse)
-    return page, next_cursor
+    return EventPage(rows=page, next_cursor=next_cursor)
 
 
 def select_pending_jsonl(conn: sqlite3.Connection, *, limit: int) -> list[EventRow]:
@@ -399,6 +412,7 @@ def select_event_by_id(
 __all__ = [
     "EventRow",
     "EventFilter",
+    "EventPage",
     "CursorError",
     "encode_cursor",
     "decode_cursor",

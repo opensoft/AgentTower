@@ -118,6 +118,38 @@ def test_migration_v6_event_type_check_constraint_rejects_unknown(
         )
 
 
+def test_migration_v6_record_at_check_constraint_rejects_non_null(
+    tmp_path: Path,
+) -> None:
+    """P7 (review MEDIUM) — defense-in-depth: a non-NULL ``record_at``
+    is rejected at the DB layer. MVP requires record_at always NULL
+    (Clarifications Q3); a buggy client must not be able to accidentally
+    write a non-NULL value."""
+    conn, _ = _open_v5_only(tmp_path)
+    schema._apply_migration_v6(conn)
+    conn.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO events ("
+            "event_type, agent_id, attachment_id, log_path, "
+            "byte_range_start, byte_range_end, "
+            "line_offset_start, line_offset_end, "
+            "observed_at, record_at, excerpt, classifier_rule_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "activity",
+                "agt_a1b2c3d4e5f6",
+                "atc_aabbccddeeff",
+                "/tmp/x.log",
+                0, 10, 0, 1,
+                "2026-05-10T12:00:00.000000+00:00",
+                "2026-05-10T12:00:00.000000+00:00",  # non-NULL → CHECK fails
+                "x",
+                "activity.fallback.v1",
+            ),
+        )
+
+
 def test_migration_v6_event_id_autoincrement(tmp_path: Path) -> None:
     """Two consecutive inserts produce strictly-increasing event_id values."""
     conn, _ = _open_v5_only(tmp_path)
