@@ -1758,8 +1758,10 @@ def _exit_code_for(code: str) -> int:
         return 1
     if code == "agent_not_found":
         return 4
-    if code in ("events_session_unknown", "events_session_expired"):
+    if code == "events_session_unknown":
         return 5
+    if code == "events_session_expired":
+        return 8
     if code == "events_invalid_cursor":
         return 6
     if code == "events_filter_invalid":

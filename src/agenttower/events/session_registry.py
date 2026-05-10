@@ -136,19 +136,25 @@ class FollowSessionRegistry:
     def gc_expired(self, *, now_monotonic: float) -> list[str]:
         """Remove every session whose ``expires_at_monotonic < now``.
 
+        Wakes any waiter blocked on the session's condition so the
+        ``follow_next`` long-poll exits promptly with
+        ``session_open=false`` instead of waiting up to its full budget.
+
         Returns the list of removed session ids (for logging).
         """
-        removed: list[str] = []
+        removed_pairs: list[tuple[str, FollowSession]] = []
         with self._lock:
             for sid, session in list(self._sessions.items()):
                 if session.expires_at_monotonic < now_monotonic:
                     self._sessions.pop(sid, None)
-                    removed.append(sid)
-        # Wake any waiter on the just-removed sessions.
-        for sid in removed:
-            # session is no longer in dict; we held a reference above
-            pass
-        return removed
+                    removed_pairs.append((sid, session))
+        # Wake any waiter on the just-removed sessions; we still hold
+        # a reference to each session even though the dict no longer
+        # has it, so the condition is reachable.
+        for _, session in removed_pairs:
+            with session.condition:
+                session.condition.notify_all()
+        return [sid for sid, _ in removed_pairs]
 
     # ------------------------------------------------------------------
     # Notification (called by the reader after every successful commit)

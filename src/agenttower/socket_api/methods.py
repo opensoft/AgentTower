@@ -546,9 +546,11 @@ def _events_resolve_target(
         for row in rows
     )
     if not found:
+        # L2 — do NOT echo the operator-supplied target id back into
+        # the error message. The client already knows what it sent;
+        # echoing back enables enumeration / log-noise amplification.
         return errors.make_error(
-            errors.AGENT_NOT_FOUND,
-            f"no agent registered with id {target}",
+            errors.AGENT_NOT_FOUND, "target agent not found"
         )
     return None
 

@@ -104,6 +104,13 @@ class CursorError(ValueError):
     """
 
 
+# Upper bound for cursor event_id: SQLite stores INTEGER as int64,
+# but the safe range across all SQLite builds (and JSON-number
+# precision) is 2^53 - 1. A cursor with a higher value is treated
+# as malformed rather than risk silent truncation.
+_MAX_SAFE_CURSOR_EVENT_ID = (1 << 53) - 1
+
+
 def encode_cursor(event_id: int, *, reverse: bool) -> str:
     """Encode ``(event_id, reverse)`` as a base64url-encoded JSON object.
 
@@ -115,6 +122,11 @@ def encode_cursor(event_id: int, *, reverse: bool) -> str:
         raise CursorError(f"event_id must be int, got {type(event_id).__name__}")
     if event_id <= 0:
         raise CursorError(f"event_id must be > 0, got {event_id}")
+    if event_id > _MAX_SAFE_CURSOR_EVENT_ID:
+        raise CursorError(
+            f"event_id {event_id} exceeds safe-cursor range "
+            f"({_MAX_SAFE_CURSOR_EVENT_ID})"
+        )
     payload = json.dumps(
         {"e": event_id, "r": bool(reverse)}, separators=(",", ":")
     ).encode("utf-8")
@@ -150,6 +162,11 @@ def decode_cursor(token: str) -> tuple[int, bool]:
         raise CursorError(f"cursor 'e' must be int, got {type(e).__name__}")
     if e <= 0:
         raise CursorError(f"cursor 'e' must be > 0, got {e}")
+    if e > _MAX_SAFE_CURSOR_EVENT_ID:
+        raise CursorError(
+            f"cursor 'e' {e} exceeds safe-cursor range "
+            f"({_MAX_SAFE_CURSOR_EVENT_ID})"
+        )
     if not isinstance(r, bool):
         raise CursorError(f"cursor 'r' must be bool, got {type(r).__name__}")
     return e, r

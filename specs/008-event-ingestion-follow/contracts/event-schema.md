@@ -112,7 +112,7 @@ The schema is JSON-Schema 2020-12.
     },
     "classifier_rule_id": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*\\.[a-z0-9_]+\\.v[0-9]+$"
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)?\\.v[0-9]+$"
     },
     "debounce": {
       "type": "object",
@@ -274,7 +274,7 @@ Cases that MUST FAIL schema validation (covered by
 - `debounce` missing one of the four required keys.
 - `debounce.collapsed_count` < 1.
 - Top-level fields beyond the documented set.
-- `classifier_rule_id` not matching the documented `^[a-z][a-z0-9_]*\.[a-z0-9_]+\.v[0-9]+$` pattern.
+- `classifier_rule_id` not matching the documented `^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)?\.v[0-9]+$` pattern (accepts both 2-segment forms like `swarm_member.v1` and 3-segment forms like `error.traceback.v1`; the catalogue uses both).
 
 ## Schema artifact path
 

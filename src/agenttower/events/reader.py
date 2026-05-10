@@ -46,6 +46,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import (
+    LONG_RUNNING_GRACE_SECONDS,
+    PANE_EXITED_GRACE_SECONDS,
     PER_CYCLE_BYTE_CAP_BYTES,
     READER_CYCLE_WALLCLOCK_CAP_SECONDS,
     Clock,
@@ -61,6 +63,7 @@ from ..logs import reader_recovery
 from ..socket_api.lifecycle import LifecycleLogger
 from ..state import log_attachments as la_state
 from ..state import log_offsets as lo_state
+from ..state import panes as panes_state
 
 
 _LOG = logging.getLogger(__name__)
@@ -111,6 +114,8 @@ class EventsReader:
         cycle_cap_seconds: float = READER_CYCLE_WALLCLOCK_CAP_SECONDS,
         per_cycle_byte_cap_bytes: int = PER_CYCLE_BYTE_CAP_BYTES,
         debounce_manager: DebounceManager | None = None,
+        pane_exited_grace_seconds: float = PANE_EXITED_GRACE_SECONDS,
+        long_running_grace_seconds: float = LONG_RUNNING_GRACE_SECONDS,
     ) -> None:
         # T058 — FR-020 / FR-022 invariant: on cold start the reader
         # treats the persisted ``log_offsets`` rows as authoritative and
@@ -130,6 +135,17 @@ class EventsReader:
         self._cycle_cap = float(cycle_cap_seconds)
         self._byte_cap = int(per_cycle_byte_cap_bytes)
         self._debounce = debounce_manager or DebounceManager()
+
+        self._pane_exited_grace = float(pane_exited_grace_seconds)
+        self._long_running_grace = float(long_running_grace_seconds)
+        # Per-attachment "have we already emitted X for this lifecycle?"
+        # tracking. FR-018 requires exactly one ``pane_exited`` per
+        # attached pane lifecycle. FR-013 requires one ``long_running``
+        # per running task; once an eligible event lands AFTER a
+        # ``long_running`` emission, the marker resets so a later
+        # quiet period can emit again.
+        self._pane_exited_emitted: set[str] = set()  # attachment_ids
+        self._long_running_marked: set[str] = set()  # attachment_ids
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -313,10 +329,19 @@ class EventsReader:
 
         Order (Plan §R11 + FR-002 + FR-005 + FR-006):
 
-        1. (Plan §R11) ``pane_exited`` synthesis — DEFERRED to T079
-           (Phase 8) which integrates with FEAT-004 pane discovery.
-        2. (Plan §R11) ``long_running`` synthesis — DEFERRED to T089
-           (Phase 8) which adds the eligibility table + clock check.
+        1. (Plan §R11) ``pane_exited`` synthesis — emit one synthetic
+           ``pane_exited`` event (FR-016/017/018) when FEAT-004
+           reports the bound pane inactive AND the
+           ``pane_exited_grace`` window has elapsed since the last
+           output. Exactly once per attachment lifecycle.
+        2. (Plan §R11) ``long_running`` synthesis — emit one synthetic
+           ``long_running`` event (FR-013) when ``now -
+           last_output_at >= long_running_grace`` and the most-recent
+           prior emitted event is in the eligible set
+           (``activity``, ``error``, ``test_failed``,
+           ``manual_review_needed``, ``swarm_member_reported``).
+           Exactly once per running task; resets when a fresh
+           eligible event lands.
         3. Call ``reader_cycle_offset_recovery`` exactly once (FR-002).
         4. If the recovery result is anything other than UNCHANGED,
            skip the byte-read step (FR-002 / FR-023). The recovery
@@ -333,10 +358,20 @@ class EventsReader:
         """
         result = _AttachmentCycleResult()
 
-        # T079/T089 — synthesized event types — DEFERRED to Phase 8
-        # tasks (intentional layering per Plan §R11).
-        # ``self._maybe_synthesize_pane_exited(...)`` and
-        # ``self._maybe_synthesize_long_running(...)`` will hook in here.
+        # T079/T089 / Plan §R11 — synthesized event types.
+        # ``pane_exited`` and ``long_running`` are NOT regex matches
+        # (FR-016 / FR-013); they are synthesized at cycle entry,
+        # BEFORE the FEAT-007 recovery call so the synthesized rows
+        # use the persisted ``byte_offset`` (no advance) for
+        # ``byte_range_start = byte_range_end``.
+        self._maybe_synthesize_pane_exited(
+            conn, attachment=attachment,
+            now_iso=now_iso, now_monotonic=now_monotonic,
+        )
+        self._maybe_synthesize_long_running(
+            conn, attachment=attachment,
+            now_iso=now_iso, now_monotonic=now_monotonic,
+        )
 
         # T064 audit — FR-003 / FR-041 / FR-042 obligations:
         #   * the reader does NOT mutate ``log_attachments`` or
@@ -535,10 +570,19 @@ class EventsReader:
             return result
 
         # ----- Step 9: JSONL append AFTER SQLite commit (FR-025/29) -----
+        # H2/H3 fix — wrap each row's JSONL append + watermark UPDATE
+        # in an explicit BEGIN/COMMIT so the watermark is durably
+        # persisted before we notify followers. Without the explicit
+        # transaction, the UPDATE would sit in an implicit transaction
+        # on the ``isolation_level=None`` connection and a process kill
+        # between JSONL write and the implicit commit would leave the
+        # watermark NULL → re-emit on restart. Notify is moved AFTER
+        # the watermark is durable so followers cannot observe a row
+        # whose ``jsonl_appended_at`` is still NULL.
+        successfully_appended: list[tuple[int, EventRow]] = []
         for new_event_id, row in committed_event_ids:
             try:
                 self._append_event_to_jsonl(row, event_id=new_event_id)
-                mark_jsonl_appended(conn, new_event_id, now_iso)
             except OSError:
                 # FR-029 — leave jsonl_appended_at NULL; retry next cycle.
                 with self._lock:
@@ -549,10 +593,41 @@ class EventsReader:
                         ),
                         "last_error_class": "OSError",
                     }
+                continue
 
-        # Notify followers (T050 wires this in Phase 4).
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    mark_jsonl_appended(conn, new_event_id, now_iso)
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+                successfully_appended.append((new_event_id, row))
+            except sqlite3.Error:
+                # JSONL succeeded but the watermark UPDATE failed; the
+                # next cycle's retry pass will pick the row up via the
+                # ``idx_events_jsonl_pending`` partial index. Surface
+                # the SQLite-degraded condition rather than the JSONL
+                # one (the source of truth is the SQLite write).
+                with self._lock:
+                    self._degraded_sqlite = {
+                        "since": now_iso,
+                        "buffered_attachments": [
+                            {
+                                "attachment_id": attachment.attachment_id,
+                                "agent_id": attachment.agent_id,
+                                "buffered_count": 0,
+                                "last_error_class": "sqlite3.Error",
+                            }
+                        ],
+                    }
+
+        # Notify followers ONLY after the watermark is durable for that
+        # row. A waking follower's DAO query will then never see a row
+        # whose ``jsonl_appended_at`` is NULL.
         if self._follow_session_registry is not None:
-            for _, row in committed_event_ids:
+            for _, row in successfully_appended:
                 self._follow_session_registry.notify(
                     agent_id=row.agent_id, event_type=row.event_type
                 )
@@ -649,6 +724,259 @@ class EventsReader:
             return os.read(fd, cap)
         finally:
             os.close(fd)
+
+    # ------------------------------------------------------------------
+    # Synthesized event types (Plan §R11 / FR-013 / FR-016..018)
+    # ------------------------------------------------------------------
+
+    # Eligibility table for ``long_running`` (FR-013 / contracts/
+    # classifier-catalogue.md §"long_running eligibility"). Most-recent
+    # prior emitted event types that make a fresh ``long_running``
+    # eligible:
+    _LONG_RUNNING_ELIGIBLE = frozenset(
+        {
+            "activity", "error", "test_failed",
+            "manual_review_needed", "swarm_member_reported",
+        }
+    )
+
+    def _last_event_for_attachment(
+        self,
+        conn: sqlite3.Connection,
+        attachment_id: str,
+    ) -> tuple[str, int] | None:
+        """Return ``(event_type, event_id)`` for the most recent event
+        on this attachment, or None if no events have been emitted yet.
+        """
+        row = conn.execute(
+            "SELECT event_type, event_id FROM events "
+            "WHERE attachment_id = ? "
+            "ORDER BY event_id DESC LIMIT 1",
+            (attachment_id,),
+        ).fetchone()
+        return (row[0], int(row[1])) if row else None
+
+    def _persist_synthetic_event(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        attachment: la_state.LogAttachmentRecord,
+        event_type: str,
+        rule_id: str,
+        now_iso: str,
+        offset_row: lo_state.LogOffsetRecord,
+    ) -> int | None:
+        """Insert one synthetic event row + advance the offsets row's
+        timestamp (no byte/line offset change). Returns the new
+        ``event_id``, or None on commit failure (which is surfaced as
+        ``degraded_sqlite``)."""
+        synth = EventRow(
+            event_id=0,
+            event_type=event_type,
+            agent_id=attachment.agent_id,
+            attachment_id=attachment.attachment_id,
+            log_path=attachment.log_path,
+            byte_range_start=offset_row.byte_offset,
+            byte_range_end=offset_row.byte_offset,
+            line_offset_start=offset_row.line_offset,
+            line_offset_end=offset_row.line_offset,
+            observed_at=now_iso,
+            record_at=None,
+            excerpt="",
+            classifier_rule_id=rule_id,
+            debounce_window_id=None,
+            debounce_collapsed_count=1,
+            debounce_window_started_at=None,
+            debounce_window_ended_at=None,
+            schema_version=1,
+            jsonl_appended_at=None,
+        )
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                event_id = insert_event(conn, synth)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.Error:
+            with self._lock:
+                self._degraded_sqlite = {
+                    "since": now_iso,
+                    "buffered_attachments": [
+                        {
+                            "attachment_id": attachment.attachment_id,
+                            "agent_id": attachment.agent_id,
+                            "buffered_count": 1,
+                            "last_error_class": "sqlite3.Error",
+                        }
+                    ],
+                }
+            return None
+
+        # JSONL append + watermark for the synthetic row, mirroring
+        # the byte-driven path. Failures leave ``jsonl_appended_at``
+        # NULL for the next-cycle retry pass.
+        try:
+            self._append_event_to_jsonl(synth, event_id=event_id)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    mark_jsonl_appended(conn, event_id, now_iso)
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+            except sqlite3.Error:
+                pass  # next cycle's retry pass will pick up the row
+        except OSError:
+            with self._lock:
+                self._degraded_jsonl = {
+                    "since": now_iso,
+                    "pending_event_count": (
+                        (self._degraded_jsonl or {}).get("pending_event_count", 0)
+                        + 1
+                    ),
+                    "last_error_class": "OSError",
+                }
+
+        if self._follow_session_registry is not None:
+            self._follow_session_registry.notify(
+                agent_id=attachment.agent_id, event_type=event_type
+            )
+        return event_id
+
+    def _maybe_synthesize_pane_exited(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        attachment: la_state.LogAttachmentRecord,
+        now_iso: str,
+        now_monotonic: float,  # noqa: ARG002 (reserved for monotonic-driven future tweak)
+    ) -> None:
+        """Synthesize one ``pane_exited`` event (FR-016/017/018) iff:
+
+        * FEAT-004's pane state for the attachment's bound pane is
+          inactive (``panes.active = 0``);
+        * ``now - last_output_at >= pane_exited_grace_seconds`` (FR-017);
+        * we have not already emitted ``pane_exited`` for this
+          attachment lifecycle (FR-018, in-memory tracker
+          ``self._pane_exited_emitted``).
+        """
+        if attachment.attachment_id in self._pane_exited_emitted:
+            return
+
+        pane_row = conn.execute(
+            "SELECT active FROM panes "
+            "WHERE container_id = ? AND tmux_socket_path = ? "
+            "  AND tmux_session_name = ? AND tmux_window_index = ? "
+            "  AND tmux_pane_index = ? AND tmux_pane_id = ?",
+            (
+                attachment.container_id, attachment.tmux_socket_path,
+                attachment.tmux_session_name, attachment.tmux_window_index,
+                attachment.tmux_pane_index, attachment.tmux_pane_id,
+            ),
+        ).fetchone()
+        if pane_row is None:
+            return  # FEAT-004 hasn't observed this pane yet
+        if int(pane_row[0]) != 0:
+            return  # pane is still active
+
+        offset_row = lo_state.select(
+            conn, agent_id=attachment.agent_id, log_path=attachment.log_path
+        )
+        if offset_row is None:
+            return
+        # Use last_output_at as the "last byte seen" reference; if
+        # NULL, fall back to the offset row's updated_at.
+        last_output_at = offset_row.last_output_at or offset_row.updated_at
+        if not last_output_at:
+            return
+        # ISO-8601 with offset → datetime; compare seconds elapsed.
+        try:
+            from datetime import datetime as _dt
+            last_dt = _dt.fromisoformat(last_output_at.replace("Z", "+00:00"))
+            now_dt = _dt.fromisoformat(now_iso.replace("Z", "+00:00"))
+            elapsed = (now_dt - last_dt).total_seconds()
+        except (ValueError, TypeError):
+            return
+        if elapsed < self._pane_exited_grace:
+            return
+
+        emitted_id = self._persist_synthetic_event(
+            conn, attachment=attachment,
+            event_type="pane_exited",
+            rule_id=classifier_rules_module.PANE_EXITED_SYNTH_RULE_ID,
+            now_iso=now_iso,
+            offset_row=offset_row,
+        )
+        if emitted_id is not None:
+            self._pane_exited_emitted.add(attachment.attachment_id)
+
+    def _maybe_synthesize_long_running(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        attachment: la_state.LogAttachmentRecord,
+        now_iso: str,
+        now_monotonic: float,  # noqa: ARG002
+    ) -> None:
+        """Synthesize one ``long_running`` event (FR-013) iff:
+
+        * ``now - last_output_at >= long_running_grace_seconds``;
+        * the most-recent prior emitted event for this attachment is
+          in the FR-013 eligibility set;
+        * we have not already emitted ``long_running`` since the last
+          eligible event landed (in-memory tracker
+          ``self._long_running_marked``).
+        """
+        last = self._last_event_for_attachment(
+            conn, attachment.attachment_id
+        )
+        if last is None:
+            return
+        last_event_type, _ = last
+
+        # Reset the marker when a fresh eligible event lands AFTER a
+        # prior ``long_running`` emission.
+        if (
+            attachment.attachment_id in self._long_running_marked
+            and last_event_type in self._LONG_RUNNING_ELIGIBLE
+        ):
+            self._long_running_marked.discard(attachment.attachment_id)
+
+        if attachment.attachment_id in self._long_running_marked:
+            return
+        if last_event_type not in self._LONG_RUNNING_ELIGIBLE:
+            return
+
+        offset_row = lo_state.select(
+            conn, agent_id=attachment.agent_id, log_path=attachment.log_path
+        )
+        if offset_row is None:
+            return
+        last_output_at = offset_row.last_output_at or offset_row.updated_at
+        if not last_output_at:
+            return
+        try:
+            from datetime import datetime as _dt
+            last_dt = _dt.fromisoformat(last_output_at.replace("Z", "+00:00"))
+            now_dt = _dt.fromisoformat(now_iso.replace("Z", "+00:00"))
+            elapsed = (now_dt - last_dt).total_seconds()
+        except (ValueError, TypeError):
+            return
+        if elapsed < self._long_running_grace:
+            return
+
+        emitted_id = self._persist_synthetic_event(
+            conn, attachment=attachment,
+            event_type="long_running",
+            rule_id=classifier_rules_module.LONG_RUNNING_SYNTH_RULE_ID,
+            now_iso=now_iso,
+            offset_row=offset_row,
+        )
+        if emitted_id is not None:
+            self._long_running_marked.add(attachment.attachment_id)
 
 
 # --------------------------------------------------------------------------

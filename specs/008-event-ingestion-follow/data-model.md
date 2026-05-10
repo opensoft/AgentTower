@@ -259,6 +259,16 @@ and removed by `events.follow_close` or the cycle-time janitor.
 
 ## 7. `agenttower status` extensions
 
+> **Stability**: the two new top-level keys `events_reader` and
+> `events_persistence` are marked **EXPERIMENTAL** until the
+> first downstream feature (FEAT-009 / FEAT-010) consumes them in
+> production. Field types and value shapes documented below are
+> the FEAT-008 MVP form; sub-key additions are non-breaking and
+> may land without a major-version bump. Removals or renames are
+> a breaking change and require an explicit migration. Scripts
+> consuming `status --json` SHOULD treat unknown sub-keys as
+> additive rather than fail closed.
+
 The existing `status` socket method (FEAT-002) returns a JSON object.
 FEAT-008 adds two top-level keys:
 
