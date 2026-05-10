@@ -702,6 +702,211 @@ def _events_classifier_rules(
     )
 
 
+def _events_follow_session_registry_or_error(
+    ctx: DaemonContext,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Return ``(registry, None)`` or ``(None, error_envelope)``."""
+    if ctx.follow_session_registry is None:
+        return None, errors.make_error(
+            errors.INTERNAL_ERROR, "follow session registry unavailable"
+        )
+    return ctx.follow_session_registry, None
+
+
+def _events_follow_open(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.follow_open`` per C-EVT-002."""
+    import sqlite3
+    import time as _time
+
+    from ..events.dao import EventFilter, select_events
+    from .. import events as events_pkg
+
+    target = params.get("target")
+    if target is not None and not isinstance(target, str):
+        return errors.make_error(
+            errors.EVENTS_FILTER_INVALID,
+            f"target must be a string; got {type(target).__name__}",
+        )
+    err = _events_validate_filter(params)
+    if err is not None:
+        return err
+    err = _events_resolve_target(ctx, target)
+    if err is not None:
+        return err
+    registry, err = _events_follow_session_registry_or_error(ctx)
+    if err is not None:
+        return err
+
+    types = tuple(params.get("types") or [])
+    since = params.get("since")
+
+    # Compute live_starting_event_id = current max event_id at session-open
+    # time; later events are "live."
+    db_path = ctx.state_path / "agenttower.sqlite3"
+    backlog_events: list[dict[str, Any]] = []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute("SELECT COALESCE(MAX(event_id), 0) FROM events")
+        live_starting = int(cur.fetchone()[0])
+        if since is not None:
+            backlog_rows, _ = select_events(
+                conn,
+                filter=EventFilter(
+                    target_agent_id=target, types=types, since_iso=since
+                ),
+                cursor=None,
+                limit=events_pkg.DEFAULT_PAGE_SIZE,
+                reverse=False,
+            )
+            backlog_events = [_event_row_to_payload(r) for r in backlog_rows]
+    finally:
+        conn.close()
+
+    expires_at = _time.monotonic() + events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS
+    session = registry.open(
+        target_agent_id=target,
+        types=types,
+        since_iso=since,
+        live_starting_event_id=live_starting,
+        expires_at_monotonic=expires_at,
+    )
+    return errors.make_ok(
+        {
+            "session_id": session.session_id,
+            "backlog_events": backlog_events,
+            "live_starting_event_id": live_starting,
+        }
+    )
+
+
+def _events_follow_next(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.follow_next`` per C-EVT-003 — long-poll."""
+    import sqlite3
+    import time as _time
+
+    from ..events.dao import EventFilter, select_events
+    from .. import events as events_pkg
+
+    session_id = params.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN, "session_id is required"
+        )
+    registry, err = _events_follow_session_registry_or_error(ctx)
+    if err is not None:
+        return err
+    session = registry.get(session_id)
+    if session is None:
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN,
+            f"unknown follow session: {session_id}",
+        )
+    now_mono = _time.monotonic()
+    if session.expires_at_monotonic < now_mono:
+        registry.close(session_id)
+        return errors.make_error(
+            errors.EVENTS_SESSION_EXPIRED,
+            f"follow session {session_id} expired",
+        )
+
+    max_wait = float(
+        params.get("max_wait_seconds")
+        or events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS
+    )
+    max_wait = min(max_wait, events_pkg.FOLLOW_LONG_POLL_MAX_SECONDS)
+    deadline = now_mono + max_wait
+
+    db_path = ctx.state_path / "agenttower.sqlite3"
+
+    while True:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            # Compute the lower bound for "new events": last_emitted (if
+            # we've seen anything) or live_starting (first call).
+            lower_bound = max(
+                session.last_emitted_event_id, session.live_starting_event_id
+            )
+            cursor_token = None
+            if lower_bound > 0:
+                from ..events.dao import encode_cursor
+
+                cursor_token = encode_cursor(lower_bound, reverse=False)
+            rows, _ = select_events(
+                conn,
+                filter=EventFilter(
+                    target_agent_id=session.target_agent_id,
+                    types=tuple(session.type_filter),
+                ),
+                cursor=cursor_token,
+                limit=events_pkg.DEFAULT_PAGE_SIZE,
+                reverse=False,
+            )
+        finally:
+            conn.close()
+
+        if rows:
+            session.last_emitted_event_id = rows[-1].event_id
+            registry.refresh_expiration(
+                session_id,
+                new_expires_at_monotonic=_time.monotonic()
+                + events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+            )
+            return errors.make_ok(
+                {
+                    "events": [_event_row_to_payload(r) for r in rows],
+                    "session_open": True,
+                }
+            )
+
+        # No new events. Wait for either: (a) a notify from the reader
+        # post-commit (Plan §"Follow long-poll model"), or (b) a short
+        # periodic poll budget so direct DB writes (admin tools, tests)
+        # are also discovered. The poll granularity is 250 ms — short
+        # enough to keep latency well under SC-002's 1 s target while
+        # avoiding hot-spinning the DAO.
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            break
+        poll_interval = min(0.25, remaining)
+        with session.condition:
+            session.condition.wait(timeout=poll_interval)
+        # Re-check session existence (in case it was closed during wait).
+        if registry.get(session_id) is None:
+            return errors.make_ok({"events": [], "session_open": False})
+
+    registry.refresh_expiration(
+        session_id,
+        new_expires_at_monotonic=_time.monotonic()
+        + events_pkg.FOLLOW_SESSION_IDLE_TIMEOUT_SECONDS,
+    )
+    return errors.make_ok({"events": [], "session_open": True})
+
+
+def _events_follow_close(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID
+) -> dict[str, Any]:
+    """``events.follow_close`` per C-EVT-004."""
+    session_id = params.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN, "session_id is required"
+        )
+    registry, err = _events_follow_session_registry_or_error(ctx)
+    if err is not None:
+        return err
+    closed = registry.close(session_id)
+    if not closed:
+        return errors.make_error(
+            errors.EVENTS_SESSION_UNKNOWN,
+            f"unknown follow session: {session_id}",
+        )
+    return errors.make_ok({})
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
 # FEAT-003's two, FEAT-004's two, FEAT-006's five, FEAT-007's four,
 # and FEAT-008's events.* surface.
@@ -724,5 +929,8 @@ DISPATCH: dict[str, Handler] = {
     "attach_log_status": _attach_log_status,
     "attach_log_preview": _attach_log_preview,
     "events.list": _events_list,
+    "events.follow_open": _events_follow_open,
+    "events.follow_next": _events_follow_next,
+    "events.follow_close": _events_follow_close,
     "events.classifier_rules": _events_classifier_rules,
 }

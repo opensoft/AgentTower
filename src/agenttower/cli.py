@@ -905,6 +905,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="newest-first instead of oldest-first",
     )
     events_cmd.add_argument(
+        "--follow",
+        action="store_true",
+        help="stream new events as they are emitted",
+    )
+    events_cmd.add_argument(
         "--json",
         action="store_true",
         help=JSON_LINE_HELP,
@@ -1878,9 +1883,23 @@ def _is_iso8601_with_offset(value: str) -> bool:
 
 
 def _events_command(args: argparse.Namespace) -> int:
-    """``agenttower events`` (FEAT-008 list mode + classifier-rules debug)."""
+    """``agenttower events`` (FEAT-008 list / follow / classifier-rules)."""
     _, resolved = _resolve_socket_with_paths()
     socket_path = resolved.path
+
+    # T053: --limit / --cursor / --reverse are not allowed with --follow.
+    if args.follow and (
+        args.limit is not None or args.cursor is not None or args.reverse
+    ):
+        _emit_local_error(
+            "bad_request",
+            "--limit / --cursor / --reverse are not allowed with --follow",
+            args.json,
+        )
+        return 2
+
+    if args.follow:
+        return _events_follow_loop(args, socket_path)
 
     if args.classifier_rules:
         try:
@@ -1957,6 +1976,132 @@ def _events_command(args: argparse.Namespace) -> int:
             print(f"# next_cursor: {next_cursor}", file=sys.stderr)
 
     return 0
+
+
+def _events_follow_loop(args: argparse.Namespace, socket_path: Path) -> int:
+    """``agenttower events --follow`` long-poll loop (T052 / T053).
+
+    Lifecycle (per ``contracts/cli-events.md`` C-CLI-EVT-002):
+
+    1. Pre-flight client-side argument validation.
+    2. ``events.follow_open`` — print backlog if --since was set, then
+       loop on ``events.follow_next``.
+    3. SIGINT → ``events.follow_close`` → exit 0.
+    4. Daemon-unreachable mid-stream → exit 3.
+    5. SIGPIPE (``BrokenPipeError`` from a closed downstream pipe) →
+       ``events.follow_close`` → exit 0 (treat as success).
+    """
+    import signal
+
+    err = _events_validate_args_local(args)
+    if err is not None:
+        return err
+
+    open_params: dict[str, Any] = {}
+    if args.target is not None:
+        open_params["target"] = args.target
+    if args.type:
+        open_params["types"] = list(args.type)
+    if args.since is not None:
+        open_params["since"] = args.since
+
+    try:
+        opened = send_request(
+            socket_path, "events.follow_open", open_params,
+            connect_timeout=2.0, read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 3
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, args.json)
+
+    session_id: str = opened["session_id"]
+    backlog_events = opened.get("backlog_events") or []
+
+    # SIGINT handler flips a flag the loop checks between calls.
+    interrupt_flag = {"set": False}
+
+    def _on_sigint(signum, frame):  # noqa: ANN001
+        interrupt_flag["set"] = True
+
+    prior_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    def _print_event(event: dict[str, Any]) -> None:
+        if args.json:
+            print(json.dumps(event, separators=(",", ":")), flush=True)
+        else:
+            ts = (event.get("observed_at") or "")[:19].replace("T", " ")
+            label = event.get("agent_id") or ""
+            etype = event.get("event_type") or ""
+            excerpt = (
+                (event.get("excerpt") or "").splitlines()[0]
+                if event.get("excerpt")
+                else ""
+            )
+            print(f"{ts}  {label}  {etype:<22} {excerpt}", flush=True)
+
+    try:
+        # 1. Print backlog first (FR-033 — bounded backlog before live).
+        for event in backlog_events:
+            _print_event(event)
+
+        # 2. Loop on follow_next until SIGINT or daemon unavailable.
+        while not interrupt_flag["set"]:
+            try:
+                # Short server-side wait so SIGINT response is bounded
+                # by ~1 second. The CLI loops and re-issues; the daemon
+                # is happy to be polled more often than the default
+                # 30 s long-poll budget.
+                result = send_request(
+                    socket_path,
+                    "events.follow_next",
+                    {"session_id": session_id, "max_wait_seconds": 1.0},
+                    connect_timeout=2.0,
+                    read_timeout=5.0,
+                )
+            except DaemonUnavailable:
+                print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+                return 3
+            except DaemonError as exc:
+                if exc.code in (
+                    "events_session_unknown", "events_session_expired"
+                ):
+                    return _emit_daemon_error(exc, args.json)
+                return _emit_daemon_error(exc, args.json)
+            except KeyboardInterrupt:
+                interrupt_flag["set"] = True
+                break
+
+            if interrupt_flag["set"]:
+                break
+
+            for event in result.get("events", []) or []:
+                try:
+                    _print_event(event)
+                except BrokenPipeError:
+                    # Downstream consumer closed the pipe (e.g.
+                    # ``head -n N`` finished). Treat as clean exit.
+                    return 0
+
+            if not result.get("session_open", True):
+                break
+
+        return 0
+    finally:
+        # Always best-effort close.
+        try:
+            send_request(
+                socket_path,
+                "events.follow_close",
+                {"session_id": session_id},
+                connect_timeout=1.0,
+                read_timeout=2.0,
+            )
+        except Exception:  # noqa: BLE001 — best effort
+            pass
+        signal.signal(signal.SIGINT, prior_handler)
 
 
 if __name__ == "__main__":

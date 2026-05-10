@@ -240,6 +240,16 @@ class EventsReader:
 
     def _run_one_cycle(self, *, now_iso: str, now_monotonic: float) -> None:
         """Walk every active attachment and process its cycle."""
+        # T051 — cycle-time janitor: evict expired follow sessions before
+        # any cycle work so a SIGKILLed CLI's session is freed promptly.
+        if self._follow_session_registry is not None:
+            try:
+                self._follow_session_registry.gc_expired(
+                    now_monotonic=now_monotonic
+                )
+            except Exception:  # pragma: no cover — defensive
+                _LOG.exception("follow-session janitor failed")
+
         conn = sqlite3.connect(self._state_db, isolation_level=None)
         try:
             attachments = la_state.select_actives(conn) if hasattr(

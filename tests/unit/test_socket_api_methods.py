@@ -72,6 +72,9 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "attach_log_status",
         "attach_log_preview",
         "events.list",
+        "events.follow_open",
+        "events.follow_next",
+        "events.follow_close",
         "events.classifier_rules",
     }
 

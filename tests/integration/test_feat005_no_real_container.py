@@ -49,9 +49,12 @@ class TestDispatchTableCardinality:
             "attach_log_status",
             "attach_log_preview",
             "events.list",
+            "events.follow_open",
+            "events.follow_next",
+            "events.follow_close",
             "events.classifier_rules",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 18
+        assert len(dispatch) == 21
 
 
 # ---------------------------------------------------------------------------

@@ -129,23 +129,23 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Follow session daemon-side
 
-- [ ] T047 [US2] Implement `_events_follow_open` dispatcher in `src/agenttower/socket_api/methods.py` per `contracts/socket-events.md` C-EVT-002: register session in `FollowSessionRegistry`, return `{session_id, backlog_events, live_starting_event_id}`. Returns `agent_not_found` for unknown `target`. (Serialize with T048/T049 — same file.)
-- [ ] T048 [US2] Implement `_events_follow_next` dispatcher in `src/agenttower/socket_api/methods.py` per C-EVT-003: long-poll on `threading.Condition` keyed by session filter; return events with `event_id > last_emitted_event_id` matching the filter, or empty array on timeout. Refresh `expires_at` on each call. Errors `events_session_unknown` / `events_session_expired`. (Serialize after T047.)
-- [ ] T049 [US2] Implement `_events_follow_close` dispatcher in `src/agenttower/socket_api/methods.py` per C-EVT-004: idempotent; returns `events_session_unknown` for unknown session ids (clients ignore). (Serialize after T048.)
-- [ ] T050 [US2] Wire reader-thread post-commit notification into the registry: after every successful SQLite commit, the reader calls `registry.notify(event_row)`; followers wake on the condition, requery DAO, return matching events.
-- [ ] T051 [US2] Implement the cycle-time janitor on the reader thread: between cycles, evict any session whose `expires_at_monotonic < now`. Plan §R9.
+- [X] T047 [US2] Implement `_events_follow_open` dispatcher in `src/agenttower/socket_api/methods.py` per `contracts/socket-events.md` C-EVT-002: register session in `FollowSessionRegistry`, return `{session_id, backlog_events, live_starting_event_id}`. Returns `agent_not_found` for unknown `target`. (Serialize with T048/T049 — same file.)
+- [X] T048 [US2] Implement `_events_follow_next` dispatcher in `src/agenttower/socket_api/methods.py` per C-EVT-003: long-poll on `threading.Condition` keyed by session filter; return events with `event_id > last_emitted_event_id` matching the filter, or empty array on timeout. Refresh `expires_at` on each call. Errors `events_session_unknown` / `events_session_expired`. (Serialize after T047.)
+- [X] T049 [US2] Implement `_events_follow_close` dispatcher in `src/agenttower/socket_api/methods.py` per C-EVT-004: idempotent; returns `events_session_unknown` for unknown session ids (clients ignore). (Serialize after T048.)
+- [X] T050 [US2] Wire reader-thread post-commit notification into the registry: after every successful SQLite commit, the reader calls `registry.notify(event_row)`; followers wake on the condition, requery DAO, return matching events.
+- [X] T051 [US2] Implement the cycle-time janitor on the reader thread: between cycles, evict any session whose `expires_at_monotonic < now`. Plan §R9.
 
 ### CLI `--follow`
 
-- [ ] T052 [US2] Implement `--follow` mode in `_events_command` (`src/agenttower/cli.py`) — FR-033 / FR-034: call `events.follow_open`, optionally print backlog, then loop on `events.follow_next` (≤ 30 s budget per call), print events with stdout flushing, handle SIGINT to call `events.follow_close` and exit 0. On daemon-unreachable mid-stream, exit 3 (FR-034 daemon-unavailable surface).
-- [ ] T053 [US2] Reject `--limit` / `--cursor` / `--reverse` with `--follow` (exit 2). Handle `BrokenPipeError` (downstream `head -n N`) by calling `events.follow_close` and exiting 0 (treat SIGPIPE as success).
+- [X] T052 [US2] Implement `--follow` mode in `_events_command` (`src/agenttower/cli.py`) — FR-033 / FR-034: call `events.follow_open`, optionally print backlog, then loop on `events.follow_next` (≤ 30 s budget per call), print events with stdout flushing, handle SIGINT to call `events.follow_close` and exit 0. On daemon-unreachable mid-stream, exit 3 (FR-034 daemon-unavailable surface).
+- [X] T053 [US2] Reject `--limit` / `--cursor` / `--reverse` with `--follow` (exit 2). Handle `BrokenPipeError` (downstream `head -n N`) by calling `events.follow_close` and exiting 0 (treat SIGPIPE as success).
 
 ### US2 integration tests
 
-- [ ] T054 [P] [US2] `tests/integration/test_events_us2_follow.py` — AS1: `events --follow` (no target) prints any attached agent's new event within ≤ 1 cycle.
-- [ ] T055 [P] [US2] `test_events_us2_follow.py` — AS2: `events --follow --target X` does NOT print events from agent Y.
-- [ ] T056 [P] [US2] `test_events_us2_follow.py` — AS3: SIGINT after idle exits 0, stdout has no further output. Use the T003 reader-tick seam to drive the timing deterministically.
-- [ ] T057 [P] [US2] `test_events_us2_follow.py` — `--since`-then-live ordering: `--since` prints bounded backlog FIRST, live events SECOND, with no overlap (uses `live_starting_event_id` from `follow_open`).
+- [X] T054 [P] [US2] `tests/integration/test_events_us2_follow.py` — AS1: `events --follow` (no target) prints any attached agent's new event within ≤ 1 cycle.
+- [X] T055 [P] [US2] `test_events_us2_follow.py` — AS2: `events --follow --target X` does NOT print events from agent Y.
+- [X] T056 [P] [US2] `test_events_us2_follow.py` — AS3: SIGINT after idle exits 0, stdout has no further output. Use the T003 reader-tick seam to drive the timing deterministically.
+- [X] T057 [P] [US2] `test_events_us2_follow.py` — `--since`-then-live ordering: `--since` prints bounded backlog FIRST, live events SECOND, with no overlap (uses `live_starting_event_id` from `follow_open`).
 
 **Checkpoint**: US2 follow stream is live; SC-002 testable from here.
 
