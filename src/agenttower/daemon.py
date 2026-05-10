@@ -427,10 +427,11 @@ def _run(args: argparse.Namespace) -> int:
         agent_service.log_service = log_service
 
         # FR-043: orphan-recovery startup pass. Runs AFTER schema migration
-        # (open_registry already triggered _apply_pending_migrations under
-        # _build_log_service via _read_schema_version) and BEFORE the socket
-        # listener starts accepting connections. Best-effort; never blocks
-        # daemon startup on tmux/docker errors.
+        # (which is triggered earlier by ``_verify_feat001_initialized`` →
+        # ``state.schema.open_registry`` at line ~380; ``_read_schema_version``
+        # is a SELECT-only probe and does NOT apply migrations) and BEFORE
+        # the socket listener starts accepting connections. Best-effort;
+        # never blocks daemon startup on tmux/docker errors.
         try:
             detect_orphans(
                 connection_factory=lambda: sqlite3.connect(

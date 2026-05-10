@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Iterable
 
 from ..socket_api.lifecycle import LifecycleLogger
+from ..state.bench_user import normalize_bench_user_for_exec
 from .canonical_paths import (
     container_canonical_log_root_for,
     host_canonical_log_root_for,
@@ -32,12 +33,19 @@ from .pipe_pane_state import classify_pipe_target, sanitize_prior_pipe_target
 
 
 def _bench_containers(conn: sqlite3.Connection) -> Iterable[tuple[str, str, str]]:
-    """Yield ``(container_id, container_user, name)`` for every active container."""
+    """Yield ``(container_id, container_user, name)`` for every active container.
+
+    ``container_user`` is normalized via
+    :func:`agenttower.state.bench_user.normalize_bench_user_for_exec` so a
+    Docker ``Config.User`` of the form ``user:uid`` (or just ``:1000``)
+    becomes the bare username — matching the FEAT-004 FR-020 rule that
+    ``docker exec -u`` needs a username, not a uid suffix.
+    """
     cur = conn.execute(
         "SELECT container_id, config_user, name FROM containers WHERE active = 1"
     )
     for row in cur.fetchall():
-        yield row[0], row[1] or "root", row[2] or ""
+        yield row[0], normalize_bench_user_for_exec(row[1]), row[2] or ""
 
 
 def _expected_container_side_log_for(

@@ -140,6 +140,12 @@ def read_tail_lines(host_path: str, n: int, *, max_line_bytes: int = 65536) -> l
     error handling. Lines longer than ``max_line_bytes`` are truncated at the
     byte boundary with a trailing ``…`` marker BEFORE decoding (FR-064).
 
+    The tail-read loop has a hard upper bound on the buffered byte window
+    so an adversarial log file with very few (or zero) ``\\n`` characters
+    cannot drive the daemon to OOM via ``attach-log --preview``: the loop
+    stops once buffered bytes reach ``n * max_line_bytes`` plus one slack
+    line, and any partial leading line is truncated by ``_truncate_line``.
+
     Honors the FR-060 test seam.
     """
     if n <= 0:
@@ -169,14 +175,21 @@ def read_tail_lines(host_path: str, n: int, *, max_line_bytes: int = 65536) -> l
     if size == 0:
         return []
 
+    # Worst-case window: ``n`` lines of ``max_line_bytes`` plus one
+    # slack line for the inevitable partial leading line we truncate
+    # below. With the production defaults (n ≤ 200, max_line_bytes
+    # = 64 KiB) this caps the buffered window at ~12.6 MiB.
+    max_buffer_bytes = (n + 1) * max_line_bytes
+
     with open(host_path, "rb") as f:
         # Step backwards from end, accumulating until we have at least n+1 newlines
-        # (the +1 protects against the final partial line).
+        # (the +1 protects against the final partial line) OR we hit the
+        # buffer cap.
         block_size = 8192
         data = b""
         offset = size
         newlines_seen = 0
-        while offset > 0 and newlines_seen <= n:
+        while offset > 0 and newlines_seen <= n and len(data) < max_buffer_bytes:
             read_bytes = min(block_size, offset)
             offset -= read_bytes
             f.seek(offset)
@@ -185,6 +198,12 @@ def read_tail_lines(host_path: str, n: int, *, max_line_bytes: int = 65536) -> l
             newlines_seen = data.count(b"\n")
             if offset == 0:
                 break
+        # If the cap stopped us before we found enough newlines, drop the
+        # leading partial line so callers get cleanly-bounded output. The
+        # subsequent split + ``[-n:]`` slice already handles the case
+        # where the cap window has fewer than ``n`` newlines.
+        if len(data) > max_buffer_bytes:
+            data = data[-max_buffer_bytes:]
 
     raw = data.decode("utf-8", errors="surrogateescape")
     raw_lines = raw.split("\n")

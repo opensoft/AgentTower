@@ -706,6 +706,8 @@ class AgentService:
         self, conn: sqlite3.Connection, *, container_id: str
     ) -> dict[str, Any]:
         """Fetch the FEAT-007 container fields on the caller's transaction."""
+        from ..state.bench_user import normalize_bench_user_for_exec
+
         row = conn.execute(
             """
             SELECT active, mounts_json, config_user
@@ -719,7 +721,10 @@ class AgentService:
                 "agent_inactive",
                 f"container {container_id!r} is inactive",
             )
-        bench_user = row[2] or "root"
+        # Docker ``Config.User`` can be ``user:uid``; strip the ``:uid``
+        # suffix and fall back to ``root`` on empty so ``docker exec -u``
+        # gets a valid username (matches FEAT-004 FR-020 behavior).
+        bench_user = normalize_bench_user_for_exec(row[2])
         return {
             "mounts_json": row[1] or "[]",
             "bench_user": bench_user,
