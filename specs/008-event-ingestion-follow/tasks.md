@@ -66,18 +66,18 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Classifier rule catalogue and matchers
 
-- [ ] T017 [P] [US1] Implement the rule dataclass `ClassifierRule` and the ordered tuple `RULES` in `src/agenttower/events/classifier_rules.py` per `contracts/classifier-catalogue.md` §"Catalogue". 11 matcher rules; priorities 10/20/30/31/40/41/50/51/60/70/999.
-- [ ] T018 [P] [US1] Implement the `swarm_member.v1` strict parser in `src/agenttower/events/classifier_rules.py` with `re.ASCII` flag and the documented capture groups (`parent`, `pane`, `label`, `capability`, `purpose`). Malformed variants return no match (fall through).
-- [ ] T019 [P] [US1] Implement the synthetic rule ids `pane_exited.synth.v1` and `long_running.synth.v1` as constants in `src/agenttower/events/classifier_rules.py` (NOT part of the matcher tuple — synthesized by the reader).
-- [ ] T020 [US1] Implement `classify(record: str, prior_event_type: str | None) -> ClassifierOutcome` in `src/agenttower/events/classifier.py`. Walks `RULES` in priority order, returns the first match. Guarantees the `activity.fallback.v1` catch-all matches any non-empty record (FR-011). Pure function — no I/O, no clock reads (FR-010).
-- [ ] T021 [US1] Implement the excerpt-cap truncation logic in `src/agenttower/events/classifier.py`: redact_one_line first (FR-012), then truncate to `PER_EVENT_EXCERPT_CAP_BYTES` with `EXCERPT_TRUNCATION_MARKER`. Edge case: marker fits within the cap (cap is the OUTER bound).
+- [X] T017 [P] [US1] Implement the rule dataclass `ClassifierRule` and the ordered tuple `RULES` in `src/agenttower/events/classifier_rules.py` per `contracts/classifier-catalogue.md` §"Catalogue". 11 matcher rules; priorities 10/20/30/31/40/41/50/51/60/70/999.
+- [X] T018 [P] [US1] Implement the `swarm_member.v1` strict parser in `src/agenttower/events/classifier_rules.py` with `re.ASCII` flag and the documented capture groups (`parent`, `pane`, `label`, `capability`, `purpose`). Malformed variants return no match (fall through).
+- [X] T019 [P] [US1] Implement the synthetic rule ids `pane_exited.synth.v1` and `long_running.synth.v1` as constants in `src/agenttower/events/classifier_rules.py` (NOT part of the matcher tuple — synthesized by the reader).
+- [X] T020 [US1] Implement `classify(record: str, prior_event_type: str | None) -> ClassifierOutcome` in `src/agenttower/events/classifier.py`. Walks `RULES` in priority order, returns the first match. Guarantees the `activity.fallback.v1` catch-all matches any non-empty record (FR-011). Pure function — no I/O, no clock reads (FR-010).
+- [X] T021 [US1] Implement the excerpt-cap truncation logic in `src/agenttower/events/classifier.py`: redact_one_line first (FR-012), then truncate to `PER_EVENT_EXCERPT_CAP_BYTES` with `EXCERPT_TRUNCATION_MARKER`. Edge case: marker fits within the cap (cap is the OUTER bound).
 
 ### Classifier unit tests
 
-- [ ] T022 [P] [US1] Add positive + negative + overlap fixtures in `tests/unit/test_classifier_rules.py`. Every rule has at least three lines: matches, must-not-match, edge-of-pattern. Coverage per FR-008 ("test fixture MUST exist for every rule").
-- [ ] T023 [P] [US1] Add priority-order determinism tests in `tests/unit/test_classifier_priority.py` per `contracts/classifier-catalogue.md` §"Priority overlap fixtures". Every overlap row in the table is one assertion.
-- [ ] T024 [P] [US1] Add `swarm_member.v1` strict-parse tests in `tests/unit/test_classifier_swarm_member.py`: positive parse with capture validation, malformed-variants → `activity.fallback.v1` (FR-009).
-- [ ] T025 [P] [US1] Add redaction-before-truncation tests in `tests/unit/test_classifier_redaction.py`: secret-pattern split exactly at the cap boundary remains redacted; redaction utility version-pin assertion.
+- [X] T022 [P] [US1] Add positive + negative + overlap fixtures in `tests/unit/test_classifier_rules.py`. Every rule has at least three lines: matches, must-not-match, edge-of-pattern. Coverage per FR-008 ("test fixture MUST exist for every rule").
+- [X] T023 [P] [US1] Add priority-order determinism tests in `tests/unit/test_classifier_priority.py` per `contracts/classifier-catalogue.md` §"Priority overlap fixtures". Every overlap row in the table is one assertion.
+- [X] T024 [P] [US1] Add `swarm_member.v1` strict-parse tests in `tests/unit/test_classifier_swarm_member.py`: positive parse with capture validation, malformed-variants → `activity.fallback.v1` (FR-009).
+- [X] T025 [P] [US1] Add redaction-before-truncation tests in `tests/unit/test_classifier_redaction.py`: secret-pattern split exactly at the cap boundary remains redacted; redaction utility version-pin assertion.
 
 ### Reader cycle, debounce, and DAO
 
