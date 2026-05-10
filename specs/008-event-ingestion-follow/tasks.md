@@ -205,14 +205,14 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Schema validation tests
 
-- [ ] T072 [P] [US5] `tests/integration/test_events_us5_json.py` — AS1: append known event-trigger line; `events --target X --json --limit 1` is exactly one JSON object on a single line containing the FR-027 fields and no fields beyond the schema.
-- [ ] T073 [P] [US5] `test_events_us5_json.py` — AS2: `--follow --json` extends with new events as one JSON line per event, terminating `\n`.
-- [ ] T074 [P] [US5] `test_events_us5_json.py` — SC-011: every event in the integration suite parses against `tests/integration/schemas/event-v1.schema.json` with zero validation failures. Aggregate fixture across US1..US6 events.
-- [ ] T075 [P] [US5] `tests/unit/test_event_schema_negative.py` — every documented negative case from `contracts/event-schema.md` §"Negative validation tests" fails schema validation as expected.
+- [X] T072 [P] [US5] `tests/integration/test_events_us5_json.py` — AS1: append known event-trigger line; `events --target X --json --limit 1` is exactly one JSON object on a single line containing the FR-027 fields and no fields beyond the schema.
+- [X] T073 [P] [US5] `test_events_us5_json.py` — AS2: `--follow --json` extends with new events as one JSON line per event, terminating `\n`.
+- [X] T074 [P] [US5] `test_events_us5_json.py` — SC-011: every event in the integration suite parses against `tests/integration/schemas/event-v1.schema.json` with zero validation failures. Aggregate fixture across US1..US6 events.
+- [X] T075 [P] [US5] `tests/unit/test_event_schema_negative.py` — every documented negative case from `contracts/event-schema.md` §"Negative validation tests" fails schema validation as expected.
 
 ### Host vs container parity
 
-- [ ] T076 [P] [US5] `tests/integration/test_events_host_container_parity.py` — SC-012: `events --target X --json --limit 10` from host and from inside a bench container against the same daemon produces byte-identical stdout (modulo newline normalization).
+- [X] T076 [P] [US5] `tests/integration/test_events_host_container_parity.py` — SC-012: `events --target X --json --limit 10` from host and from inside a bench container against the same daemon produces byte-identical stdout (modulo newline normalization).
 
 **Checkpoint**: Stable JSON contract proven; SC-011 / SC-012 satisfied.
 
@@ -226,29 +226,29 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Reader degraded-mode implementation
 
-- [ ] T077 [US6] Implement FR-040 buffered-retry path in `EventsReader`: on SQLite write error, push events onto per-attachment `_pending_events` deque (bounded by `PER_CYCLE_BYTE_CAP_BYTES`), do NOT advance offsets, surface `degraded_sqlite` field on `agenttower status`. On next cycle, attempt flush before reading new bytes; on success, advance offsets and clear the indicator.
-- [ ] T078 [US6] Implement FR-029 JSONL retry watermark in `EventsReader`: on JSONL append failure after a successful SQLite commit, leave `jsonl_appended_at` NULL and surface `degraded_jsonl` on `status`. On every subsequent cycle, before processing new bytes, query rows with `jsonl_appended_at IS NULL` (limit `DEFAULT_PAGE_SIZE`) and retry; advance watermark on success.
-- [ ] T079 [US6] Implement FR-038 EACCES / I/O failure isolation: per-attachment failure surfaces in `agenttower status.events_reader.attachments_in_failure`; attachment row is NOT lost; FEAT-007 lifecycle surface reuse for mapped failure classes (FR-037).
-- [ ] T080 [US6] Implement FR-039 missing-offset-row handling: skip the cycle for that attachment, log the inconsistency through the FEAT-007 lifecycle logger, do NOT invent offset values.
+- [X] T077 [US6] Implement FR-040 buffered-retry path in `EventsReader`: on SQLite write error, push events onto per-attachment `_pending_events` deque (bounded by `PER_CYCLE_BYTE_CAP_BYTES`), do NOT advance offsets, surface `degraded_sqlite` field on `agenttower status`. On next cycle, attempt flush before reading new bytes; on success, advance offsets and clear the indicator.
+- [X] T078 [US6] Implement FR-029 JSONL retry watermark in `EventsReader`: on JSONL append failure after a successful SQLite commit, leave `jsonl_appended_at` NULL and surface `degraded_jsonl` on `status`. On every subsequent cycle, before processing new bytes, query rows with `jsonl_appended_at IS NULL` (limit `DEFAULT_PAGE_SIZE`) and retry; advance watermark on success.
+- [X] T079 [US6] Implement FR-038 EACCES / I/O failure isolation: per-attachment failure surfaces in `agenttower status.events_reader.attachments_in_failure`; attachment row is NOT lost; FEAT-007 lifecycle surface reuse for mapped failure classes (FR-037).
+- [X] T080 [US6] Implement FR-039 missing-offset-row handling: skip the cycle for that attachment, log the inconsistency through the FEAT-007 lifecycle logger, do NOT invent offset values.
 
 ### Reader unit tests
 
-- [ ] T081 [P] [US6] `tests/unit/test_reader_degraded_sqlite.py` — FR-040: simulate SQLite write error mid-cycle; assert events buffered; offsets NOT advanced; status surfaces `degraded_sqlite`. Recovery cycle flushes buffer; condition clears.
-- [ ] T082 [P] [US6] `tests/unit/test_reader_jsonl_watermark.py` — FR-029: simulate JSONL append failure post-commit; assert `jsonl_appended_at` stays NULL; status surfaces `degraded_jsonl`; recovery cycle replays via the partial index; condition clears when queue empties.
-- [ ] T083 [P] [US6] `tests/unit/test_reader_missing_offset_row.py` — FR-039: attachment row exists, offset row missing; reader skips cycle for that attachment, surfaces inconsistency, no offset invention.
-- [ ] T084 [P] [US6] `tests/unit/test_reader_eaccess_isolated.py` — FR-036 / FR-038: one attachment's log unreadable (chmod 0); assert other attachments continue producing events; failed attachment surfaces in `status.events_reader.attachments_in_failure`.
+- [X] T081 [P] [US6] `tests/unit/test_reader_degraded_sqlite.py` — FR-040: simulate SQLite write error mid-cycle; assert events buffered; offsets NOT advanced; status surfaces `degraded_sqlite`. Recovery cycle flushes buffer; condition clears.
+- [X] T082 [P] [US6] `tests/unit/test_reader_jsonl_watermark.py` — FR-029: simulate JSONL append failure post-commit; assert `jsonl_appended_at` stays NULL; status surfaces `degraded_jsonl`; recovery cycle replays via the partial index; condition clears when queue empties.
+- [X] T083 [P] [US6] `tests/unit/test_reader_missing_offset_row.py` — FR-039: attachment row exists, offset row missing; reader skips cycle for that attachment, surfaces inconsistency, no offset invention.
+- [X] T084 [P] [US6] `tests/unit/test_reader_eaccess_isolated.py` — FR-036 / FR-038: one attachment's log unreadable (chmod 0); assert other attachments continue producing events; failed attachment surfaces in `status.events_reader.attachments_in_failure`.
 
 ### US6 integration tests
 
-- [ ] T085 [P] [US6] `tests/integration/test_events_us6_failure.py` — AS1: two agents, B's log made unreadable; one cycle elapses; A keeps producing events; B's failure visible via `agenttower status`.
-- [ ] T086 [P] [US6] `test_events_us6_failure.py` — AS2: induce SQLite read-only condition; assert FR-040 retry-and-surface; visible failure in status; events flush after recovery (no silent drop).
-- [ ] T087 [P] [US6] `test_events_us6_failure.py` — AS3: missing offset row condition; reader skips cycle; inconsistency logged; no offset invention.
-- [ ] T088 [P] [US6] `test_events_us6_failure.py` — SC-010: 100 iterations of "one attachment fails, others continue"; 100 % pass rate.
+- [X] T085 [P] [US6] `tests/integration/test_events_us6_failure.py` — AS1: two agents, B's log made unreadable; one cycle elapses; A keeps producing events; B's failure visible via `agenttower status`.
+- [X] T086 [P] [US6] `test_events_us6_failure.py` — AS2: induce SQLite read-only condition; assert FR-040 retry-and-surface; visible failure in status; events flush after recovery (no silent drop).
+- [X] T087 [P] [US6] `test_events_us6_failure.py` — AS3: missing offset row condition; reader skips cycle; inconsistency logged; no offset invention.
+- [X] T088 [P] [US6] `test_events_us6_failure.py` — SC-010: 100 iterations of "one attachment fails, others continue"; 100 % pass rate.
 
 ### Synthesized event types (`pane_exited` / `long_running`)
 
-- [ ] T089 [P] [US6] `tests/unit/test_classifier_long_running.py` — FR-013 eligibility table line-by-line per `contracts/classifier-catalogue.md`. Exactly one `long_running` per running task; reset rules; test with the T003 clock seam.
-- [ ] T090 [P] [US6] Add `tests/unit/test_classifier_pane_exited.py` — FR-016 / FR-017 / FR-018: `pane_exited` requires FEAT-004 pane-inactive observation AND grace-window expiry; never inferred from log text alone; one-per-lifecycle; pane-id reuse with new attachment counts as a new lifecycle.
+- [X] T089 [P] [US6] `tests/unit/test_classifier_long_running.py` — FR-013 eligibility table line-by-line per `contracts/classifier-catalogue.md`. Exactly one `long_running` per running task; reset rules; test with the T003 clock seam.
+- [X] T090 [P] [US6] Add `tests/unit/test_classifier_pane_exited.py` — FR-016 / FR-017 / FR-018: `pane_exited` requires FEAT-004 pane-inactive observation AND grace-window expiry; never inferred from log text alone; one-per-lifecycle; pane-id reuse with new attachment counts as a new lifecycle.
 
 **Checkpoint**: Failure surface fully wired; SC-010 satisfied.
 
