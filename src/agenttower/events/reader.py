@@ -112,6 +112,16 @@ class EventsReader:
         per_cycle_byte_cap_bytes: int = PER_CYCLE_BYTE_CAP_BYTES,
         debounce_manager: DebounceManager | None = None,
     ) -> None:
+        # T058 — FR-020 / FR-022 invariant: on cold start the reader
+        # treats the persisted ``log_offsets`` rows as authoritative and
+        # never carries any byte/line offset across a restart in
+        # memory. The reader does NOT cache prior offsets in
+        # ``__init__``; every cycle re-reads from SQLite. The FR-022
+        # corollary — restart resume MUST NOT depend on JSONL state — is
+        # satisfied by construction: this constructor takes only the
+        # ``events_file`` Path (the JSONL append target), never reads
+        # from it, and the FR-029 watermark column ``jsonl_appended_at``
+        # in SQLite is the single source of truth for re-emission.
         self._state_db = state_db
         self._events_file = events_file
         self._lifecycle_logger = lifecycle_logger
@@ -328,6 +338,21 @@ class EventsReader:
         # ``self._maybe_synthesize_pane_exited(...)`` and
         # ``self._maybe_synthesize_long_running(...)`` will hook in here.
 
+        # T064 audit — FR-003 / FR-041 / FR-042 obligations:
+        #   * the reader does NOT mutate ``log_attachments`` or
+        #     ``log_offsets`` rows directly (FR-003) — only via the
+        #     FEAT-007 helpers below and the ``lo_state.advance_offset``
+        #     helper at commit time;
+        #   * the reader does NOT call ``detect_file_change`` directly
+        #     and does NOT inline its logic (FR-042) — the recovery
+        #     helper is the SOLE entry to file-change classification;
+        #   * the reader calls ``reader_cycle_offset_recovery`` exactly
+        #     once per cycle BEFORE any byte read (FR-002 / FR-041).
+        # The AST gate at ``tests/unit/test_logs_offset_advance_invariant.py``
+        # enforces (a) no raw INSERT/UPDATE SQL against either table in
+        # ``src/agenttower/events/`` and (b) no production import of
+        # the test seam ``advance_offset_for_test``.
+
         # ----- Step 3: FR-002 recovery call (EXACTLY ONCE per cycle) -----
         recovery_result = reader_recovery.reader_cycle_offset_recovery(
             conn=conn,
@@ -338,7 +363,15 @@ class EventsReader:
             timestamp=now_iso,
         )
 
-        # Steps 4-9 only on UNCHANGED recovery (FR-021 / FR-023).
+        # T065 — no-replay invariant (FR-043 / SC-004 / SC-005). When
+        # the recovery helper signals a non-UNCHANGED change
+        # (TRUNCATED, RECREATED, MISSING, or REAPPEARED), the reader
+        # MUST skip ALL byte reads in this cycle. Combined with the
+        # offset reset that ``reader_cycle_offset_recovery`` performs
+        # for TRUNCATED/RECREATED, this guarantees no event is
+        # emitted whose ``byte_range_start`` falls within the
+        # pre-reset region — the durable contract that FEAT-007's
+        # T175/T176/T177 integration tests assert end-to-end.
         if recovery_result.change is not lo_state.FileChangeKind.UNCHANGED:
             return result
 
@@ -354,10 +387,22 @@ class EventsReader:
             result.failure_class = "missing_offset_row"
             return result
 
+        # T059 — FR-021 invariant: the byte-read step MUST start at the
+        # persisted ``byte_offset``. A defensive assertion here makes
+        # any future refactor that introduces an in-memory offset
+        # cache visibly fail rather than silently emitting events for
+        # already-classified bytes.
+        persisted_byte_offset = offset_row.byte_offset
+        assert persisted_byte_offset >= 0, (
+            f"FR-021 violation: persisted byte_offset is "
+            f"{persisted_byte_offset} for attachment "
+            f"{attachment.attachment_id}; offsets must always be >= 0"
+        )
+
         # ----- Step 5: read bytes -----
         try:
             new_bytes = self._read_bytes(
-                Path(attachment.log_path), offset_row.byte_offset, self._byte_cap
+                Path(attachment.log_path), persisted_byte_offset, self._byte_cap
             )
         except OSError as exc:
             # FR-038 — unreadable log surface (EACCES etc.) — don't

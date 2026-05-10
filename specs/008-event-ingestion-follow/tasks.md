@@ -159,15 +159,15 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Restart-resume verification
 
-- [ ] T058 [US3] Confirm reader uses persisted `log_offsets.byte_offset` as the authoritative resume point on cold start (FR-020). Add explicit assertion in `EventsReader.__init__` that no in-memory offset cache is loaded across restart. Document the FR-022 invariant in the module docstring (restart resume MUST NOT depend on JSONL state; SQLite + persisted offsets are the source of truth).
-- [ ] T059 [US3] Confirm FR-021 invariant: `EventsReader.run_cycle_for_attachment` emits no event whose `byte_range_start < persisted_byte_offset` at cycle entry. Add a guard with a clear assertion message. Document the FR-023 invariant: the cycle delegates file-change classification to `reader_cycle_offset_recovery` (no inlined logic, FR-042).
+- [X] T058 [US3] Confirm reader uses persisted `log_offsets.byte_offset` as the authoritative resume point on cold start (FR-020). Add explicit assertion in `EventsReader.__init__` that no in-memory offset cache is loaded across restart. Document the FR-022 invariant in the module docstring (restart resume MUST NOT depend on JSONL state; SQLite + persisted offsets are the source of truth).
+- [X] T059 [US3] Confirm FR-021 invariant: `EventsReader.run_cycle_for_attachment` emits no event whose `byte_range_start < persisted_byte_offset` at cycle entry. Add a guard with a clear assertion message. Document the FR-023 invariant: the cycle delegates file-change classification to `reader_cycle_offset_recovery` (no inlined logic, FR-042).
 
 ### US3 integration tests
 
-- [ ] T060 [P] [US3] `tests/integration/test_events_us3_restart.py` — AS1: persist N events, stop daemon, count rows, restart, wait two cycles, assert SQLite + JSONL counts unchanged.
-- [ ] T061 [P] [US3] `test_events_us3_restart.py` — AS2: simulate daemon kill mid-cycle (after read but before commit; use the T003 tick seam to position the kill); restart; assert no duplicates, no drops, offsets resumed.
-- [ ] T062 [P] [US3] `test_events_us3_restart.py` — AS3: append bytes while daemon is down; restart; assert reader ingests only the post-stop bytes and emits events only for them.
-- [ ] T063 [P] [US3] `test_events_us3_restart.py` — SC-003: 10 consecutive restarts with no log writes; SQLite event count and JSONL line count unchanged for every attached agent across all 10 iterations.
+- [X] T060 [P] [US3] `tests/integration/test_events_us3_restart.py` — AS1: persist N events, stop daemon, count rows, restart, wait two cycles, assert SQLite + JSONL counts unchanged.
+- [X] T061 [P] [US3] `test_events_us3_restart.py` — AS2: simulate daemon kill mid-cycle (after read but before commit; use the T003 tick seam to position the kill); restart; assert no duplicates, no drops, offsets resumed.
+- [X] T062 [P] [US3] `test_events_us3_restart.py` — AS3: append bytes while daemon is down; restart; assert reader ingests only the post-stop bytes and emits events only for them.
+- [X] T063 [P] [US3] `test_events_us3_restart.py` — SC-003: 10 consecutive restarts with no log writes; SQLite event count and JSONL line count unchanged for every attached agent across all 10 iterations.
 
 **Checkpoint**: Restart safety proven; SC-003 satisfied.
 
@@ -181,17 +181,17 @@ Single-project Python CLI + daemon. `src/agenttower/` for production code, `test
 
 ### Reader integration with FEAT-007
 
-- [ ] T064 [US4] Audit `EventsReader.run_cycle_for_attachment` (T029) for the FR-003 / FR-041 / FR-042 obligations: `reader_cycle_offset_recovery` is the SOLE entry to file-change classification; the reader does NOT call `detect_file_change` directly nor inline its logic; the reader does NOT mutate `log_attachments` or `log_offsets` rows directly. Add docstring assertion and a unit test (`tests/unit/test_reader_recovery_first.py` extension).
-- [ ] T065 [US4] Confirm the no-replay invariant in code: when `recovery_result.change in {TRUNCATED, RECREATED}`, the reader skips ALL byte reads in this cycle and does NOT emit any event from the pre-reset window. Add explicit branch and assertion.
+- [X] T064 [US4] Audit `EventsReader.run_cycle_for_attachment` (T029) for the FR-003 / FR-041 / FR-042 obligations: `reader_cycle_offset_recovery` is the SOLE entry to file-change classification; the reader does NOT call `detect_file_change` directly nor inline its logic; the reader does NOT mutate `log_attachments` or `log_offsets` rows directly. Add docstring assertion and a unit test (`tests/unit/test_reader_recovery_first.py` extension).
+- [X] T065 [US4] Confirm the no-replay invariant in code: when `recovery_result.change in {TRUNCATED, RECREATED}`, the reader skips ALL byte reads in this cycle and does NOT emit any event from the pre-reset window. Add explicit branch and assertion.
 
 ### US4 integration tests (T175 / T176 / T177 carried over)
 
-- [ ] T066 [P] [US4] `tests/integration/test_events_us4_carryover.py` — AS1 (T175 truncation): truncate the log in place; assert offsets reset to (0, 0, 0) within ≤ 1 reader cycle; `file_size_seen` updated; one `log_rotation_detected` lifecycle event; zero durable events from pre-truncate bytes.
-- [ ] T067 [P] [US4] `test_events_us4_carryover.py` — AS2 (T176 recreation): delete-and-recreate with new inode; offsets reset; one `log_rotation_detected`; no pre-recreation event.
-- [ ] T068 [P] [US4] `test_events_us4_carryover.py` — AS3: file deleted; row transitions `active → stale`; one `log_file_missing`; one `log_attachment_change` audit row; offsets unchanged.
-- [ ] T069 [P] [US4] `test_events_us4_carryover.py` — AS4: stale file recreated at same path (no operator action); one `log_file_returned` (suppression-keyed by `(agent_id, log_path, file_inode)`); row stays `stale`; offsets unchanged; no durable event.
-- [ ] T070 [P] [US4] `test_events_us4_carryover.py` — AS5 (T177 round-trip): missing → recreated → operator-explicit `attach-log`; re-attach via FEAT-007 file-consistency check; offsets reset per FEAT-007 rules; only post-re-attach bytes produce durable events.
-- [ ] T071 [US4] `test_events_us4_carryover.py` — SC-006: 100 iterations of T177 round-trip, 100% pass rate. Use the T003 clock + tick seams to remove wall-clock timing dependency.
+- [X] T066 [P] [US4] `tests/integration/test_events_us4_carryover.py` — AS1 (T175 truncation): truncate the log in place; assert offsets reset to (0, 0, 0) within ≤ 1 reader cycle; `file_size_seen` updated; one `log_rotation_detected` lifecycle event; zero durable events from pre-truncate bytes.
+- [X] T067 [P] [US4] `test_events_us4_carryover.py` — AS2 (T176 recreation): delete-and-recreate with new inode; offsets reset; one `log_rotation_detected`; no pre-recreation event.
+- [X] T068 [P] [US4] `test_events_us4_carryover.py` — AS3: file deleted; row transitions `active → stale`; one `log_file_missing`; one `log_attachment_change` audit row; offsets unchanged.
+- [X] T069 [P] [US4] `test_events_us4_carryover.py` — AS4: stale file recreated at same path (no operator action); one `log_file_returned` (suppression-keyed by `(agent_id, log_path, file_inode)`); row stays `stale`; offsets unchanged; no durable event.
+- [X] T070 [P] [US4] `test_events_us4_carryover.py` — AS5 (T177 round-trip): missing → recreated → operator-explicit `attach-log`; re-attach via FEAT-007 file-consistency check; offsets reset per FEAT-007 rules; only post-re-attach bytes produce durable events.
+- [X] T071 [US4] `test_events_us4_carryover.py` — SC-006: 100 iterations of T177 round-trip, 100% pass rate. Use the T003 clock + tick seams to remove wall-clock timing dependency.
 
 **Checkpoint**: All four file-change paths exercised end-to-end; SC-004 / SC-005 / SC-006 satisfied.
 
