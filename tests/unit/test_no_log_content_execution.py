@@ -7,9 +7,16 @@ redaction utility (``agenttower.logs.redaction``) and out via the CLI
 preview render path. They MUST NOT reach ``eval`` / ``exec`` /
 ``compile`` / ``__import__`` / ``subprocess``-based shell construction.
 
-This test scans every production module under ``src/agenttower/`` for
-banned patterns. Tests, fixtures, and external dependencies are out of
-scope (only the daemon binary is in the trust boundary).
+This test scans every Python module under ``src/agenttower/`` —
+including in-tree integration fakes such as
+``src/agenttower/{docker,tmux}/fakes.py`` — for banned patterns.
+External tests under ``tests/`` and third-party dependencies are NOT
+scanned (the trust boundary is the installed package). Modules whose
+``subprocess`` usage is structurally safe (argv built from config or
+shlex-quoted values, never from log bytes) are listed in
+:data:`_SUBPROCESS_CALLERS_ALLOWLIST`; the in-tree fakes ride along on
+the same allowlist so they don't fail the gate even though they live
+under ``src/``.
 """
 
 from __future__ import annotations

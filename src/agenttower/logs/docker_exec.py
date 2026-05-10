@@ -145,15 +145,19 @@ class FakeDockerExecRunner:
                 # the create-from-missing case applies the umask-derived
                 # mode. The fixture's ``mode`` value is the mode applied
                 # IFF the daemon hasn't already created the file.
+                #
+                # We do NOT create the parent directory here. A real
+                # ``cat >> /path/to/file`` inside the container would fail
+                # with ``ENOENT`` if the parent doesn't exist; the daemon
+                # is expected to ``mkdir`` it at FR-008 mode 0o700 BEFORE
+                # issuing pipe-pane. Auto-creating it here would mask
+                # regressions where the daemon forgets to pre-create.
                 touch = entry.get("touch_path_with_mode")
                 if isinstance(touch, dict):
                     target = touch.get("path")
                     mode = touch.get("mode")
                     if isinstance(target, str) and isinstance(mode, int):
                         try:
-                            parent = os.path.dirname(target)
-                            if parent and not os.path.isdir(parent):
-                                os.makedirs(parent, mode=0o755, exist_ok=True)
                             if not os.path.exists(target):
                                 fd = os.open(
                                     target,
@@ -165,6 +169,9 @@ class FakeDockerExecRunner:
                             # If file exists (daemon pre-created it), leave
                             # the mode alone — this is the fixed behavior.
                         except OSError:
+                            # Parent dir missing or create raced — drop the
+                            # side-effect quietly. Mirrors what tmux pipe-pane
+                            # would surface as a non-zero exit downstream.
                             pass
                 return DockerExecResult(
                     returncode=int(entry.get("returncode", 0)),
