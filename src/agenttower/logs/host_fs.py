@@ -244,7 +244,12 @@ def ensure_log_directory_and_file(host_path: str) -> None:
             _FILE_MODE,
         )
         os.close(fd)
-        # Belt-and-braces chmod (umask may have widened the requested mode).
+        # Belt-and-braces chmod: ``os.open(..., _FILE_MODE)`` requests
+        # mode 0o600 but the kernel applies the process umask to clear
+        # bits — never to add them. This chmod re-asserts exact mode
+        # against any umask that would have NARROWED the requested
+        # mode further (which would not violate FR-008's strict 0o600
+        # invariant, but would surface confusing modes elsewhere).
         os.chmod(host_path, _FILE_MODE)
     else:
         _verify_file_mode(Path(host_path), _FILE_MODE)

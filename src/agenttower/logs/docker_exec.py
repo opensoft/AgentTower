@@ -22,11 +22,23 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class DockerExecResult:
-    """Outcome of one docker-exec invocation."""
+    """Outcome of one docker-exec invocation.
+
+    ``failure_kind`` (when set) carries the closed-set error code that
+    callers should raise instead of the generic ``pipe_pane_failed``:
+
+    * ``"docker_unavailable"`` — ``docker`` binary missing on PATH.
+    * ``"docker_exec_timeout"`` — the call hit the timeout budget.
+
+    ``None`` means "the subprocess invocation completed normally"; the
+    caller still inspects ``returncode`` / ``stderr`` to decide whether
+    the inner ``tmux`` command succeeded.
+    """
 
     returncode: int
     stdout: str
     stderr: str
+    failure_kind: str | None = None
 
 
 class DockerExecRunner(Protocol):
@@ -37,7 +49,13 @@ class DockerExecRunner(Protocol):
 
 
 class SubprocessDockerExecRunner:
-    """Production runner — shells out via :func:`subprocess.run`."""
+    """Production runner — shells out via :func:`subprocess.run`.
+
+    Translates docker-binary / timeout failures into the closed-set
+    ``docker_unavailable`` / ``docker_exec_timeout`` codes via the
+    :attr:`DockerExecResult.failure_kind` field so they don't masquerade
+    as ``pipe_pane_failed`` downstream.
+    """
 
     def run(
         self, argv: list[str], *, timeout_seconds: float = 5.0
@@ -55,12 +73,14 @@ class SubprocessDockerExecRunner:
                 returncode=124,
                 stdout=exc.stdout or "",
                 stderr=(exc.stderr or "") + "\ndocker exec timeout",
+                failure_kind="docker_exec_timeout",
             )
         except FileNotFoundError as exc:
             return DockerExecResult(
                 returncode=127,
                 stdout="",
                 stderr=f"docker exec not available: {exc}",
+                failure_kind="docker_unavailable",
             )
         return DockerExecResult(
             returncode=int(completed.returncode),

@@ -656,6 +656,13 @@ class LogService:
             result = self.docker_exec_runner.run(
                 build_toggle_off_argv(container_user, container_id, pane_short_form)
             )
+            if result.failure_kind is not None:
+                conn.execute("ROLLBACK")
+                raise RegistrationError(
+                    result.failure_kind,
+                    f"pipe-pane toggle-off: "
+                    f"{sanitize_pipe_pane_stderr(result.stderr) or result.failure_kind}",
+                )
             if result.returncode != 0 or _stderr_matches_pipe_pane_failure(
                 result.stderr
             ):
@@ -1029,13 +1036,30 @@ class LogService:
             f"{agent_record.tmux_pane_index}"
         )
 
+    @staticmethod
+    def _raise_docker_failure_if_present(
+        result: DockerExecResult, *, op: str
+    ) -> None:
+        """If the runner surfaced a docker-level failure, raise its closed-set
+        code rather than letting it masquerade as ``pipe_pane_failed`` in the
+        downstream stderr-pattern check.
+        """
+        if result.failure_kind is not None:
+            raise RegistrationError(
+                result.failure_kind,
+                f"{op}: {sanitize_pipe_pane_stderr(result.stderr) or result.failure_kind}",
+            )
+
     def _inspect_pipe_state(
         self, container_user: str, container_id: str, pane_short_form: str
     ) -> DockerExecResult:
         result = self.docker_exec_runner.run(
             build_inspection_argv(container_user, container_id, pane_short_form)
         )
-        # FR-055: failures here surface as pipe_pane_failed.
+        # Distinguish docker-level failures (binary missing / timeout) from
+        # tmux-level failures so clients see the actionable closed-set code.
+        self._raise_docker_failure_if_present(result, op="tmux list-panes")
+        # FR-055: tmux-level failures here surface as pipe_pane_failed.
         if result.returncode != 0 or _stderr_matches_pipe_pane_failure(
             result.stderr
         ):
@@ -1058,6 +1082,7 @@ class LogService:
                 container_user, container_id, pane_short_form, container_side_log
             )
         )
+        self._raise_docker_failure_if_present(result, op="tmux pipe-pane attach")
         if result.returncode != 0 or _stderr_matches_pipe_pane_failure(
             result.stderr
         ):
@@ -1074,6 +1099,7 @@ class LogService:
         result = self.docker_exec_runner.run(
             build_toggle_off_argv(container_user, container_id, pane_short_form)
         )
+        self._raise_docker_failure_if_present(result, op="tmux pipe-pane toggle-off")
         if result.returncode != 0 or _stderr_matches_pipe_pane_failure(
             result.stderr
         ):

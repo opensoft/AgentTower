@@ -11,8 +11,6 @@ needs the resolved mount Source root for context.
 from __future__ import annotations
 
 import os
-import re
-from pathlib import Path
 from typing import Final
 
 from .canonical_paths import (
@@ -89,8 +87,6 @@ def validate_log_path(value: object, *, home: str | os.PathLike[str]) -> str:
         raise LogPathInvalid(
             f"log_path must not contain '..' segment; got {value!r}"
         )
-
-    candidate = Path(value)
 
     # FR-053: realpath under /proc, /sys, /dev, /run is forbidden. We do a
     # lexical check first; if the path is already under the prefix we fail
