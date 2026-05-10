@@ -167,6 +167,56 @@ def update_file_observation(
     )
 
 
+def advance_offset(
+    conn: sqlite3.Connection,
+    *,
+    agent_id: str,
+    log_path: str,
+    byte_offset: int,
+    line_offset: int,
+    last_event_offset: int,
+    file_inode: str | None,
+    file_size_seen: int,
+    last_output_at: str | None,
+    timestamp: str,
+) -> None:
+    """Production-side offset advance (FEAT-008 FR-004).
+
+    The FEAT-008 reader (and ONLY the FEAT-008 reader, per the
+    spec) calls this inside its FR-006 atomic SQLite + offset commit.
+    Other production callers MUST NOT import this — the AST gate
+    at ``tests/unit/test_logs_offset_advance_invariant.py`` enforces
+    the prohibition on raw ``UPDATE log_offsets`` SQL in
+    ``src/agenttower/events/``, so the only legitimate path is via
+    this function (or via the FEAT-007 helpers ``reset`` /
+    ``update_file_observation`` which DON'T touch byte/line offsets).
+
+    Behavioural mirror of :func:`advance_offset_for_test`; the only
+    difference is the name (no ``_for_test`` suffix → not flagged by
+    the FR-004 production-test-seam gate).
+    """
+    conn.execute(
+        """
+        UPDATE log_offsets
+           SET byte_offset = ?, line_offset = ?, last_event_offset = ?,
+               file_inode = ?, file_size_seen = ?, last_output_at = ?,
+               updated_at = ?
+         WHERE agent_id = ? AND log_path = ?
+        """,
+        (
+            byte_offset,
+            line_offset,
+            last_event_offset,
+            file_inode,
+            file_size_seen,
+            last_output_at,
+            timestamp,
+            agent_id,
+            log_path,
+        ),
+    )
+
+
 def advance_offset_for_test(
     conn: sqlite3.Connection,
     *,

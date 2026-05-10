@@ -177,15 +177,49 @@ def test_t004_events_package_emits_no_raw_log_attachments_or_log_offsets_sql(
     (``reader_cycle_offset_recovery``) and the documented
     ``state.log_offsets`` advance API. Direct SQL would silently bypass
     the FR-003 / FR-004 invariants.
+
+    The check parses the AST and inspects ``Constant`` (string-literal)
+    nodes only — docstrings and comments may freely discuss the SQL
+    shapes (the gate is about emitted SQL, not prose). To avoid the
+    obvious workaround of using a docstring with assignment, we exclude
+    the **module docstring and function/class docstrings** but check
+    every other string constant.
     """
     source = path.read_text(encoding="utf-8")
-    for pattern in _FORBIDDEN_SQL_PATTERNS:
-        # Case-insensitive match handles UPPER and lower forms; the
-        # patterns themselves are uppercase to match SQLite convention.
-        if pattern.lower() in source.lower():
-            raise AssertionError(
-                f"{path.relative_to(SRC_ROOT)} emits raw SQL matching "
-                f"{pattern!r}; this violates FR-003 / FR-004. Route writes "
-                "through agenttower.logs.reader_recovery and "
-                "agenttower.state.log_offsets helpers instead."
-            )
+    # Fast path: no mention of the forbidden patterns anywhere → safe.
+    if not any(p.lower() in source.lower() for p in _FORBIDDEN_SQL_PATTERNS):
+        return
+
+    tree = ast.parse(source, filename=str(path))
+
+    # Collect every node that is a docstring (first stmt of Module /
+    # FunctionDef / AsyncFunctionDef / ClassDef whose value is a
+    # Constant string). Those are excluded from the check.
+    docstring_node_ids: set[int] = set()
+    for parent in ast.walk(tree):
+        if isinstance(
+            parent,
+            (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            body = getattr(parent, "body", []) or []
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                docstring_node_ids.add(id(body[0].value))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if id(node) in docstring_node_ids:
+            continue
+        for pattern in _FORBIDDEN_SQL_PATTERNS:
+            if pattern.lower() in node.value.lower():
+                raise AssertionError(
+                    f"{path.relative_to(SRC_ROOT)} emits a string literal "
+                    f"matching {pattern!r}; this violates FR-003 / FR-004. "
+                    "Route writes through agenttower.logs.reader_recovery and "
+                    "agenttower.state.log_offsets helpers instead."
+                )

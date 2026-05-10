@@ -234,6 +234,8 @@ def _build_context(
     agent_service: AgentService | None,
     log_service: LogService | None,
     logger: LifecycleLogger,
+    events_reader: object | None = None,
+    follow_session_registry: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -249,6 +251,8 @@ def _build_context(
         log_service=log_service,
         events_file=paths.events_file,
         lifecycle_logger=logger,
+        events_reader=events_reader,
+        follow_session_registry=follow_session_registry,
     )
 
 
@@ -444,6 +448,25 @@ def _run(args: argparse.Namespace) -> int:
         except Exception:  # pragma: no cover — defensive; orphan detection is best-effort
             pass
 
+        # FEAT-008 T031 — start the events reader thread + follow
+        # session registry. The reader walks active log_attachments
+        # rows once per cycle (≤ 1 s by default; FR-001) and persists
+        # classified events. Constructed AFTER the orphan-recovery
+        # pass so it never observes stale state, and BEFORE the socket
+        # server starts accepting connections so ``agenttower status``
+        # immediately reports ``events_reader.running == true``.
+        from .events.reader import EventsReader  # local import: heavy module
+        from .events.session_registry import FollowSessionRegistry
+
+        follow_registry = FollowSessionRegistry()
+        events_reader = EventsReader(
+            state_db=paths.state_db,
+            events_file=paths.events_file,
+            lifecycle_logger=logger,
+            follow_session_registry=follow_registry,
+        )
+        events_reader.start()
+
         ctx = _build_context(
             paths=paths,
             state_dir=state_dir,
@@ -453,16 +476,22 @@ def _run(args: argparse.Namespace) -> int:
             agent_service=agent_service,
             log_service=log_service,
             logger=logger,
+            events_reader=events_reader,
+            follow_session_registry=follow_registry,
         )
 
         server = _bind_control_server(paths, ctx, logger)
         if server is None:
+            events_reader.stop()
             return 1
 
         lifecycle.write_pid_file(pid_path, os.getpid())
         logger.emit(EVENT_DAEMON_READY, socket=str(paths.socket), pid=os.getpid())
         _install_signal_handlers(shutdown_event)
-        _serve_until_shutdown(server, shutdown_event, logger)
+        try:
+            _serve_until_shutdown(server, shutdown_event, logger)
+        finally:
+            events_reader.stop()
     finally:
         _cleanup_run(
             server=server,
