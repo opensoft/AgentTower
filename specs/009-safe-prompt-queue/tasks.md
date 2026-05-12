@@ -122,7 +122,7 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### CLI scaffolding
 
-- [ ] T051 Extend `src/agenttower/cli.py` with three new top-level subparsers — `send-input` (per `contracts/cli-send-input.md`), `queue` with subcommands `list` / `approve` / `delay` / `cancel` (per `contracts/cli-queue.md`), `routing` with subcommands `enable` / `disable` / `status` (per `contracts/cli-routing.md`). Each handler calls the matching socket method via the existing FEAT-002 client and maps the response to the integer exit code via `routing.errors.CLI_EXIT_CODE_MAP`. `--json` outputs match `contracts/queue-row-schema.md`. (Deferred to story-phase slices — US1/US3/US4 finalize the CLI handlers as each user story's surface lands.)
+- [X] T051 Extend `src/agenttower/cli.py` with three new top-level subparsers — `send-input` (per `contracts/cli-send-input.md`), `queue` with subcommands `list` / `approve` / `delay` / `cancel` (per `contracts/cli-queue.md`), `routing` with subcommands `enable` / `disable` / `status` (per `contracts/cli-routing.md`). Each handler calls the matching socket method via the existing FEAT-002 client and maps the response to the integer exit code via `routing.errors.CLI_EXIT_CODE_MAP`. `--json` outputs match `contracts/queue-row-schema.md`. (Completed cumulatively across Slice 9 (`send-input` — T058), Slice 11 (`queue` list + approve/delay/cancel — T070), and Slice 12 (`routing` enable/disable/status — T075). All eight CLI subcommands are wired to their socket methods and unit-tested under `--json` + human-mode rendering.)
 
 ### Config & test seams
 
