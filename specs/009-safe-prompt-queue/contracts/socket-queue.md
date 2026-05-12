@@ -75,7 +75,7 @@ exit code `delivery_wait_timeout`.
 |-------------------------------|------------------------------------------------------------------------|
 | `sender_not_in_pane`          | Host-origin caller; pane context absent.                               |
 | `sender_role_not_permitted`   | Sender pane resolves to non-master OR inactive sender (FR-021/023).    |
-| `target_not_found`            | `--target` resolution fails (no agent_id, no label).                   |
+| `agent_not_found`             | `--target` resolution fails (no agent_id, no label).                   |
 | `target_label_ambiguous`      | Multiple active labels match (R-001).                                  |
 | `body_empty`                  | Body length 0 after base64 decode (FR-003).                            |
 | `body_invalid_encoding`       | Body is not valid UTF-8 (FR-003).                                       |
@@ -133,7 +133,7 @@ Ordering: `enqueued_at ASC, message_id ASC` (FR-031).
 
 | Code                    | Trigger                                              |
 |-------------------------|------------------------------------------------------|
-| `target_not_found`      | `--target` resolution fails.                         |
+| `agent_not_found`       | `--target` resolution fails.                         |
 | `target_label_ambiguous`| Multiple labels match.                               |
 | `since_invalid_format`  | `--since` does not parse as ms or seconds UTC form.  |
 
@@ -167,15 +167,18 @@ state (now `queued`).
 
 | Code                            | Trigger                                                                  |
 |---------------------------------|--------------------------------------------------------------------------|
-| `target_not_found`              | `message_id` does not exist in `message_queue`.                          |
+| `message_id_not_found`          | `message_id` does not exist in `message_queue`.                          |
+| `operator_pane_inactive`        | Caller pane resolves to an inactive or deregistered agent (bench-container callers only; host callers use `host-operator` sentinel). |
 | `terminal_state_cannot_change`  | Row is in `delivered`/`failed`/`canceled`.                               |
 | `delivery_in_progress`          | Row has `delivery_attempt_started_at` set and terminal stamps unset.     |
 | `approval_not_applicable`       | Row's `block_reason` is intrinsic (`sender_role_not_permitted` / `target_role_not_permitted`) OR `kill_switch_off` while the switch is disabled. |
 
-Note: in this contract, `target_not_found` is reused for "row
-identified by `message_id` is unknown" — the same closed-set code
-covers both `--target` and `message_id` lookup failures because the
-operator's remediation is identical (verify the identifier).
+Note: `message_id` lookup failures use a distinct closed-set code
+`message_id_not_found` (introduced for FEAT-009 to keep agent-lookup
+failures aligned with FEAT-008's `agent_not_found`). The operator's
+remediation differs slightly: `agent_not_found` means "verify the
+agent identifier"; `message_id_not_found` means "verify the row id
+from a prior `queue` listing".
 
 ## queue.delay
 
@@ -199,7 +202,8 @@ Same shape as `queue.send_input` success; new `state="blocked"`,
 
 | Code                            | Trigger                                                |
 |---------------------------------|--------------------------------------------------------|
-| `target_not_found`              | `message_id` unknown.                                  |
+| `message_id_not_found`          | `message_id` unknown.                                  |
+| `operator_pane_inactive`        | Caller pane resolves to inactive/deregistered agent.   |
 | `terminal_state_cannot_change`  | Row is terminal.                                       |
 | `delay_not_applicable`          | Row is already `blocked`.                              |
 | `delivery_in_progress`          | Row is in flight.                                      |
@@ -226,7 +230,8 @@ Same shape as `queue.send_input` success; new `state="canceled"`,
 
 | Code                            | Trigger                                  |
 |---------------------------------|------------------------------------------|
-| `target_not_found`              | `message_id` unknown.                    |
+| `message_id_not_found`          | `message_id` unknown.                    |
+| `operator_pane_inactive`        | Caller pane inactive/deregistered.       |
 | `terminal_state_cannot_change`  | Row is already terminal.                 |
 | `delivery_in_progress`          | Row is in flight.                        |
 

@@ -147,6 +147,70 @@ CREATE TABLE IF NOT EXISTS daemon_state (
 -- Insertion happens during the migration via an explicit INSERT OR IGNORE
 -- once the migration confirms there is no existing row (re-running the
 -- migration on a v7 DB is a no-op because the seed already exists).
+-- `last_updated_by` uses the literal sentinel `'(daemon-init)'` to record
+-- that this is the migration-created default state, not an operator-driven
+-- toggle. The sentinel cannot collide with any registered agent_id
+-- (regex `^agt_[0-9a-f]{12}$`) and is distinct from `'host-operator'`
+-- which is reserved for actual host-side operator actions.
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- FEAT-008 `events` table rebuild (part 2 of the v6 → v7 migration).
+-- ────────────────────────────────────────────────────────────────────────────
+-- FR-046 requires queue audit rows to be inserted into the FEAT-008 `events`
+-- table alongside classifier events (dual-write). To accept the FEAT-009 row
+-- shape, the existing `events` table must (a) widen its `event_type` CHECK
+-- constraint to include the eight FEAT-009 audit types and (b) make the
+-- FEAT-008-specific NOT NULL columns NULLABLE so queue rows can omit them.
+-- SQLite cannot ALTER CHECK or column NULL-ability in place, so the
+-- standard rebuild pattern is used. The rebuild runs inside the same
+-- BEGIN IMMEDIATE transaction as the additive tables above; if any step
+-- fails the entire v6 → v7 migration rolls back.
+
+CREATE TABLE events_new (
+    event_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type         TEXT NOT NULL CHECK (event_type IN (
+        -- FEAT-008 durable classifier types (10)
+        'activity', 'waiting_for_input', 'completed', 'error',
+        'test_failed', 'test_passed', 'manual_review_needed',
+        'long_running', 'pane_exited', 'swarm_member_reported',
+        -- FEAT-009 audit types (8)
+        'queue_message_enqueued', 'queue_message_delivered',
+        'queue_message_blocked', 'queue_message_failed',
+        'queue_message_canceled', 'queue_message_approved',
+        'queue_message_delayed', 'routing_toggled'
+    )),
+    agent_id           TEXT NOT NULL,
+    attachment_id      TEXT,                                     -- was NOT NULL; nullable for FEAT-009 rows
+    log_path           TEXT,                                     -- was NOT NULL; nullable for FEAT-009 rows
+    byte_range_start   INTEGER,                                  -- was NOT NULL; nullable for FEAT-009 rows
+    byte_range_end     INTEGER,                                  -- was NOT NULL; nullable for FEAT-009 rows
+    line_offset_start  INTEGER,                                  -- was NOT NULL; nullable for FEAT-009 rows
+    line_offset_end    INTEGER,                                  -- was NOT NULL; nullable for FEAT-009 rows
+    observed_at        TEXT NOT NULL,
+    record_at          TEXT CHECK (record_at IS NULL),           -- FEAT-008 invariant preserved
+    excerpt            TEXT NOT NULL,
+    classifier_rule_id TEXT,                                     -- was NOT NULL; nullable for FEAT-009 rows
+    debounce_window_id          TEXT,
+    debounce_collapsed_count    INTEGER NOT NULL DEFAULT 1,
+    debounce_window_started_at  TEXT,
+    debounce_window_ended_at    TEXT,
+    schema_version     INTEGER NOT NULL DEFAULT 1,
+    jsonl_appended_at  TEXT                                       -- watermark; set after JSONL append succeeds for either FEAT-008 or FEAT-009 rows
+);
+
+INSERT INTO events_new SELECT * FROM events;
+DROP TABLE events;
+ALTER TABLE events_new RENAME TO events;
+
+-- Recreate the four FEAT-008 indexes (DROP TABLE drops them).
+CREATE INDEX idx_events_agent_eventid
+    ON events (agent_id, event_id);
+CREATE INDEX idx_events_type_eventid
+    ON events (event_type, event_id);
+CREATE INDEX idx_events_observedat_eventid
+    ON events (observed_at, event_id);
+CREATE INDEX idx_events_jsonl_pending
+    ON events (event_id) WHERE jsonl_appended_at IS NULL;
 ```
 
 ## 3. State machine
@@ -224,7 +288,7 @@ Order of evaluation (first failure determines `block_reason`):
 2. Sender has a permitted role (`master`) AND is currently active
    → otherwise `sender_role_not_permitted`.
 3. Target is registered AND active → otherwise `target_not_active`
-   (or `target_not_found` *outside* the queue row — the row is
+   (or `agent_not_found` *outside* the queue row — the row is
    never created in that case; the CLI surfaces the closed-set
    code and exits non-zero).
 4. Target has a permitted role (`slave` or `swarm`) → otherwise
@@ -262,6 +326,7 @@ tmux_paste_failed
 docker_exec_failed
 tmux_send_keys_failed
 pane_disappeared_mid_attempt
+sqlite_lock_conflict
 ```
 
 ### 4.4 `operator_action` (FR-012)
@@ -397,6 +462,77 @@ Fields are stable across MVP minor revisions; new fields may be
 added (additive-only), existing fields may not change shape
 (FEAT-008 audit-format contract).
 
+### 7.1 FEAT-008 `events` table column mapping for FEAT-009 audit rows
+
+FR-046 requires every audit transition to ALSO insert one row into
+the (rebuilt) FEAT-008 `events` SQLite table so `agenttower events`
+surfaces queue activity in one chronology with classifier events
+(per Clarifications Q1 of 2026-05-12). The mapping below is
+authoritative; T034 implements it verbatim.
+
+#### 7.1.1 `queue_message_*` events
+
+| FEAT-008 column        | Value for FEAT-009 queue audit                                                    |
+|------------------------|-----------------------------------------------------------------------------------|
+| `event_id`             | `INTEGER PRIMARY KEY AUTOINCREMENT` — auto-assigned                               |
+| `event_type`           | `queue_message_enqueued` / `_delivered` / `_blocked` / `_failed` / `_canceled` / `_approved` / `_delayed` |
+| `agent_id`             | `target_agent_id` from the queue row (so `events --target <agent>` shows queue events delivered to that agent) |
+| `attachment_id`        | `NULL`                                                                            |
+| `log_path`             | `NULL`                                                                            |
+| `byte_range_start`     | `NULL`                                                                            |
+| `byte_range_end`       | `NULL`                                                                            |
+| `line_offset_start`    | `NULL`                                                                            |
+| `line_offset_end`      | `NULL`                                                                            |
+| `observed_at`          | Transition timestamp (canonical ISO-8601 ms UTC per FR-012b)                      |
+| `record_at`            | `NULL` (per FEAT-008 invariant)                                                   |
+| `excerpt`              | The same redacted/collapsed/truncated excerpt as the JSONL `excerpt` field        |
+| `classifier_rule_id`   | `NULL` (no classifier rule fired)                                                 |
+| `debounce_window_id`   | `NULL`                                                                            |
+| `debounce_collapsed_count` | `1` (default; queue events do not collapse)                                  |
+| `debounce_window_started_at` | `NULL`                                                                      |
+| `debounce_window_ended_at`   | `NULL`                                                                      |
+| `schema_version`       | `1`                                                                               |
+| `jsonl_appended_at`    | `NULL` initially; back-filled after the JSONL append step of the dual-write succeeds (mirrors FEAT-008 FR-029 watermark pattern) |
+
+#### 7.1.2 `routing_toggled` events
+
+| FEAT-008 column        | Value for FEAT-009 routing toggle audit                                           |
+|------------------------|-----------------------------------------------------------------------------------|
+| `event_id`             | `INTEGER PRIMARY KEY AUTOINCREMENT` — auto-assigned                               |
+| `event_type`           | `routing_toggled`                                                                  |
+| `agent_id`             | The operator identity (`host-operator` since routing toggles are host-only per FR-027) |
+| `attachment_id`        | `NULL`                                                                            |
+| `log_path`             | `NULL`                                                                            |
+| `byte_range_*`, `line_offset_*` | `NULL`                                                                   |
+| `observed_at`          | Toggle timestamp (canonical ISO-8601 ms UTC)                                      |
+| `record_at`            | `NULL`                                                                            |
+| `excerpt`              | Human-readable summary, e.g., `"routing disabled (was enabled)"` — single-line, ≤ 240 chars, satisfies FEAT-008's NOT NULL excerpt constraint without leaking sensitive data |
+| `classifier_rule_id`   | `NULL`                                                                            |
+| `debounce_*`           | `NULL` / `1` / `NULL` / `NULL`                                                    |
+| `schema_version`       | `1`                                                                               |
+| `jsonl_appended_at`    | `NULL` initially; back-filled after the JSONL append step succeeds                |
+
+The `excerpt` choice for `routing_toggled` is the literal string
+`"routing <new-value> (was <previous-value>)"` — short, human-
+parseable, and contains no body content. This keeps FEAT-008's
+NOT NULL `excerpt` invariant satisfied without inventing a new
+schema branch.
+
+### 7.2 Source-of-truth precedence (clarifies FR-048)
+
+When the dual-write succeeds: both writes land. When the dual-
+write partially fails:
+
+| Failure mode                            | SQLite row | JSONL line | `agenttower status`                | Recovery                                       |
+|-----------------------------------------|------------|------------|------------------------------------|------------------------------------------------|
+| SQLite INSERT fails                     | absent     | not attempted | the state-transition exception bubbles up to the caller | The caller (delivery worker or queue service) rolls back the state transition; row stays in its prior state |
+| SQLite succeeds, JSONL fails            | present    | absent     | `degraded_queue_audit_persistence=true`, error message captured | JSONL record buffered; drained on next worker cycle; `jsonl_appended_at` back-filled after drain succeeds |
+| Both succeed                            | present    | present    | clean                              | n/a                                            |
+
+SQLite is the authority. JSONL is a best-effort replica with a
+watermark. This mirrors FEAT-008's existing FR-029 / FR-040
+patterns.
+
 ## 8. Closed-set socket error codes (new)
 
 Added to `src/agenttower/socket_api/errors.py` (FEAT-009 block,
@@ -415,23 +551,26 @@ delivery_wait_timeout
 kill_switch_off
 routing_disabled
 routing_toggle_host_only
+message_id_not_found
+operator_pane_inactive
 sender_not_in_pane
 sender_role_not_permitted
 since_invalid_format
 target_container_inactive
 target_label_ambiguous
 target_not_active
-target_not_found
 target_pane_missing
 target_role_not_permitted
 terminal_state_cannot_change
 ```
 
 Each code is `Final[str]` and is also added to the existing
-`CLOSED_CODE_SET` frozen-set. Eleven of these are first-introduced
-by FEAT-009; the others reuse existing FEAT-006/008 codes that
-already exist in the closed set (e.g., `agent_not_found` is not
-re-introduced — `target_not_found` is the FEAT-009 specialization).
+`CLOSED_CODE_SET` frozen-set. Eleven codes are first-introduced
+by FEAT-009 (note: `message_id_not_found` replaces the earlier
+draft's `target_not_found`); `agent_not_found` is reused
+verbatim from FEAT-006/008 for `--target` lookup failures so the
+"named agent does not exist" failure mode stays consistent across
+features (per Clarifications 2026-05-12).
 
 (The full count from FR-049 is 19 spec-side codes; the table above
 includes `routing_toggle_host_only` and `since_invalid_format` —

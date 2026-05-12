@@ -27,7 +27,10 @@
 | `target_container_inactive`       | FEAT-009            | Target container gone (enqueue or re-check).                             |
 | `target_label_ambiguous`          | FEAT-009            | `--target` matches multiple active labels.                               |
 | `target_not_active`               | FEAT-009            | Target marked inactive (enqueue or re-check).                            |
-| `target_not_found`                | FEAT-009            | `--target` resolves to nothing OR `message_id` unknown.                  |
+| `agent_not_found`                 | FEAT-006/008 (reused) | FEAT-009 `--target` resolves to nothing (no `agent_id` or label match). Reuses FEAT-008's existing code for cross-feature consistency. |
+| `message_id_not_found`            | FEAT-009            | `queue approve` / `queue delay` / `queue cancel` referenced a `message_id` that does not exist in `message_queue`. |
+| `operator_pane_inactive`          | FEAT-009            | Operator action (`queue approve` / `delay` / `cancel`) issued from a bench-container caller whose pane resolves to an inactive or deregistered agent. Host-origin callers (no pane) are unaffected (they use the `host-operator` sentinel). |
+| `sqlite_lock_conflict`            | FEAT-009            | Internal: an SQLite `BEGIN IMMEDIATE` lock conflict persisted past 3 bounded retries (10/50/250 ms backoff). Surfaces as a `failure_reason` value on a delivery worker transition; not directly returned by a CLI subcommand. |
 | `target_pane_missing`             | FEAT-009            | Target pane missing (enqueue or re-check).                               |
 | `target_role_not_permitted`       | FEAT-009            | Target role not in `{slave, swarm}`.                                     |
 | `terminal_state_cannot_change`    | FEAT-009            | Operator action on a terminal row.                                       |
@@ -69,7 +72,9 @@ integer exit codes.
 | `2`     | `routing_disabled` (CLI mapping of `kill_switch_off`)                                    |
 | `3`     | `sender_not_in_pane`                                                                     |
 | `4`     | `sender_role_not_permitted`                                                              |
-| `5`     | `target_not_found`                                                                       |
+| `5`     | `agent_not_found`                                                                        |
+| `20`    | `message_id_not_found`                                                                   |
+| `21`    | `operator_pane_inactive`                                                                 |
 | `6`     | `target_label_ambiguous`                                                                 |
 | `7`     | `target_not_active`                                                                      |
 | `8`     | `target_role_not_permitted`                                                              |

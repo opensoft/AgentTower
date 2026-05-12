@@ -188,13 +188,26 @@ write path verbatim and follows its degraded-buffer pattern
 (`degraded_events_persistence` becomes the model for
 `degraded_queue_audit_persistence`).
 
-**Storage**: One SQLite migration `v6 → v7` (FEAT-009), adding
-exactly two new tables (`message_queue`, `daemon_state`) and four
-supporting indexes. `CURRENT_SCHEMA_VERSION` advances from `6` to
-`7`. Migration is idempotent on re-open via `IF NOT EXISTS`, runs
-under a single `BEGIN IMMEDIATE` transaction inside
-`schema._apply_pending_migrations`, refuses to serve the daemon on
-rollback (mirrors FEAT-007 / FEAT-008's pattern). The two tables
+**Storage**: One SQLite migration `v6 → v7` (FEAT-009) with three
+parts: (1) add two new tables (`message_queue`, `daemon_state`)
+and four supporting indexes; (2) **rebuild the FEAT-008 `events`
+table** in-place to widen its `event_type` CHECK constraint
+(accept the eight FEAT-009 audit types in addition to the
+FEAT-008 ten) and make the FEAT-008-specific NOT NULL columns
+(`attachment_id`, `log_path`, `byte_range_*`, `line_offset_*`,
+`classifier_rule_id`) NULLABLE so queue audit rows can be
+inserted without those fields; (3) recreate the four FEAT-008
+indexes that the rebuild drops. The rebuild uses the standard
+SQLite `CREATE TABLE …_new` + `INSERT … SELECT *` + `DROP` +
+`RENAME` pattern, runs inside the same `BEGIN IMMEDIATE`
+transaction as the additive tables, and preserves every FEAT-008
+row byte-for-byte (validated by `test_schema_migration_v7.py`
+T013). `CURRENT_SCHEMA_VERSION` advances from `6` to `7`.
+Migration is idempotent on re-open via `IF NOT EXISTS` for the
+additive tables; the rebuild part guards on the current schema
+version being exactly `6` so it does not re-run on v7. Refuses
+to serve the daemon on rollback (mirrors FEAT-007 / FEAT-008's
+pattern). The two new tables and the rebuilt `events` table
 (full DDL in `data-model.md`):
 
 ```sql
@@ -302,7 +315,7 @@ acceptance scenario plus the spec's 14+ edge cases. Unit tests cover:
   precedence order; "send to self" is `target_role_not_permitted`.
 - `--target` resolver: agent_id shape match → registry lookup; not
   agent_id shape → label lookup; multiple label matches →
-  `target_label_ambiguous`; no match → `target_not_found`.
+  `target_label_ambiguous`; no match → `agent_not_found`.
 - State machine: every allowed transition, every forbidden
   transition is rejected with `terminal_state_cannot_change` or
   the matching closed-set code (FR-014, FR-015, FR-033 – FR-036).
@@ -509,7 +522,7 @@ specs/009-safe-prompt-queue/
 
 ```text
 src/agenttower/
-├── routing/                          # PACKAGE EXISTS AS STUB — populate with the 9 modules below
+├── routing/                          # PACKAGE EXISTS AS STUB — populate with the 11 modules below
 │   ├── __init__.py                   # MODIFIED — re-exports public types + HOST_OPERATOR_SENTINEL
 │   ├── envelope.py                   # NEW — render_envelope, validate_body, serialize
 │   ├── excerpt.py                    # NEW — render_excerpt (redact → collapse → truncate → …)
@@ -520,6 +533,7 @@ src/agenttower/
 │   ├── kill_switch.py                # NEW — RoutingFlagService (read/toggle, host-origin enforcement)
 │   ├── delivery.py                   # NEW — DeliveryWorker thread, FR-040 recovery, dispatch loop
 │   ├── timestamps.py                 # NEW — now_iso_ms_utc, parse_since (millis & seconds forms)
+│   ├── audit_writer.py               # NEW — QueueAuditWriter: FR-046 dual-write (SQLite events table + events.jsonl), degraded buffer, mapping per data-model §7.1
 │   └── errors.py                     # NEW — closed-set error codes (re-exported from socket_api/errors.py)
 ├── tmux/
 │   ├── adapter.py                    # MODIFIED — extend TmuxAdapter Protocol with 4 new methods
@@ -661,13 +675,13 @@ def resolve_target(
     if AGENT_ID_RE.match(input_str):
         record = agents_service.get_agent_by_id(input_str)
         if record is None:
-            raise TargetResolveError("target_not_found")
+            raise TargetResolveError("agent_not_found")
         return ResolvedTarget.from_record(record)
     matches = agents_service.find_agents_by_label(
         input_str, only_active=True,
     )
     if len(matches) == 0:
-        raise TargetResolveError("target_not_found")
+        raise TargetResolveError("agent_not_found")
     if len(matches) > 1:
         raise TargetResolveError("target_label_ambiguous")
     return ResolvedTarget.from_record(matches[0])
@@ -703,6 +717,16 @@ Two boundary checks are added at the `methods.py` dispatch layer:
 
 `routing.status` accepts both contexts (pane present or absent).
 
+For the **operator-action endpoints** (`queue.approve` / `queue.delay`
+/ `queue.cancel`), the dispatch layer adds a third boundary check
+(Group-A walk Q8): if `caller_pane is not None`, resolve the pane
+through `agents_service` and require `active=true`. If the resolved
+agent is missing or inactive, refuse the call with the new closed-set
+`operator_pane_inactive` (CLI exit code 21). Host-origin callers
+(pane absent) bypass this check and write the `host-operator`
+sentinel into `operator_action_by`. This prevents operator-action
+audit rows from carrying stale or deregistered agent identities.
+
 ### Envelope rendering (FR-001, FR-002)
 
 ```text
@@ -729,38 +753,80 @@ construction; rejection produces `body_too_large` and no SQLite row.
 def run_loop(self):
     self._run_recovery_pass()   # FR-040, runs once at startup
     while not self._stop.is_set():
+        # Group-A Q4: stop() sets _stop; we exit immediately without draining in-flight rows.
+        self._drain_buffered_audits()           # FR-048 degraded-JSONL drain on every cycle
         if not self._routing_flag.is_enabled():
             self._stop.wait(self._idle_poll_seconds)
             continue
-        row = self._dao.pick_next_ready_row()  # (state='queued') ORDER BY enqueued_at, message_id
+        row = self._dao.pick_next_ready_row()   # (state='queued') ORDER BY enqueued_at, message_id
         if row is None:
             self._stop.wait(self._idle_poll_seconds)
             continue
         self._deliver_one(row)
 
 def _deliver_one(self, row):
-    # FR-025 pre-paste re-check
-    recheck = self._permissions.recheck_target_only(row)
+    # FR-025 pre-paste re-check. Group-A Q7: SQLite reads inside the recheck use
+    # the same bounded retry helper; persistent lock → SqliteLockConflict.
+    try:
+        recheck = self._permissions.recheck_target_only(row)
+    except SqliteLockConflict:
+        self._dao.transition_queued_to_failed(row.message_id, "sqlite_lock_conflict")
+        self._audit.append(..., to_state="failed", reason="sqlite_lock_conflict")
+        return
     if recheck.blocked:
         self._dao.transition_queued_to_blocked(row.message_id, recheck.block_reason)
-        self._audit.append(..., from_state='queued', to_state='blocked', reason=recheck.block_reason)
+        self._audit.append(..., from_state="queued", to_state="blocked", reason=recheck.block_reason)
         return
-    # FR-041 stamp BEFORE any tmux call
-    self._dao.stamp_delivery_attempt_started(row.message_id, self._clock.now_iso_ms_utc())
+
+    # FR-041 stamp BEFORE any tmux call (also wrapped in the bounded-retry helper inside the DAO).
     try:
-        buffer_name = f"agenttower-{row.message_id}"
-        body = self._dao.read_envelope_bytes(row.message_id)
+        self._dao.stamp_delivery_attempt_started(row.message_id, self._clock.now_iso_ms_utc())
+    except SqliteLockConflict:
+        # Row is still 'queued'; the next cycle will retry. No audit emit here
+        # because no state change happened.
+        return
+
+    buffer_name = f"agenttower-{row.message_id}"
+    body = self._dao.read_envelope_bytes(row.message_id)
+    load_succeeded = False
+    try:
         self._tmux.load_buffer(row.target_container_id, ..., buffer_name, body)
+        load_succeeded = True
         self._tmux.paste_buffer(..., row.target_pane_id, buffer_name)
         self._tmux.send_keys(..., row.target_pane_id, "Enter")
-        self._tmux.delete_buffer(..., buffer_name)
     except TmuxError as exc:
-        self._dao.transition_queued_to_failed(row.message_id, exc.failure_reason)
-        self._audit.append(..., to_state='failed', reason=exc.failure_reason)
+        # Group-A Q1: best-effort buffer cleanup if load_buffer already succeeded.
+        if load_succeeded:
+            try:
+                self._tmux.delete_buffer(..., buffer_name)
+            except TmuxError:
+                self._log.warning("delete_buffer cleanup failed for %s", row.message_id)
+        # Row transitions to failed with the original failure_reason.
+        try:
+            self._dao.transition_queued_to_failed(row.message_id, exc.failure_reason)
+            self._audit.append(..., to_state="failed", reason=exc.failure_reason)
+        except SqliteLockConflict:
+            # Recovery on next boot will catch this row via FR-040.
+            self._log.error("could not commit failure for %s; deferred to recovery", row.message_id)
         return
-    # FR-042 commit BEFORE picking the next row
-    self._dao.transition_queued_to_delivered(row.message_id, self._clock.now_iso_ms_utc())
-    self._audit.append(..., to_state='delivered')
+
+    # Paste+submit succeeded. Group-A Q2: cleanup failure here does NOT downgrade
+    # the row's terminal state; the body has already been delivered.
+    try:
+        self._tmux.delete_buffer(..., buffer_name)
+    except TmuxError:
+        self._log.warning("orphaned tmux buffer %s after successful delivery", buffer_name)
+        self._status.mark_orphaned_buffer(buffer_name)
+
+    # FR-042 commit BEFORE picking the next row.
+    try:
+        self._dao.transition_queued_to_delivered(row.message_id, self._clock.now_iso_ms_utc())
+        self._audit.append(..., to_state="delivered")
+    except SqliteLockConflict:
+        # Recovery on next boot will see delivery_attempt_started_at set + delivered_at unset
+        # and transition this row to failed/attempt_interrupted. Operator visibility via audit
+        # is degraded for this row only.
+        self._log.error("could not commit delivered for %s; deferred to recovery", row.message_id)
 ```
 
 The recovery pass (FR-040) is a single SQLite statement:

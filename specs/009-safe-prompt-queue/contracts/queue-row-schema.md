@@ -69,7 +69,8 @@
             "tmux_paste_failed",
             "docker_exec_failed",
             "tmux_send_keys_failed",
-            "pane_disappeared_mid_attempt"
+            "pane_disappeared_mid_attempt",
+            "sqlite_lock_conflict"
           ]
         }
       ]

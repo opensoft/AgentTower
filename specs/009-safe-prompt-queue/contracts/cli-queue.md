@@ -68,7 +68,7 @@ subcommand (FR-029).
 | Integer | String code              | Meaning                                                |
 |---------|--------------------------|--------------------------------------------------------|
 | `0`     | (success)                | Listing returned (possibly empty).                     |
-| `5`     | `target_not_found`       | `--target` resolves to nothing.                        |
+| `5`     | `agent_not_found`        | `--target` resolves to nothing.                        |
 | `6`     | `target_label_ambiguous` | `--target` matches multiple active labels.             |
 | `14`    | `since_invalid_format`   | `--since` cannot be parsed as ISO-8601 UTC.            |
 | `12`    | `daemon_unavailable` / `daemon_shutting_down` | Daemon unreachable / shutting down. |
@@ -103,7 +103,8 @@ agent_id (bench container) or `host-operator` sentinel (host).
 | Integer | String code                       | Meaning                                                                |
 |---------|-----------------------------------|------------------------------------------------------------------------|
 | `0`     | (success)                         | Row transitioned `blocked → queued`.                                   |
-| `5`     | `target_not_found`                | `message_id` unknown.                                                  |
+| `20`    | `message_id_not_found`            | `message_id` unknown.                                                  |
+| `21`    | `operator_pane_inactive`          | Caller pane resolves to inactive / deregistered agent.                  |
 | `15`    | `terminal_state_cannot_change`    | Row is `delivered`/`failed`/`canceled`.                                |
 | `16`    | `delivery_in_progress`            | Row is mid-flight.                                                     |
 | `17`    | `approval_not_applicable`         | `block_reason` not operator-resolvable, or `kill_switch_off` and switch is currently disabled. |
@@ -126,7 +127,8 @@ Same as `approve` (operator identity captured the same way).
 | Integer | String code                       | Meaning                                                |
 |---------|-----------------------------------|--------------------------------------------------------|
 | `0`     | (success)                         | Row transitioned `queued → blocked` with `block_reason=operator_delayed`. |
-| `5`     | `target_not_found`                | `message_id` unknown.                                  |
+| `20`    | `message_id_not_found`            | `message_id` unknown.                                  |
+| `21`    | `operator_pane_inactive`          | Caller pane inactive/deregistered.                     |
 | `15`    | `terminal_state_cannot_change`    | Row is terminal.                                       |
 | `16`    | `delivery_in_progress`            | Row is mid-flight.                                     |
 | `18`    | `delay_not_applicable`            | Row is already `blocked`.                              |
@@ -149,7 +151,8 @@ Same as `approve`.
 | Integer | String code                       | Meaning                                                |
 |---------|-----------------------------------|--------------------------------------------------------|
 | `0`     | (success)                         | Row transitioned to `canceled`.                        |
-| `5`     | `target_not_found`                | `message_id` unknown.                                  |
+| `20`    | `message_id_not_found`            | `message_id` unknown.                                  |
+| `21`    | `operator_pane_inactive`          | Caller pane inactive/deregistered.                     |
 | `15`    | `terminal_state_cannot_change`    | Row already terminal.                                  |
 | `16`    | `delivery_in_progress`            | Row is mid-flight.                                     |
 | `12`    | `daemon_unavailable` / `daemon_shutting_down` | Daemon unreachable / shutting down.                    |

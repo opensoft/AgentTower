@@ -50,7 +50,7 @@ string code in `--json` output is the stable contract (FR-050).
 | `2`     | `kill_switch_off` / `routing_disabled` | Row landed in `blocked` due to disabled routing; CLI emits `routing_disabled` exit-code mapping. |
 | `3`     | `sender_not_in_pane`         | Host-origin caller refused.                                             |
 | `4`     | `sender_role_not_permitted`  | Pane not a master OR sender inactive.                                   |
-| `5`     | `target_not_found`           | `--target` resolves to nothing.                                         |
+| `5`     | `agent_not_found`            | `--target` resolves to nothing.                                         |
 | `6`     | `target_label_ambiguous`     | Multiple labels match.                                                  |
 | `7`     | `target_not_active`          | Target marked inactive.                                                 |
 | `8`     | `target_role_not_permitted`  | Target is not slave/swarm.                                              |

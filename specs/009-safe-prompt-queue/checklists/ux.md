@@ -3,60 +3,75 @@
 **Purpose**: Deep validation of the CLI-as-UX surface — operator command ergonomics, error-message clarity, listing format, multi-line body input, feedback latency, scriptability. Tests whether the operator-facing experience is specified (not just the contract), so a human can actually use FEAT-009 under pressure — NOT whether the CLI renders correctly.
 **Rigor**: Deep (formal release-gate)
 **Created**: 2026-05-11
+**Walked**: 2026-05-12
 **Feature**: [spec.md](../spec.md)
 
 ## `send-input` Caller Experience
 
-- [ ] CHK001 Is the default wait-or-timeout behavior of `send-input` documented in operator-facing help (not only in the spec's Assumptions)? [Gap, Spec §Assumptions]
-- [ ] CHK002 Is the difference between exit-0 (`delivered`) and non-zero (`blocked`/`failed`/`canceled`/`timeout`) made unambiguous in human-readable output, not only by exit code? [Clarity, Spec §FR-010]
-- [ ] CHK003 Are requirements defined for what `send-input` prints to stderr vs stdout under success and under each failure mode? [Gap, Clarity]
-- [ ] CHK004 Is the operator informed (in human output) of the closed-set error code when a row is blocked or failed, so they can self-serve remediation via the queue commands? [Coverage, Spec §FR-049]
-- [ ] CHK005 Is the operator-visible behavior when the daemon socket is missing or unreadable defined (clear error vs cryptic connection failure)? [Coverage, Spec §FR-049]
+- [ ] CHK001 **Open**: whether `agenttower send-input --help` documents the default-wait-or-timeout behavior is not specified. Behavior IS documented in contracts/cli-send-input.md and FR-009, but the on-CLI help text is not declared.
+- [X] CHK002 Exit-0 (delivered) vs non-zero outcomes have distinct human-readable lines (contracts/cli-send-input.md "Stdout / stderr discipline").
+- [X] CHK003 stdout/stderr discipline per outcome declared (contracts/cli-send-input.md).
+- [X] CHK004 Operator sees the closed-set error code in stderr: `send-input failed: <code> — <human message>` (contracts/cli-send-input.md).
+- [X] CHK005 Socket-missing / unreadable → `daemon_unavailable` (contracts/error-codes.md).
 
 ## Multi-Line & Special-Character Body Input
 
-- [ ] CHK006 Is `--message-file` defined as the recommended path for shell-special-character or multi-line bodies, with `--message` discouraged for those cases in caller-facing docs? [Gap, Spec §FR-007]
-- [ ] CHK007 Are the supported `--message-file` sources defined (filesystem path, `-` for stdin; no shell globbing, no URL fetch)? [Completeness, Spec §FR-007]
-- [ ] CHK008 Are requirements specified for how multi-line bodies appear in the queue listing's excerpt (truncated at first newline, collapsed whitespace, or preserved up to cap)? [Gap, Clarity]
-- [ ] CHK009 Is the behavior when `--message-file` points to a nonexistent or unreadable path defined (specific error vs generic I/O failure)? [Gap, Coverage]
+- [ ] CHK006 **Open**: spec/plan/contracts do not formally recommend `--message-file` over `--message` for shell-special-character bodies. Quickstart.md uses it for SC-003 demonstration; the recommendation is implicit.
+- [X] CHK007 `--message-file` sources declared (filesystem path, `-` for stdin); no globbing, no URL fetch (contracts/cli-send-input.md).
+- [X] CHK008 Multi-line body excerpt rendering = redact → collapse whitespace → truncate → `…` (FR-047b + Clarifications Q3 of 2026-05-11).
+- [ ] CHK009 **Open**: behavior on nonexistent / unreadable `--message-file` path is not specified (no dedicated closed-set code for "file unreadable" — would fall through to argparse's generic I/O error).
 
 ## `queue` Listing Ergonomics
 
-- [ ] CHK010 Are the listing's columns scannable by a human operator at typical terminal widths (≤120 columns), or is a `--wide` / `--json` escape hatch documented? [Gap, Measurability]
-- [ ] CHK011 Is the listing's default time format (relative, absolute, or both) specified for the human-readable mode? [Gap, Clarity]
-- [ ] CHK012 Is the listing's behavior under high row count defined (paging? truncation? default `--limit`)? [Coverage, Spec §FR-031]
-- [ ] CHK013 Are filter-combination examples provided in caller-facing docs (e.g., "show all blocked rows targeted at agent X since yesterday")? [Gap, Coverage]
-- [ ] CHK014 Is the operator told the total row count or "X of Y shown" when `--limit` truncates? [Gap, Coverage]
+- [ ] CHK010 **Open**: whether the listing fits ≤120 columns at typical agent_id/label widths is not declared; no `--wide` flag exists; `--json` is the escape hatch for any layout concern.
+- [ ] CHK011 **Open**: human-mode default time format choice (relative `3m ago` vs absolute ISO-8601) is not stated. Same as observability CHK017.
+- [X] CHK012 High-row-count behavior: `--limit` default = 100, max = 1000 (contracts/cli-queue.md); no paging in MVP; operator can re-query with `--since` for sliding windows.
+- [X] CHK013 Filter-combination examples present in quickstart.md (e.g., `queue --state blocked --target worker-1`).
+- [ ] CHK014 **Open**: whether the listing prints "X of Y rows shown" when `--limit` truncates is not declared.
 
 ## Operator Override Commands
 
-- [ ] CHK015 Is the operator informed which `block_reason` values are operator-resolvable vs intrinsic BEFORE they attempt `approve` (e.g., listed in the row display or `--help`)? [Coverage, Spec §FR-033]
-- [ ] CHK016 Is the `delivery_in_progress` race specified as a transient error the operator should retry (with implicit guidance), vs a permanent rejection? [Clarity, Spec §FR-036]
-- [ ] CHK017 Are requirements defined for confirming destructive operations (`cancel`, `routing disable`) in interactive sessions, or explicitly waived as out of scope for MVP? [Gap]
-- [ ] CHK018 Is the operator told (in CLI output) what state the row transitioned to after a successful `approve`/`delay`/`cancel`, not just an exit-0 silence? [Coverage, Spec §FR-032, §US3 #7]
-- [ ] CHK019 Is the operator told (in CLI output) the NEW `block_reason` on a `delay` action, distinct from any pre-existing block reason? [Coverage, Spec §FR-034]
+- [ ] CHK015 **Open**: data-model.md §3.3 has the operator-resolvable matrix, but whether `queue --json` includes a per-row `is_operator_resolvable` field (or `queue --help` lists which `block_reason`s are resolvable) is not declared. Operators must consult docs to know which rows are `approve`-eligible.
+- [ ] CHK016 **Open**: `delivery_in_progress` retry guidance is not specified — should the operator retry immediately (race continues until the in-flight row reaches terminal, typically ≤ 5 s) or back off?
+- [ ] CHK017 **Open**: confirmation prompts for destructive operations (`cancel`, `routing disable`) are not in scope per the existing CLI pattern, but this isn't explicitly waived in the spec. (In FEAT-001..008 no confirmation prompts exist, so the convention is "no prompts".)
+- [X] CHK018 Operator sees the new state after `approve`/`delay`/`cancel`: `approved: msg=<id> state=queued` (contracts/cli-queue.md).
+- [ ] CHK019 **Open**: whether `queue delay` explicitly tells the operator the new `block_reason=operator_delayed` in human output (vs implying it via the state change) is not specified.
 
 ## Feedback Latency
 
-- [ ] CHK020 Is the operator-perceived latency between `send-input` completion and `queue` listing reflecting the new row quantified (or stated as immediate / single-transaction)? [Gap, Measurability]
-- [ ] CHK021 Is the latency for `agenttower routing status` reflecting a recent toggle defined (immediate vs eventual)? [Gap, Measurability]
-- [ ] CHK022 Is the typical "operator delays a queued row before it's picked up" timing window stated, so an operator knows whether their `delay` is likely to win the race? [Coverage, Spec §SC-008]
+- [X] CHK020 `send-input` → `queue` listing latency is single-SQLite-transaction (immediate from any other thread reading the same DB) per plan §"Implementation Notes".
+- [X] CHK021 `routing status` reflects toggles immediately (write-through cache per plan §"In-memory state").
+- [ ] CHK022 **Open**: the typical race window between operator `delay` and worker pickup is bounded by `delivery_worker_idle_poll_seconds = 0.1` s, but this is not stated as an operator-facing latency guarantee.
 
 ## JSON & Scripting
 
-- [ ] CHK023 Is `--json` output specified as single-line (NDJSON-compatible) so it can be piped into `jq` or appended to a log file? [Gap, Clarity, §SC-007]
-- [ ] CHK024 Are stable field names (snake_case) declared as a contract across all `--json` outputs? [Gap, Consistency]
-- [ ] CHK025 Is the operator able to derive a single row's full history from `agenttower events --filter message_id=<id>` (or equivalent) alone? [Coverage, Spec §SC-006]
-- [ ] CHK026 Are exit codes documented in operator-facing help (a single table of code-name → meaning), not just in the spec? [Gap, Coverage]
+- [X] CHK023 `--json` is single-line NDJSON-compatible (contracts/queue-row-schema.md "Notes").
+- [X] CHK024 `snake_case` field naming uniform across all `--json` outputs (contracts/queue-row-schema.md).
+- [X] CHK025 Single-row history reconstructible via `agenttower events --target <agent>` then `jq 'select(.message_id == "...")'` — works post FR-046 dual-write (no new `--filter` flag needed).
+- [ ] CHK026 **Open**: same as api CHK033 — whether `--help` documents the FR-049 closed-set codes is not specified.
 
 ## Operator Mental Model
 
-- [ ] CHK027 Is the operator told, in caller-facing docs, that `master` cannot `send-input` from the host CLI (so they're not confused by `sender_not_in_pane`)? [Coverage, Spec §FR-006, §Clarifications]
-- [ ] CHK028 Is the operator told, in caller-facing docs, that toggling routing is host-only (so they're not confused by `routing_toggle_host_only` from inside a container)? [Coverage, Spec §FR-027, §Clarifications]
-- [ ] CHK029 Is the operator told what "delivered" actually means (paste + Enter, not "agent acknowledged") so they don't infer reply semantics? [Coverage, Spec §FR-037, §FR-042]
+- [X] CHK027 Quickstart.md documents the host-side `send-input` refusal with example (line 102-104), so operators expecting `sender_not_in_pane` know to run from inside the master's pane.
+- [X] CHK028 Quickstart.md documents the host-only routing-toggle constraint with example (line 122).
+- [X] CHK029 "Delivered" = paste + Enter (FR-037 + FR-042 + quickstart troubleshooting).
+
+## Plan-Grounded Additions (2026-05-12 pass)
+
+- [X] CHK030 Human-readable success line shape (`delivered: msg=<id> target=<label>(<agent_id>)`) declared in contracts/cli-send-input.md.
+- [X] CHK031 `<label>(<agent_id-prefix>)` rendering consistent between `queue` listing and `send-input` success output (contracts/cli-queue.md + cli-send-input.md).
+- [ ] CHK032 **Open**: `--message-file -` EOF semantics not explicitly declared. Implicit: read until stdin EOF. Should clarify whether a body ending without a trailing newline is delivered byte-exact (it should be, per FR-005).
+- [X] CHK033 `routing_disabled` (CLI exit 2 for `send-input`) vs `routing_toggle_host_only` (CLI exit 19 for `routing disable`) are distinct codes with distinct messages (contracts/error-codes.md "kill_switch_off vs routing_disabled" note).
+- [X] CHK034 Human error message template `send-input failed: <code> — <human message>` declared in contracts/cli-send-input.md.
+- [X] CHK035 Quickstart §"Troubleshooting" is operator-facing documentation accompanying the spec set (quickstart.md).
+- [ ] CHK036 **Open**: when `agenttowerd` is not running at all, the CLI surfaces `daemon_unavailable` but a remediation hint (e.g., "start with `agenttowerd &`") is not specified.
+- [ ] CHK037 **Open**: whether `queue --help` documents both `--since` forms (ms UTC + seconds UTC) is not declared.
+- [X] CHK038 `--no-wait` with `--json` interaction implicit: with `--no-wait`, `--json` returns the row in its initial state (typically `queued`), with `--wait`, in its terminal state or last observed state (contracts/cli-send-input.md "Exit codes" "`delivery_wait_timeout`" path).
+- [ ] CHK039 **Open**: behavior of `--target` against a label containing a hyphen, space, or Unicode glyph is not specified. FEAT-006 label charset is ASCII-printable per its FR-005, but the resolver's whitespace/unicode handling is undefined.
+- [ ] CHK040 **Open**: long-label truncation in `queue` listing rows is not specified — labels longer than ~20 chars would break column alignment at 120-col terminals.
 
 ## Notes
 
-- These items test whether the operator-facing experience is specified, not whether it's pleasant.
-- Resolution path: add Caller-facing docs to the spec, fill named Assumptions, or push UX details to `/speckit.plan` deliverables.
-- Check items off as completed: `[x]`.
+- 23/40 items resolved by spec/plan/contracts through the 2026-05-12 remediation; **17 remain open**.
+- UX has the most open items because operator-facing `--help` text, CLI rendering details, and operator-facing documentation are mostly polish work that lands during implementation rather than being pinned in the spec/plan/contracts surface.
+- **Outstanding decisions for the user**: CHK001 (`--help` content), CHK006 (`--message-file` recommendation), CHK009 (nonexistent file error), CHK010 (terminal width), CHK011 (time format), CHK014 (truncation notice), CHK015 (operator-resolvable hint surface), CHK016 (`delivery_in_progress` retry), CHK017 (destructive-op confirmation), CHK019 (delay output detail), CHK022 (delay-race latency), CHK026 (`--help` error-code listing), CHK032 (stdin EOF semantics), CHK036 (daemon-not-running hint), CHK037 (`--since` form documentation), CHK039 (label edge characters), CHK040 (label truncation).

@@ -15,10 +15,28 @@
 - Q: Where do `queue_message_*` audit transitions land — the existing FEAT-008 `events.jsonl` stream or a dedicated `queue.jsonl`? → A: Append queue transition audit rows to the existing FEAT-008 `events.jsonl` using distinct `queue_message_*` event types (`queue_message_enqueued`, `queue_message_delivered`, `queue_message_blocked`, `queue_message_failed`, `queue_message_canceled`, `queue_message_approved`, `queue_message_delayed`); `agenttower events` MUST be able to surface both classifier events and queue transition events in one chronology; degraded JSONL behavior is shared with the existing FEAT-008 stream/writer path.
 - Q: What concurrency model should the delivery worker use in MVP, given FR-044 (per-target FIFO) and FR-045 (cross-target parallelism allowed)? → A: One delivery worker in MVP; process ready rows serially in `(enqueued_at, message_id)` order; startup recovery (FR-040) runs before the worker begins; per-target FIFO is guaranteed by the single-worker model; true cross-target parallel delivery is deferred to a later feature.
 - Q: How does `routing disable` interact with a delivery attempt that is already in-flight (`delivery_attempt_started_at` committed, terminal stamp not yet written)? → A: `routing disable` stops pickup of new ready rows and turns new `send-input` enqueues into `blocked` rows; any row whose `delivery_attempt_started_at` was already committed at toggle time is allowed to finish to `delivered` or `failed` under normal commit ordering; no mid-flight preemption in MVP.
-- Q: What identifier forms does `--target` accept across `send-input` and queue filters, given that the FEAT-006 registry exposes both `agent_id` and `label`? → A: `--target` accepts either `agent_id` or label; if the input matches the `agent_id` shape it is resolved as `agent_id`, otherwise it is resolved as label; multiple label matches return closed-set error `target_label_ambiguous`; no match in either form returns `target_not_found`; queue surfaces (listings and `--json`) show both `agent_id` and `label` for the resolved target.
+- Q: What identifier forms does `--target` accept across `send-input` and queue filters, given that the FEAT-006 registry exposes both `agent_id` and `label`? → A: `--target` accepts either `agent_id` or label; if the input matches the `agent_id` shape it is resolved as `agent_id`, otherwise it is resolved as label; multiple label matches return closed-set error `target_label_ambiguous`; no match in either form returns `agent_not_found` (reusing FEAT-008's closed-set code per the 2026-05-12 session); queue surfaces (listings and `--json`) show both `agent_id` and `label` for the resolved target.
 - Q: How should the 240-char excerpt render a multi-line body across queue listings, audit, and `--json`? → A: Apply FEAT-007 redaction first, then collapse all whitespace runs (including `\n` and `\t`) to a single space, then truncate to the 240-char cap, appending `…` only when truncation actually occurred; the resulting excerpt is always single-line in both human output and `--json`.
 - Q: What identifier is recorded for host-originated operator actions (host-side `queue cancel`/`approve`/`delay` and `routing enable`/`disable`), given there is no registered bench-container agent for the host? → A: Use the fixed reserved sentinel `host-operator` consistently across queue operator identity fields, `last_toggled_by_agent_id`, and queue-transition audit rows / JSONL operator identity; the FEAT-006 registry MUST reserve `host-operator` so it can never collide with a real agent_id (UUIDv4 namespace makes collision impossible by construction, and the registry MUST refuse registration of an agent with this literal id).
 - Q: What is the canonical timestamp encoding for storage and audit/JSON surfaces, and does `--since` accept the same form? → A: UTC only; ISO 8601 with millisecond resolution and `Z` suffix (e.g., `2026-05-11T15:32:04.123Z`); the same string form is used in SQLite timestamp columns, `events.jsonl`, all `--json` outputs, and queue/routing audit surfaces; `--since` accepts the canonical form and also the same UTC form without milliseconds (e.g., `2026-05-11T15:32:04Z`) for operator convenience.
+
+### Session 2026-05-12
+
+- Q: How should queue audit events surface to `agenttower events` so the spec promise "queue + classifier events in one chronology" is implementable, given that FEAT-008's reader only sees the SQLite `events` table while FEAT-009 audit is written to `events.jsonl`? → A: Queue transition audit writes go to BOTH `events.jsonl` and the FEAT-008 SQLite `events` table, using `queue_message_*` as the `event_type`; `agenttower events` reads the SQLite table only and still sees queue + classifier events in one chronology; no FEAT-008 reader redesign is needed for MVP. The v6 → v7 migration MUST relax the FEAT-008 `events.event_type` CHECK constraint to also accept the `queue_message_*` namespace AND the `routing_toggled` type, and make the FEAT-008-specific NOT NULL columns (`attachment_id`, `log_path`, `byte_range_*`, `line_offset_*`, `classifier_rule_id`) nullable so queue rows can be inserted without those fields.
+- Q: How should FR-019 / FR-020 resolve the ambiguity when both "target inactive" and "target role not permitted" would fail simultaneously? → A: Split the target check into two ordered steps: (a) target exists and `active=true` or block with `target_not_active`; (b) target role is `slave` or `swarm` or block with `target_role_not_permitted`. FR-020 precedence then follows the first failed step with no ambiguity.
+- Q: Should `routing_toggled` be folded into FR-046's closed-set list of event types or split into a separate FR-046a? → A: Folded into FR-046. The FR-046 closed set contains exactly eight FEAT-009 audit event types: the seven `queue_message_*` (`enqueued`, `delivered`, `blocked`, `failed`, `canceled`, `approved`, `delayed`) plus `routing_toggled`. No separate FR-046a for MVP.
+- Q: `since_invalid_format` is treated as a closed-set CLI error code by plan/contracts but FR-049's enumeration doesn't list it — should it be added or removed? → A: Add `since_invalid_format` to FR-049's closed-set enumeration; keep plan and contracts as already written; no downgrade to a generic validation error.
+- Q: How should the closed-set CLI vocabulary align with FEAT-008 for the "named agent does not exist" failure mode, given the drift between FEAT-008's `agent_not_found` and FEAT-009's proposed `target_not_found`? → A: Use FEAT-008's existing `agent_not_found` for FEAT-009 `--target` lookup failures (renaming `target_not_found` → `agent_not_found` for the agent-lookup case); introduce a separate `message_id_not_found` for `queue approve` / `delay` / `cancel` lookups by `message_id` (which is not an agent lookup); remove `target_not_found` from the FEAT-009 closed set entirely; align plan, contracts, and tasks to that naming so agent lookup failures stay consistent across features.
+
+#### Group-A walk (post-analyze checklist resolution)
+
+- Q: When `tmux load_buffer` succeeded but a subsequent `paste_buffer` / `send_keys` fails, must the worker clean up the loaded buffer? → A: Yes — invoke `delete_buffer` best-effort in a `finally` block on the failure path; errors from the cleanup `delete_buffer` are logged and ignored; the row still transitions to `failed` with the original `failure_reason` from the failing step.
+- Q: When the paste+submit sequence succeeds but the trailing `delete_buffer` cleanup fails, is the row `delivered` or `failed`? → A: `delivered`. The body has already reached the target pane; the row's terminal state MUST reflect that. The orphaned buffer is logged and surfaced through `agenttower status`; operators may clean it up via `tmux delete-buffer` after diagnosis.
+- Q: How does the excerpt pipeline behave when the FEAT-007 redactor raises (e.g., catastrophic regex backtracking, unhandled UTF-8 edge case)? → A: Catch the exception inside `render_excerpt`; substitute the fixed literal placeholder `"[excerpt unavailable: redactor failed]"` (which fits the 240-char cap with margin); the row's state transition proceeds with this placeholder; a daemon-side warning is logged. The raw body MUST NEVER appear as a fallback.
+- Q: On `SIGTERM` (graceful shutdown), does the worker drain in-flight rows to terminal or abort? → A: Abort. The worker signals `_stop` immediately and exits at the next loop check; any row whose `delivery_attempt_started_at` was already committed but whose terminal stamp was not is resolved on the next daemon boot via FR-040 recovery. No drain mode.
+- Q: How should the worker behave on a SQLite `BEGIN IMMEDIATE` lock conflict during a state transition (or during the pre-paste re-check)? → A: Bounded retry with exponential backoff — 3 attempts at 10 ms / 50 ms / 250 ms. If still locked after the third attempt, transition the row to `failed` with the new closed-set `failure_reason=sqlite_lock_conflict`. The same retry path applies uniformly to every in-transition SQLite operation including the pre-paste re-check.
+- Q: How should `QueueAuditWriter.append` handle a non-`OSError` exception from `events.writer.append_event` (e.g., a JSON-serialization bug)? → A: Catch `Exception` (not only `OSError`); buffer the record in the same in-memory deque used for `OSError` and set `degraded_queue_audit_persistence` with the exception type captured for forensics. The SQLite INSERT has already succeeded by this point, and the JSONL write is best-effort — a writer bug MUST NOT roll back a durable state transition.
+- Q: Must operator-action endpoints (`queue.approve` / `delay` / `cancel`) verify that the caller's pane resolves to an active registered agent before recording `operator_action_by`? → A: Yes. At the dispatch boundary, if `caller_pane is not None`, resolve it through the FEAT-006 registry and require `active=true`. If the caller's pane resolves to an inactive or deregistered agent, exit non-zero with new closed-set `operator_pane_inactive`. Host-origin callers (no pane) continue to write the `host-operator` sentinel as before.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -116,9 +134,9 @@ with the matching closed-set CLI error code.
    `block_reason=target_role_not_permitted` and the CLI exits non-zero with
    the same error code.
 4. **Given** a `master` sender, **When** `--target` references an
-   `agent_id` that is not present in the FEAT-006 agent registry, **Then**
+   `agent_id` or label that is not present in the FEAT-006 agent registry, **Then**
    no queue row is created, the CLI exits non-zero with error code
-   `target_not_found`, and no audit row is appended.
+   `agent_not_found`, and no audit row is appended.
 5. **Given** a `master` sender, **When** the target agent is registered but
    marked `active=false` (pane gone, container stopped, agent deregistered),
    **Then** the row is `blocked` with `block_reason=target_not_active`, no
@@ -458,12 +476,13 @@ paste is issued.
   `agenttower status`. The `--target` argument (in both
   `send-input` and the queue filter forms) MUST accept either an
   `agent_id` or a `label`: if the supplied value matches the
-  `agent_id` shape (UUIDv4 textual form), it MUST be resolved as
+  `agent_id` shape (`agt_<12-hex-lowercase>` per FEAT-006), it MUST be resolved as
   `agent_id` against the registry; otherwise it MUST be resolved
   as `label`. Multiple active label matches MUST exit non-zero
   with closed-set `target_label_ambiguous` and no queue row is
   created. No match in either form MUST exit non-zero with
-  `target_not_found`. Queue surfaces (listings and `--json`) MUST
+  `agent_not_found` (reusing FEAT-008's closed-set code; see
+  FR-049). Queue surfaces (listings and `--json`) MUST
   show both `agent_id` and `label` for the resolved target so
   scripts and operators can disambiguate after the fact.
 - **FR-007**: System MUST also accept `--message-file <path>` as a
@@ -561,17 +580,29 @@ paste is issued.
 - **FR-018**: System MUST emit `failure_reason` values only from this
   closed set: `attempt_interrupted`, `tmux_paste_failed`,
   `docker_exec_failed`, `tmux_send_keys_failed`,
-  `pane_disappeared_mid_attempt`.
+  `pane_disappeared_mid_attempt`, `sqlite_lock_conflict`.
 - **FR-019**: System MUST set `state=queued` at row creation only
-  when all of the following are true at enqueue time: routing is
-  enabled, sender has a permitted role and is currently active,
-  target is a registered active agent with a permitted role, target's
-  container is active, target's pane is resolvable in current
-  FEAT-004 discovery.
+  when ALL of the following are true at enqueue time, evaluated in
+  this order:
+  1. Routing is enabled.
+  2. Sender has a permitted role (`master`) AND is currently active.
+  3. Target exists in the registry AND is `active=true`.
+  4. Target role is `slave` or `swarm`.
+  5. Target's container is in the daemon's active container set.
+  6. Target's pane is resolvable in current FEAT-004 discovery.
 - **FR-020**: System MUST set `state=blocked` at row creation
-  whenever any condition in FR-019 fails. The first failing condition,
-  evaluated in the order listed in FR-019, determines the
-  `block_reason`.
+  whenever any condition in FR-019 fails. The first failing
+  condition, evaluated in the order listed in FR-019, determines
+  the `block_reason`:
+  - step 1 fails → `kill_switch_off`
+  - step 2 fails → `sender_role_not_permitted`
+  - step 3 fails → `target_not_active`
+  - step 4 fails → `target_role_not_permitted`
+  - step 5 fails → `target_container_inactive`
+  - step 6 fails → `target_pane_missing`
+  When step 3 fails because the target is not registered at all
+  (i.e., `agent_not_found`), no queue row is created and the CLI
+  surfaces `agent_not_found` at submit time per FR-049.
 
 #### Permission rules
 
@@ -721,26 +752,32 @@ paste is issued.
 
 #### Audit / JSONL
 
-- **FR-046**: System MUST append one JSONL audit entry per state
-  transition to the existing FEAT-008 `events.jsonl` stream
-  (shared with classifier events; not a dedicated queue file).
-  Each entry MUST use an `event_type` drawn from the
-  `queue_message_*` namespace: `queue_message_enqueued`,
-  `queue_message_delivered`, `queue_message_blocked`,
-  `queue_message_failed`, `queue_message_canceled`,
-  `queue_message_approved`, `queue_message_delayed`. The entry
-  MUST include `message_id`, `from_state`, `to_state`, `reason`
-  (the `block_reason` or `failure_reason` when relevant), the
-  operator identity (when the transition was operator-driven),
-  and the transition timestamp. For host-originated operator
-  actions (host-side `queue approve`/`delay`/`cancel` and
-  `routing enable`/`disable`), the operator identity MUST be the
-  fixed reserved sentinel string `host-operator`; the FEAT-006
-  agent registry MUST refuse registration of an agent with this
-  literal id so the sentinel cannot collide with a real agent.
-  `agenttower events` MUST surface both classifier events and
-  `queue_message_*` transition events in one interleaved
-  chronological view.
+- **FR-046**: System MUST append one audit entry per state
+  transition to BOTH the existing FEAT-008 `events.jsonl` stream
+  AND the FEAT-008 SQLite `events` table (dual-write). The
+  `event_type` MUST be drawn from this closed set:
+  `queue_message_enqueued`, `queue_message_delivered`,
+  `queue_message_blocked`, `queue_message_failed`,
+  `queue_message_canceled`, `queue_message_approved`,
+  `queue_message_delayed`, `routing_toggled`. For
+  `queue_message_*` events the entry MUST include `message_id`,
+  `from_state`, `to_state`, `reason` (the `block_reason` or
+  `failure_reason` when relevant), the operator identity (when
+  the transition was operator-driven), and the transition
+  timestamp. For `routing_toggled` events `message_id`,
+  `from_state`, and `to_state` are NOT applicable; the entry MUST
+  instead include `previous_value` and `current_value` (each one
+  of `enabled`/`disabled`), the operator identity, and the
+  transition timestamp, per `contracts/queue-audit-schema.md`
+  "Routing toggle audit entry". For host-originated operator actions (host-side
+  `queue approve`/`delay`/`cancel` and `routing enable`/`disable`),
+  the operator identity MUST be the fixed reserved sentinel
+  string `host-operator`; the FEAT-006 agent registry MUST refuse
+  registration of an agent with this literal id so the sentinel
+  cannot collide with a real agent. `agenttower events` MUST
+  surface both classifier events and FEAT-009 transition events
+  in one interleaved chronological view by reading the SQLite
+  `events` table; no FEAT-008 reader redesign is required.
 - **FR-047**: System MUST include a redacted `excerpt` (≤ 240
   characters, derived from the body via the FEAT-007 redaction
   utility) in every audit entry that records a state transition
@@ -765,7 +802,12 @@ paste is issued.
   most 240 characters; (4) append the ellipsis character `…`
   (U+2026) if and only if step (3) actually discarded characters.
   The excerpt MUST therefore be single-line in both human-readable
-  and `--json` output.
+  and `--json` output. If step (1) raises any exception, the
+  pipeline MUST substitute the fixed literal placeholder
+  `"[excerpt unavailable: redactor failed]"` and skip steps (2)–
+  (4); the row's state transition proceeds with this placeholder,
+  and a daemon-side warning is logged. The raw body MUST NEVER
+  appear in the excerpt as a fallback.
 - **FR-048**: System MUST treat audit-append failures the same way
   FEAT-008 treats JSONL durability failures, reusing the same
   FEAT-008 stream/writer path: buffer in memory, retry on the next
@@ -779,14 +821,16 @@ paste is issued.
   contractual. The full set (one error code per row, listed without
   state-machine duplication) is:
   `sender_role_not_permitted`, `target_role_not_permitted`,
-  `target_not_active`, `target_not_found`, `target_pane_missing`,
-  `target_label_ambiguous`, `sender_not_in_pane`,
+  `target_not_active`, `agent_not_found`, `message_id_not_found`,
+  `target_pane_missing`, `target_label_ambiguous`,
+  `sender_not_in_pane`,
   `target_container_inactive`, `kill_switch_off`, `routing_disabled`,
   `body_empty`, `body_invalid_encoding`, `body_invalid_chars`,
   `body_too_large`, `delivery_wait_timeout`,
   `delivery_in_progress`, `approval_not_applicable`,
   `delay_not_applicable`, `terminal_state_cannot_change`,
-  `routing_toggle_host_only`, `daemon_shutting_down`,
+  `routing_toggle_host_only`, `since_invalid_format`,
+  `operator_pane_inactive`, `daemon_shutting_down`,
   `daemon_unavailable`.
 - **FR-050**: System MUST exit non-zero with a stable exit-code
   mapping for each closed-set error code. The exact integer
@@ -843,7 +887,7 @@ paste is issued.
 - **SC-002**: 100% of attempted sends from senders whose role is not
   `master`, OR to targets whose role is not `slave` or `swarm`, OR
   to inactive / non-existent targets, MUST be recorded as either
-  refused at submit (`target_not_found`) or blocked with the
+  refused at submit (`agent_not_found`) or blocked with the
   matching closed-set reason; 0% reach `delivered`.
 - **SC-003**: A payload containing every shell metacharacter from
   the set `'` `"` `` ` `` `$` `(` `)` `;` `|` `&` `<` `>` `\` `\n`
@@ -930,6 +974,39 @@ paste is issued.
   that require a different submit pattern (the Codex/Claude
   driver note in `.codex/speckit-claude-driver.json` is captured
   as future work, not MVP scope) are out of scope for FEAT-009.
+- **Per-attempt delivery timeout**: Each individual tmux invocation
+  (`load-buffer` / `paste-buffer` / `send-keys` / `delete-buffer`)
+  MUST complete within a configurable per-attempt timeout, default
+  5 s (`delivery_attempt_timeout_seconds` in the `[routing]`
+  section of `config.toml`). A timeout transitions the row to
+  `failed` with the matching closed-set `failure_reason`
+  (`tmux_paste_failed`, `tmux_send_keys_failed`, or
+  `docker_exec_failed`). The per-attempt timeout MUST be strictly
+  less than `send_input_default_wait_seconds` (default 10 s) so
+  the CLI's wait window can observe a failed delivery within its
+  own budget. Operators raising either value MUST preserve this
+  invariant.
+- **Graceful shutdown is abort, not drain**: On `SIGTERM` (or any
+  daemon shutdown signal), the delivery worker MUST signal `_stop`
+  and exit at the next loop check. The worker MUST NOT attempt to
+  drain an in-flight row to terminal before exiting. Any row whose
+  `delivery_attempt_started_at` was committed but whose terminal
+  stamp was not is resolved on the next daemon boot by the FR-040
+  recovery pass (transitioning to `failed` with
+  `failure_reason=attempt_interrupted`). This keeps the worker
+  loop a single mode (no separate "drain" state) and re-uses the
+  existing FR-040 contract.
+- **SQLite lock-conflict retry policy**: Every in-transition SQLite
+  operation (state transitions, pre-paste re-check reads, audit
+  writes) MUST tolerate transient `BEGIN IMMEDIATE` lock conflicts
+  with a bounded exponential backoff: 3 attempts at 10 ms / 50 ms
+  / 250 ms (total ≤ 310 ms, well inside the SC-001 budget). If
+  the third attempt still fails, the worker MUST transition the
+  row to `failed` with `failure_reason=sqlite_lock_conflict`. The
+  policy is uniform across every retryable SQLite operation in
+  the delivery hot path. Lock conflicts during the FR-040
+  recovery pass (which runs once at boot) propagate as fatal —
+  the daemon refuses to serve.
 - **Routing flag scope**: One global boolean per daemon instance.
   Per-target, per-role, or per-sender kill switches are out of
   scope; that finer-grained control belongs in FEAT-010 or later.

@@ -73,7 +73,7 @@ MESSAGE_ID                            STATE      SENDER          TARGET         
 Inspect the audit history:
 
 ```bash
-$ agenttower events --target agt_bbbbbb222222 --type queue_message_delivered --since 2026-05-11
+$ agenttower events --target agt_bbbbbb222222 --type queue_message_delivered --since 2026-05-11T00:00:00Z
 { "schema_version": 1, "event_type": "queue_message_delivered", "message_id": "12345678-...", "from_state": "queued", "to_state": "delivered", ... }
 ```
 
@@ -92,7 +92,7 @@ $ echo $?
 
 ```bash
 $ agenttower send-input --target ghost --message "hello"
-send-input failed: target_not_found — no agent with id or label 'ghost' is registered
+send-input failed: agent_not_found — no agent with id or label 'ghost' is registered
 $ echo $?
 5
 ```
@@ -113,7 +113,7 @@ In all three cases, `agenttower queue --state blocked` shows the
 row (when one was created) with the corresponding `block_reason`,
 and `agenttower events` shows the `queue_message_blocked` audit
 row. In the unknown-target case (2b), no row is created at all
-(FR-049 invariant on `target_not_found`).
+(FR-049 invariant on `agent_not_found`).
 
 ## 3. US3 — Operator inspects and overrides the queue
 
@@ -185,7 +185,7 @@ $ echo $?
 2
 
 # Operator can still inspect / cancel
-$ agenttower queue --state blocked --since 2026-05-11
+$ agenttower queue --state blocked --since 2026-05-11T00:00:00Z
 ...one row, state=blocked, block_reason=kill_switch_off
 
 # Routing toggle from a bench container is refused
@@ -202,7 +202,7 @@ $ agenttower routing enable
 routing enabled (was disabled)
 
 # Existing kill_switch_off rows stay blocked until explicitly approved
-$ agenttower queue --state blocked --since 2026-05-11   # still shows the row
+$ agenttower queue --state blocked --since 2026-05-11T00:00:00Z   # still shows the row
 $ agenttower queue approve <message_id>                  # operator unblocks
 ```
 
@@ -254,7 +254,7 @@ $ agenttower queue --state failed --target worker-1
 MESSAGE_ID  STATE   SENDER          TARGET             ENQUEUED  LAST_UPDATED  EXCERPT
 56789012-.. failed  queen(agt_aaaa) worker-1(agt_bbbb) ...       ...           interrupted
 
-$ agenttower queue --target worker-1 --since 2026-05-11 --json | jq '.[] | select(.message_id == "56789012-...") | .failure_reason'
+$ agenttower queue --target worker-1 --since 2026-05-11T00:00:00Z --json | jq '.[] | select(.message_id == "56789012-...") | .failure_reason'
 "attempt_interrupted"
 ```
 
