@@ -72,6 +72,35 @@ EVENTS_SESSION_EXPIRED: Final[str] = "events_session_expired"
 EVENTS_INVALID_CURSOR: Final[str] = "events_invalid_cursor"
 EVENTS_FILTER_INVALID: Final[str] = "events_filter_invalid"
 
+# FEAT-009 additions (specs/009-safe-prompt-queue/data-model.md §8).
+# AGENT_NOT_FOUND continues to be reused (declared above) for the
+# `--target` lookup miss case (Clarifications session 2 Q5). The new
+# constants below are FEAT-009-specific.
+APPROVAL_NOT_APPLICABLE: Final[str] = "approval_not_applicable"
+BODY_EMPTY: Final[str] = "body_empty"
+BODY_INVALID_CHARS: Final[str] = "body_invalid_chars"
+BODY_INVALID_ENCODING: Final[str] = "body_invalid_encoding"
+BODY_TOO_LARGE: Final[str] = "body_too_large"
+DAEMON_SHUTTING_DOWN: Final[str] = "daemon_shutting_down"
+DAEMON_UNAVAILABLE: Final[str] = "daemon_unavailable"
+DELAY_NOT_APPLICABLE: Final[str] = "delay_not_applicable"
+DELIVERY_IN_PROGRESS: Final[str] = "delivery_in_progress"
+DELIVERY_WAIT_TIMEOUT: Final[str] = "delivery_wait_timeout"
+KILL_SWITCH_OFF: Final[str] = "kill_switch_off"
+MESSAGE_ID_NOT_FOUND: Final[str] = "message_id_not_found"
+OPERATOR_PANE_INACTIVE: Final[str] = "operator_pane_inactive"
+ROUTING_DISABLED: Final[str] = "routing_disabled"
+ROUTING_TOGGLE_HOST_ONLY: Final[str] = "routing_toggle_host_only"
+SENDER_NOT_IN_PANE: Final[str] = "sender_not_in_pane"
+SENDER_ROLE_NOT_PERMITTED: Final[str] = "sender_role_not_permitted"
+SINCE_INVALID_FORMAT: Final[str] = "since_invalid_format"
+TARGET_CONTAINER_INACTIVE: Final[str] = "target_container_inactive"
+TARGET_LABEL_AMBIGUOUS: Final[str] = "target_label_ambiguous"
+TARGET_NOT_ACTIVE: Final[str] = "target_not_active"
+TARGET_PANE_MISSING: Final[str] = "target_pane_missing"
+TARGET_ROLE_NOT_PERMITTED: Final[str] = "target_role_not_permitted"
+TERMINAL_STATE_CANNOT_CHANGE: Final[str] = "terminal_state_cannot_change"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
     {
         BAD_JSON,
@@ -124,6 +153,31 @@ CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
         EVENTS_SESSION_EXPIRED,
         EVENTS_INVALID_CURSOR,
         EVENTS_FILTER_INVALID,
+        # FEAT-009 (data-model.md §8) — agent_not_found reused above.
+        APPROVAL_NOT_APPLICABLE,
+        BODY_EMPTY,
+        BODY_INVALID_CHARS,
+        BODY_INVALID_ENCODING,
+        BODY_TOO_LARGE,
+        DAEMON_SHUTTING_DOWN,
+        DAEMON_UNAVAILABLE,
+        DELAY_NOT_APPLICABLE,
+        DELIVERY_IN_PROGRESS,
+        DELIVERY_WAIT_TIMEOUT,
+        KILL_SWITCH_OFF,
+        MESSAGE_ID_NOT_FOUND,
+        OPERATOR_PANE_INACTIVE,
+        ROUTING_DISABLED,
+        ROUTING_TOGGLE_HOST_ONLY,
+        SENDER_NOT_IN_PANE,
+        SENDER_ROLE_NOT_PERMITTED,
+        SINCE_INVALID_FORMAT,
+        TARGET_CONTAINER_INACTIVE,
+        TARGET_LABEL_AMBIGUOUS,
+        TARGET_NOT_ACTIVE,
+        TARGET_PANE_MISSING,
+        TARGET_ROLE_NOT_PERMITTED,
+        TERMINAL_STATE_CANNOT_CHANGE,
     }
 )
 
