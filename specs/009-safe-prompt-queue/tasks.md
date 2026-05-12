@@ -95,15 +95,15 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### tmux adapter extension
 
-- [ ] T036 Extend `src/agenttower/tmux/adapter.py` `TmuxAdapter` Protocol with four new methods — `load_buffer(container_id, bench_user, socket_path, buffer_name, body: bytes) -> None`, `paste_buffer(container_id, bench_user, socket_path, pane_id, buffer_name) -> None`, `send_keys(container_id, bench_user, socket_path, pane_id, key: str) -> None`, `delete_buffer(container_id, bench_user, socket_path, buffer_name) -> None`. Add `TmuxError.failure_reason` field for FR-018 mapping.
-- [ ] T037 Implement the four methods in `src/agenttower/tmux/subprocess_adapter.py` using `subprocess.run(args=[...], input=body if body else None, check=False, timeout=delivery_attempt_timeout_seconds)`. NO `shell=True`. Map non-zero return / `TimeoutExpired` / `FileNotFoundError` to `TmuxError` with the appropriate `failure_reason` from FR-018.
-- [ ] T038 Extend `src/agenttower/tmux/fakes.py` `FakeTmuxAdapter` to record every `load_buffer` / `paste_buffer` / `send_keys` / `delete_buffer` call (with full arg tuples including `body` bytes) and support per-call programmed failures returning `TmuxError`.
-- [ ] T039 [P] Write `tests/unit/test_tmux_adapter_load_buffer.py` covering: argv-only invocation; body passed via stdin; non-zero return → `TmuxError(failure_reason='tmux_paste_failed')`; `TimeoutExpired` → `TmuxError(failure_reason='tmux_paste_failed')`; `FileNotFoundError` (docker missing) → `TmuxError(failure_reason='docker_exec_failed')`.
-- [ ] T040 [P] Write `tests/unit/test_tmux_adapter_paste_buffer.py`, `tests/unit/test_tmux_adapter_send_keys.py`, `tests/unit/test_tmux_adapter_delete_buffer.py` each covering argv-only invocation and the corresponding `failure_reason` mapping per FR-018.
+- [X] T036 Extend `src/agenttower/tmux/adapter.py` `TmuxAdapter` Protocol with four new methods — `load_buffer(container_id, bench_user, socket_path, buffer_name, body: bytes) -> None`, `paste_buffer(container_id, bench_user, socket_path, pane_id, buffer_name) -> None`, `send_keys(container_id, bench_user, socket_path, pane_id, key: str) -> None`, `delete_buffer(container_id, bench_user, socket_path, buffer_name) -> None`. Add `TmuxError.failure_reason` field for FR-018 mapping.
+- [X] T037 Implement the four methods in `src/agenttower/tmux/subprocess_adapter.py` using `subprocess.run(args=[...], input=body if body else None, check=False, timeout=delivery_attempt_timeout_seconds)`. NO `shell=True`. Map non-zero return / `TimeoutExpired` / `FileNotFoundError` to `TmuxError` with the appropriate `failure_reason` from FR-018.
+- [X] T038 Extend `src/agenttower/tmux/fakes.py` `FakeTmuxAdapter` to record every `load_buffer` / `paste_buffer` / `send_keys` / `delete_buffer` call (with full arg tuples including `body` bytes) and support per-call programmed failures returning `TmuxError`.
+- [X] T039 [P] Write `tests/unit/test_tmux_adapter_load_buffer.py` covering: argv-only invocation; body passed via stdin; non-zero return → `TmuxError(failure_reason='tmux_paste_failed')`; `TimeoutExpired` → `TmuxError(failure_reason='tmux_paste_failed')`; `FileNotFoundError` (docker missing) → `TmuxError(failure_reason='docker_exec_failed')`.
+- [X] T040 [P] Write `tests/unit/test_tmux_adapter_paste_buffer.py`, `tests/unit/test_tmux_adapter_send_keys.py`, `tests/unit/test_tmux_adapter_delete_buffer.py` each covering argv-only invocation and the corresponding `failure_reason` mapping per FR-018.
 
 ### Shell-injection AST gate
 
-- [ ] T041 [P] Write `tests/unit/test_no_shell_string_interpolation.py` per Research §R-007: parse `src/agenttower/tmux/subprocess_adapter.py` with `ast`; assert no `subprocess.*` call has `shell=True`, no `os.system` / `os.popen`, every `subprocess.run` `args` positional is an `ast.List` of `ast.Constant` / `ast.Name`, and `body` appears only as the value of an `input=` keyword.
+- [X] T041 [P] Write `tests/unit/test_no_shell_string_interpolation.py` per Research §R-007: parse `src/agenttower/tmux/subprocess_adapter.py` with `ast`; assert no `subprocess.*` call has `shell=True`, no `os.system` / `os.popen`, every `subprocess.run` `args` positional is an `ast.List` of `ast.Constant` / `ast.Name`, and `body` appears only as the value of an `input=` keyword.
 
 ### Delivery worker
 
