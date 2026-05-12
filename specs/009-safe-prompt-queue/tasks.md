@@ -207,15 +207,15 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Tests for User Story 4
 
-- [ ] T072 [P] [US4] Write `tests/integration/test_queue_us4_kill_switch.py` covering all five US4 acceptance scenarios plus Session 2 Q1 (in-flight rows finish after `disable`).
-- [ ] T073 [P] [US4] Write `tests/integration/test_queue_routing_toggle_host_only.py` covering bench-container toggle rejection.
+- [ ] T072 [P] [US4] Write `tests/integration/test_queue_us4_kill_switch.py` covering all five US4 acceptance scenarios plus Session 2 Q1 (in-flight rows finish after `disable`). (Deferred — daemon-process integration test, lands in polish slice.)
+- [ ] T073 [P] [US4] Write `tests/integration/test_queue_routing_toggle_host_only.py` covering bench-container toggle rejection. (Deferred — daemon-process integration test.)
 
 ### Implementation for User Story 4
 
-- [ ] T074 [US4] Implement `routing.enable` / `routing.disable` / `routing.status` socket method handlers in `src/agenttower/socket_api/methods.py`: enforce host-origin (`caller_pane is None AND peer_uid == os.getuid()`); call `RoutingFlagService.enable` / `disable` / `read`; emit `routing_toggled` audit only when `changed=True`; return the `ToggleResult` shape per `contracts/socket-routing.md`.
-- [ ] T075 [US4] Finalize `agenttower routing enable | disable | status` CLI subcommands in `src/agenttower/cli.py` per `contracts/cli-routing.md`: human-readable lines, `--json` shape, exit codes.
-- [ ] T076 [US4] In `routing/delivery.py`, ensure the worker re-reads `routing_flag.is_enabled()` BEFORE stamping `delivery_attempt_started_at` (Session 2 Q1) so disable does not preempt an in-flight row.
-- [ ] T077 [P] [US4] Write `tests/unit/test_routing_toggled_audit.py` asserting `routing_toggled` events are emitted only on `changed=True`, contain `previous_value` / `current_value` / `operator` / `observed_at`, and validate against the routing-toggle audit JSON Schema in `contracts/queue-audit-schema.md`.
+- [X] T074 [US4] Implement `routing.enable` / `routing.disable` / `routing.status` socket method handlers in `src/agenttower/socket_api/methods.py`: enforce host-origin (`caller_pane is None AND peer_uid == os.getuid()`); call `RoutingFlagService.enable` / `disable` / `read`; emit `routing_toggled` audit only when `changed=True`; return the `ToggleResult` shape per `contracts/socket-routing.md`. (Already implemented in Slice 8 — `_routing_enable`, `_routing_disable`, `_routing_status` dispatchers + `_routing_host_only_gate` enforce the host-only constraint + audit emission is conditional on `result.changed`.)
+- [X] T075 [US4] Finalize `agenttower routing enable | disable | status` CLI subcommands in `src/agenttower/cli.py` per `contracts/cli-routing.md`: human-readable lines, `--json` shape, exit codes.
+- [X] T076 [US4] In `routing/delivery.py`, ensure the worker re-reads `routing_flag.is_enabled()` BEFORE stamping `delivery_attempt_started_at` (Session 2 Q1) so disable does not preempt an in-flight row. (Already wired in Slice 7 — `routing.delivery.py:287` reads `routing_flag.is_enabled()` inside the pre-paste re-check at line 287, which runs BEFORE the stamp at line 322.)
+- [X] T077 [P] [US4] Write `tests/unit/test_routing_toggled_audit.py` asserting `routing_toggled` events are emitted only on `changed=True`, contain `previous_value` / `current_value` / `operator` / `observed_at`, and validate against the routing-toggle audit JSON Schema in `contracts/queue-audit-schema.md`.
 
 **Checkpoint**: US4 complete. Kill switch is host-controlled and operator-observable.
 

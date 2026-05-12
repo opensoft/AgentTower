@@ -1044,6 +1044,32 @@ def _build_parser() -> argparse.ArgumentParser:
         op.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
         op.set_defaults(_handler=_queue_operator_command_factory(op_name))
 
+    # FEAT-009 — routing subparser (T075 / contracts/cli-routing.md).
+    routing_cmd = subparsers.add_parser(
+        "routing",
+        help="control or inspect the global routing kill switch (FEAT-009)",
+        description=(
+            "Subcommands: enable (host-only), disable (host-only), "
+            "status (any caller). See contracts/cli-routing.md for "
+            "the closed-set exit codes."
+        ),
+    )
+    routing_cmd.set_defaults(_handler=lambda args: _print_subusage_and_exit(routing_cmd))
+    routing_subs = routing_cmd.add_subparsers(
+        dest="routing_subcommand", metavar="subcommand",
+    )
+    for op_name in ("enable", "disable", "status"):
+        op = routing_subs.add_parser(
+            op_name,
+            help=f"routing {op_name}",
+            description=(
+                f"routing {op_name} — see contracts/cli-routing.md "
+                f"for caller-context restrictions."
+            ),
+        )
+        op.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+        op.set_defaults(_handler=_routing_command_factory(op_name))
+
     return parser
 
 
@@ -2723,6 +2749,86 @@ def _queue_operator_render(
         print(json.dumps(payload, separators=(",", ":")))
     else:
         print(f"{label}: msg={message_id} state={state}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# FEAT-009 — `agenttower routing` (T075 / contracts/cli-routing.md)
+# ---------------------------------------------------------------------------
+
+
+def _routing_command_factory(op_name: str):
+    """Build the handler for one ``routing`` subcommand."""
+    method_name = f"routing.{op_name}"
+
+    def handler(args: argparse.Namespace) -> int:
+        from .routing.errors import CLI_EXIT_CODE_MAP
+
+        json_mode = bool(args.json)
+        _, resolved = _resolve_socket_with_paths()
+        socket_path = resolved.path
+        try:
+            result = send_request(
+                socket_path, method_name, {},
+                connect_timeout=2.0, read_timeout=5.0,
+            )
+        except DaemonUnavailable:
+            print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            return CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
+        except DaemonError as exc:
+            return _routing_emit_daemon_error(op_name, exc, json_mode)
+        return _routing_render(op_name, result, json_mode=json_mode)
+
+    return handler
+
+
+def _routing_emit_daemon_error(
+    op_name: str, exc: DaemonError, json_mode: bool,
+) -> int:
+    """Render a daemon-side error for routing subcommands. ``op_name``
+    is used for the stderr label (``routing enable failed:`` /
+    ``routing disable failed:`` / ``routing status failed:``)."""
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    if json_mode:
+        print(
+            json.dumps(
+                {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+            )
+        )
+    else:
+        print(
+            f"routing {op_name} failed: {exc.code} — {exc.message}",
+            file=sys.stderr,
+        )
+    if exc.code in CLI_EXIT_CODE_MAP:
+        return CLI_EXIT_CODE_MAP[exc.code]
+    return _exit_code_for(exc.code)
+
+
+def _routing_render(
+    op_name: str, payload: dict[str, Any], *, json_mode: bool,
+) -> int:
+    """Render the successful response of one routing subcommand."""
+    if json_mode:
+        print(json.dumps(payload, separators=(",", ":")))
+        return 0
+
+    if op_name == "status":
+        value = payload.get("value") or "?"
+        ts = payload.get("last_updated_at") or "?"
+        by = payload.get("last_updated_by") or "?"
+        print(f"routing: {value} (set {ts} by {by})")
+        return 0
+
+    # enable / disable.
+    previous = payload.get("previous_value") or "?"
+    current = payload.get("current_value") or "?"
+    changed = bool(payload.get("changed", False))
+    if not changed:
+        print(f"routing already {current}")
+    else:
+        print(f"routing {current} (was {previous})")
     return 0
 
 
