@@ -992,6 +992,58 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     send_input.set_defaults(_handler=_send_input_command)
 
+    # FEAT-009 — queue subparser (T070 / contracts/cli-queue.md).
+    queue_cmd = subparsers.add_parser(
+        "queue",
+        help="inspect and operate the prompt queue (FEAT-009)",
+        description=(
+            "List or operate FEAT-009 message_queue rows. With no "
+            "subcommand, lists matching rows. Subcommands: approve, "
+            "delay, cancel."
+        ),
+    )
+    queue_cmd.add_argument(
+        "--state",
+        choices=("queued", "blocked", "delivered", "canceled", "failed"),
+        default=None,
+        help="filter to one state",
+    )
+    queue_cmd.add_argument(
+        "--target", default=None,
+        help="filter to one target agent_id or label",
+    )
+    queue_cmd.add_argument(
+        "--sender", default=None,
+        help="filter to one sender agent_id or label",
+    )
+    queue_cmd.add_argument(
+        "--since", default=None,
+        help="lower bound on enqueued_at (inclusive ISO-8601 UTC)",
+    )
+    queue_cmd.add_argument(
+        "--limit", type=int, default=100,
+        help="page size 1..1000 (default 100)",
+    )
+    queue_cmd.add_argument(
+        "--json", action="store_true", help=JSON_LINE_HELP,
+    )
+    queue_cmd.set_defaults(_handler=_queue_list_command)
+
+    queue_subs = queue_cmd.add_subparsers(dest="queue_subcommand", metavar="subcommand")
+    for op_name in ("approve", "delay", "cancel"):
+        op = queue_subs.add_parser(
+            op_name,
+            help=f"{op_name} a queued message by message_id",
+            description=(
+                f"Transition the row identified by <message-id> via the "
+                f"operator-action surface ({op_name}). See "
+                "contracts/cli-queue.md for the closed-set exit codes."
+            ),
+        )
+        op.add_argument("message_id", help="the message_id to operate on")
+        op.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
+        op.set_defaults(_handler=_queue_operator_command_factory(op_name))
+
     return parser
 
 
@@ -2491,6 +2543,187 @@ def _send_input_render(
                 file=sys.stderr,
             )
     return exit_code
+
+
+# ---------------------------------------------------------------------------
+# FEAT-009 — `agenttower queue` (T070 / contracts/cli-queue.md)
+# ---------------------------------------------------------------------------
+
+
+def _queue_resolve_caller_pane(
+    socket_path: Path, json_mode: bool,
+) -> tuple[dict[str, Any] | None, int | None]:
+    """Best-effort caller-pane resolution for operator-action subcommands.
+
+    Returns ``(caller_pane, None)`` on success (where caller_pane is
+    ``None`` for host-side callers) or ``(None, exit_code)`` on a
+    bench-container caller whose pane couldn't be resolved.
+
+    Per contracts/cli-queue.md, operator actions accept any caller —
+    host callers get the ``host-operator`` sentinel; bench callers get
+    their pane's agent_id. So a ``host_context_unsupported`` from the
+    FEAT-006 resolver is NOT a failure — it just means we're on the
+    host and the daemon should write ``host-operator``.
+    """
+    from .agents.client_resolve import resolve_pane_composite_key
+    from .agents.errors import RegistrationError
+
+    try:
+        target = resolve_pane_composite_key(
+            socket_path=socket_path,
+            env=os.environ,
+            proc_root=os.environ.get("AGENTTOWER_TEST_PROC_ROOT"),
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except RegistrationError as exc:
+        if exc.code == "host_context_unsupported":
+            return None, None  # host caller — let daemon use the sentinel
+        return None, _emit_register_error(exc, json_mode)
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return None, 2
+    except DaemonError as exc:
+        return None, _emit_daemon_error(exc, json_mode)
+
+    # Bench-container caller: look up our own agent_id via list_agents.
+    self_agent_id = _send_input_lookup_self_agent_id(
+        socket_path=socket_path, target=target, json_mode=json_mode,
+    )
+    if isinstance(self_agent_id, int):
+        return None, self_agent_id
+    return {"agent_id": self_agent_id}, None
+
+
+def _queue_list_command(args: argparse.Namespace) -> int:
+    """``agenttower queue`` (list) — list rows with filters."""
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    json_mode = bool(args.json)
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    params: dict[str, Any] = {}
+    if args.state is not None:
+        params["state"] = args.state
+    if args.target is not None:
+        params["target"] = args.target
+    if args.sender is not None:
+        params["sender"] = args.sender
+    if args.since is not None:
+        params["since"] = args.since
+    if args.limit != 100:
+        params["limit"] = args.limit
+    if args.limit < 1 or args.limit > 1000:
+        _emit_local_error(
+            "bad_request",
+            f"--limit must be in [1, 1000], got {args.limit}",
+            json_mode,
+        )
+        return 64
+
+    try:
+        result = send_request(
+            socket_path, "queue.list", params,
+            connect_timeout=2.0, read_timeout=10.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
+    except DaemonError as exc:
+        return _send_input_emit_daemon_error(exc, json_mode)
+
+    rows = result.get("rows", []) or []
+    if json_mode:
+        print(json.dumps(rows, separators=(",", ":")))
+        return 0
+
+    if not rows:
+        print("(no rows match)")
+        return 0
+    # Human-readable column layout.
+    header = (
+        f"{'MESSAGE_ID':<36}  {'STATE':<9}  {'SENDER':<22}  "
+        f"{'TARGET':<22}  {'ENQUEUED':<24}  {'LAST_UPDATED':<24}  EXCERPT"
+    )
+    print(header)
+    for row in rows:
+        sender = row.get("sender") or {}
+        target = row.get("target") or {}
+        sender_str = _queue_label_and_prefix(sender)
+        target_str = _queue_label_and_prefix(target)
+        raw_excerpt = (row.get("excerpt") or "").splitlines()[0] if row.get("excerpt") else ""
+        excerpt = _sanitize_for_terminal(raw_excerpt)
+        print(
+            f"{row.get('message_id', ''):<36}  "
+            f"{row.get('state', ''):<9}  "
+            f"{sender_str:<22}  "
+            f"{target_str:<22}  "
+            f"{row.get('enqueued_at', ''):<24}  "
+            f"{row.get('last_updated_at', ''):<24}  "
+            f"{excerpt}"
+        )
+    return 0
+
+
+def _queue_label_and_prefix(identity: dict[str, Any]) -> str:
+    """Render a sender/target identity as ``label(agt_<8 hex>)`` or fall
+    back to the bare agent_id when no label is set."""
+    label = identity.get("label") or ""
+    agent_id = identity.get("agent_id") or ""
+    if label and agent_id:
+        prefix = agent_id[:8] if agent_id.startswith("agt_") else agent_id[:8]
+        return f"{label}({prefix})"
+    return agent_id
+
+
+def _queue_operator_command_factory(op_name: str):
+    """Build the handler for ``queue approve/delay/cancel`` subcommands."""
+    method_name = f"queue.{op_name}"
+
+    def handler(args: argparse.Namespace) -> int:
+        from .routing.errors import CLI_EXIT_CODE_MAP
+
+        json_mode = bool(args.json)
+        _, resolved = _resolve_socket_with_paths()
+        socket_path = resolved.path
+        caller_pane, err = _queue_resolve_caller_pane(socket_path, json_mode)
+        if err is not None:
+            return err
+        params: dict[str, Any] = {"message_id": args.message_id}
+        if caller_pane is not None:
+            params["caller_pane"] = caller_pane
+        try:
+            row = send_request(
+                socket_path, method_name, params,
+                connect_timeout=2.0, read_timeout=10.0,
+            )
+        except DaemonUnavailable:
+            print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            return CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
+        except DaemonError as exc:
+            return _send_input_emit_daemon_error(exc, json_mode)
+        return _queue_operator_render(op_name, row, json_mode=json_mode)
+
+    return handler
+
+
+def _queue_operator_render(
+    op_name: str, row: dict[str, Any], *, json_mode: bool,
+) -> int:
+    """Render the response of an operator action."""
+    state = row.get("state") or ""
+    message_id = row.get("message_id") or "?"
+    label = "approved" if op_name == "approve" else (
+        "delayed" if op_name == "delay" else "canceled"
+    )
+    if json_mode:
+        # Strip the dispatcher's internal waited_to_terminal flag if any.
+        payload = {k: v for k, v in row.items() if k != "waited_to_terminal"}
+        print(json.dumps(payload, separators=(",", ":")))
+    else:
+        print(f"{label}: msg={message_id} state={state}")
+    return 0
 
 
 if __name__ == "__main__":
