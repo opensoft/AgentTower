@@ -184,28 +184,46 @@ def test_migration_v6_event_id_autoincrement(tmp_path: Path) -> None:
     assert all(b > a for a, b in zip(rows, rows[1:]))
 
 
-def test_apply_pending_migrations_v5_to_v6(tmp_path: Path) -> None:
-    """Full ``_apply_pending_migrations`` happy-path from v5 to current."""
+def test_apply_pending_migrations_v5_to_current(tmp_path: Path) -> None:
+    """Full ``_apply_pending_migrations`` happy-path from v5 to current.
+
+    Note: head-of-tree advanced from v6 (FEAT-008) to v7 (FEAT-009); the
+    test still verifies that v5 → current applies the FEAT-008 events
+    table along the way.
+    """
     conn, _ = _open_v5_only(tmp_path)
     target = schema._apply_pending_migrations(conn, current=5)
-    assert target == schema.CURRENT_SCHEMA_VERSION == 6
+    assert target == schema.CURRENT_SCHEMA_VERSION
     assert "events" in _table_names(conn)
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 6
+    assert version == schema.CURRENT_SCHEMA_VERSION
 
 
-def test_apply_pending_migrations_v6_already_current_is_noop(
+def test_apply_pending_migrations_at_current_is_noop(
     tmp_path: Path,
 ) -> None:
+    """Re-opening a DB whose schema_version already equals CURRENT_SCHEMA_VERSION
+    must be a no-op for ``_apply_pending_migrations``.
+
+    Renamed from ``test_apply_pending_migrations_v6_already_current_is_noop``
+    after FEAT-009 advanced head-of-tree from 6 to 7.
+    """
     conn, _ = _open_v5_only(tmp_path)
-    schema._apply_migration_v6(conn)
-    conn.execute("UPDATE schema_version SET version = 6")
+    # Apply every migration so the DB is at current head-of-tree.
+    for v in range(6, schema.CURRENT_SCHEMA_VERSION + 1):
+        schema._MIGRATIONS[v](conn)
+    conn.execute(
+        "UPDATE schema_version SET version = ?",
+        (schema.CURRENT_SCHEMA_VERSION,),
+    )
     conn.commit()
 
     before_indexes = _index_names(conn)
-    target = schema._apply_pending_migrations(conn, current=6)
+    target = schema._apply_pending_migrations(
+        conn, current=schema.CURRENT_SCHEMA_VERSION
+    )
     after_indexes = _index_names(conn)
-    assert target == 6
+    assert target == schema.CURRENT_SCHEMA_VERSION
     assert before_indexes == after_indexes
 
 
