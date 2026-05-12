@@ -142,15 +142,15 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Tests for User Story 1
 
-- [ ] T055 [P] [US1] Write `tests/integration/test_queue_us1_master_to_slave.py` covering all five US1 acceptance scenarios from spec.md: (1) end-to-end `agenttower send-input` reaches `delivered`; (2) `--json` returns the FR-011 shape; (3) `queue` listing includes the row; (4) JSONL audit contains both `queue_message_enqueued` and `queue_message_delivered` rows referencing the same `message_id`; (5) `master → swarm` permission allowed.
+- [ ] T055 [P] [US1] Write `tests/integration/test_queue_us1_master_to_slave.py` covering all five US1 acceptance scenarios from spec.md: (1) end-to-end `agenttower send-input` reaches `delivered`; (2) `--json` returns the FR-011 shape; (3) `queue` listing includes the row; (4) JSONL audit contains both `queue_message_enqueued` and `queue_message_delivered` rows referencing the same `message_id`; (5) `master → swarm` permission allowed. (Deferred — depends on T048 daemon-process bootstrapping. Lands together with the daemon boot wiring in a polish slice.)
 
 ### Implementation for User Story 1
 
-- [ ] T056 [US1] Wire `queue.send_input` end-to-end through `QueueService.send_input` in `src/agenttower/routing/service.py`: enqueue path (envelope render → permission gate → DAO insert → audit `queue_message_enqueued`) and the wait-for-terminal path using a `Condition` keyed by `message_id` (with timeout). Plumb the row's identity through to the response per `contracts/queue-row-schema.md`.
-- [ ] T057 [US1] Emit `queue_message_delivered` audit via `QueueAuditWriter` in `routing/delivery.py` immediately AFTER the SQLite `delivered` commit (FR-046).
-- [ ] T058 [US1] Finalize `agenttower send-input` CLI handler in `src/agenttower/cli.py` to base64-encode the body for transport (per `contracts/socket-queue.md`), call `queue.send_input`, and render either the human one-line confirmation or the `--json` row, mapping every closed-set string code to the integer exit code via `CLI_EXIT_CODE_MAP`.
-- [ ] T059 [P] [US1] Write `tests/unit/test_send_input_cli_json.py` validating that the `--json` stdout is exactly one line, parses with `json.loads`, and matches `contracts/queue-row-schema.md` via `jsonschema` (validate against the schema fixture).
-- [ ] T060 [P] [US1] Write `tests/unit/test_send_input_cli_human.py` validating the human-readable stdout shape for `delivered`, `blocked`, `failed`, `delivery_wait_timeout` outcomes.
+- [X] T056 [US1] Wire `queue.send_input` end-to-end through `QueueService.send_input` in `src/agenttower/routing/service.py`: enqueue path (envelope render → permission gate → DAO insert → audit `queue_message_enqueued`) and the wait-for-terminal path using a `Condition` keyed by `message_id` (with timeout). Plumb the row's identity through to the response per `contracts/queue-row-schema.md`. (Already implemented in Slice 5 via `routing/service.py::QueueService.send_input`; the dispatcher's `_queue_row_to_payload` now includes `envelope_size_bytes` + `envelope_body_sha256` + `excerpt` per the schema.)
+- [X] T057 [US1] Emit `queue_message_delivered` audit via `QueueAuditWriter` in `routing/delivery.py` immediately AFTER the SQLite `delivered` commit (FR-046). (Already wired in Slice 7 at `delivery.py:405` — `append_queue_transition(to_state="delivered", ...)` fires immediately after `transition_queued_to_delivered` commits.)
+- [X] T058 [US1] Finalize `agenttower send-input` CLI handler in `src/agenttower/cli.py` to base64-encode the body for transport (per `contracts/socket-queue.md`), call `queue.send_input`, and render either the human one-line confirmation or the `--json` row, mapping every closed-set string code to the integer exit code via `CLI_EXIT_CODE_MAP`.
+- [X] T059 [P] [US1] Write `tests/unit/test_send_input_cli_json.py` validating that the `--json` stdout is exactly one line, parses with `json.loads`, and matches `contracts/queue-row-schema.md` via `jsonschema` (validate against the schema fixture).
+- [X] T060 [P] [US1] Write `tests/unit/test_send_input_cli_human.py` validating the human-readable stdout shape for `delivered`, `blocked`, `failed`, `delivery_wait_timeout` outcomes.
 
 **Checkpoint**: US1 is fully functional. The MVP slice can be demoed: master → slave delivery with audit.
 

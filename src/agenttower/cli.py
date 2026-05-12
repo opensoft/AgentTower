@@ -941,6 +941,57 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     events_cmd.set_defaults(_handler=_events_command)
 
+    # FEAT-009 — send-input subparser (T058 / contracts/cli-send-input.md).
+    send_input = subparsers.add_parser(
+        "send-input",
+        help=(
+            "send a prompt to another agent's tmux pane via the safe "
+            "queue (FEAT-009; bench-container only)"
+        ),
+        description=(
+            "Enqueue an envelope-wrapped prompt for delivery to another "
+            "registered agent's tmux pane. Refuses host-side invocation "
+            "with sender_not_in_pane (FR-006). Default behavior waits for "
+            "the row to reach a terminal state (FR-009)."
+        ),
+    )
+    send_input.add_argument(
+        "--target",
+        required=True,
+        help="recipient agent_id (agt_<12 hex>) or unique label",
+    )
+    body_group = send_input.add_mutually_exclusive_group(required=True)
+    body_group.add_argument(
+        "--message",
+        default=None,
+        help="body text supplied inline (mutually exclusive with --message-file)",
+    )
+    body_group.add_argument(
+        "--message-file",
+        default=None,
+        help=(
+            "path to a file containing the body (use '-' for stdin; "
+            "mutually exclusive with --message)"
+        ),
+    )
+    send_input.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="return immediately after enqueue (default waits for terminal)",
+    )
+    send_input.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=10.0,
+        help="seconds to wait for terminal state (default 10.0; ignored under --no-wait)",
+    )
+    send_input.add_argument(
+        "--json",
+        action="store_true",
+        help=JSON_LINE_HELP,
+    )
+    send_input.set_defaults(_handler=_send_input_command)
+
     return parser
 
 
@@ -2169,6 +2220,277 @@ def _events_follow_loop(args: argparse.Namespace, socket_path: Path) -> int:
         except Exception:  # noqa: BLE001 — best effort
             pass
         signal.signal(signal.SIGINT, prior_handler)
+
+
+# ---------------------------------------------------------------------------
+# FEAT-009 — `agenttower send-input` (T058 / contracts/cli-send-input.md)
+# ---------------------------------------------------------------------------
+
+
+def _send_input_command(args: argparse.Namespace) -> int:
+    """``agenttower send-input`` — enqueue a prompt via FEAT-009.
+
+    Flow:
+    1. Resolve the caller's container + pane composite key via
+       :func:`agents.client_resolve.resolve_pane_composite_key`. Host-side
+       invocations surface ``host_context_unsupported`` here and exit
+       early — the daemon-side ``sender_not_in_pane`` is only reachable
+       for bench-container callers who haven't registered.
+    2. Discover the caller's own ``agent_id`` by listing agents in the
+       resolved container and matching the pane composite key. Without
+       this round-trip the daemon cannot enforce FR-021/FR-023 against
+       the sender role.
+    3. Read the body from ``--message`` (bytes(text, utf-8)) or
+       ``--message-file`` (raw bytes, ``-`` for stdin); base64-encode
+       it for the wire (contracts/socket-queue.md).
+    4. Call ``queue.send_input`` with the resolved caller_pane.agent_id,
+       the target string, the base64 body, and wait/timeout flags.
+    5. Map the response to an integer exit code via
+       :data:`routing.errors.CLI_EXIT_CODE_MAP`; render the row as
+       either one human-readable line OR a single JSON object per
+       ``contracts/queue-row-schema.md``.
+    """
+    from .agents.client_resolve import resolve_pane_composite_key
+    from .agents.errors import RegistrationError
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    json_mode = bool(args.json)
+
+    # Read the body BEFORE the socket round-trip so a missing file or
+    # invalid encoding fails fast without bothering the daemon.
+    body_result = _send_input_read_body(args, json_mode=json_mode)
+    if isinstance(body_result, int):
+        return body_result
+    body_bytes: bytes = body_result
+
+    _, resolved = _resolve_socket_with_paths()
+    socket_path = resolved.path
+
+    # Step 1: resolve caller's pane composite key (host-side caller
+    # surfaces host_context_unsupported here).
+    try:
+        target = resolve_pane_composite_key(
+            socket_path=socket_path,
+            env=os.environ,
+            proc_root=os.environ.get("AGENTTOWER_TEST_PROC_ROOT"),
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except RegistrationError as exc:
+        # host_context_unsupported maps to exit 1 via _exit_code_for;
+        # the operator sees the FEAT-006 prefix message verbatim.
+        return _emit_register_error(exc, json_mode)
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return 2
+    except DaemonError as exc:
+        return _emit_daemon_error(exc, json_mode)
+
+    # Step 2: discover caller's agent_id via list_agents filter +
+    # pane-composite-key match.
+    self_agent_id = _send_input_lookup_self_agent_id(
+        socket_path=socket_path,
+        target=target,
+        json_mode=json_mode,
+    )
+    if isinstance(self_agent_id, int):
+        return self_agent_id
+
+    # Step 3: base64-encode body for the wire.
+    import base64
+    body_b64 = base64.b64encode(body_bytes).decode("ascii")
+
+    params: dict[str, Any] = {
+        "target": args.target,
+        "body_bytes": body_b64,
+        "caller_pane": {"agent_id": self_agent_id},
+        "wait": not args.no_wait,
+    }
+    if not args.no_wait:
+        params["wait_timeout_seconds"] = float(args.wait_timeout)
+
+    # Step 4: call queue.send_input.
+    # The daemon's wait budget caps at 300s; the socket read budget
+    # MUST exceed that by a small margin so the wait can complete.
+    read_timeout = max(15.0, float(args.wait_timeout) + 5.0) if not args.no_wait else 5.0
+    try:
+        result = send_request(
+            socket_path, "queue.send_input", params,
+            connect_timeout=2.0, read_timeout=read_timeout,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
+    except DaemonError as exc:
+        return _send_input_emit_daemon_error(exc, json_mode)
+
+    # Step 5: render + map exit code from the row's terminal state.
+    return _send_input_render(result, json_mode=json_mode, no_wait=args.no_wait)
+
+
+def _send_input_read_body(
+    args: argparse.Namespace, *, json_mode: bool,
+) -> bytes | int:
+    """Read the body from --message or --message-file. Return bytes on
+    success, an integer exit code on failure (the closed-set body_*
+    rejection — exit 11 per CLI_EXIT_CODE_MAP)."""
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    if args.message is not None and args.message_file is not None:
+        # argparse's mutually_exclusive_group already enforces this; the
+        # check stays as defense-in-depth for programmatic callers.
+        _emit_local_error(
+            "bad_request",
+            "--message and --message-file are mutually exclusive",
+            json_mode,
+        )
+        return 64
+
+    if args.message is not None:
+        return args.message.encode("utf-8")
+
+    assert args.message_file is not None  # parser made one of the two required
+    path_str = args.message_file
+    if path_str == "-":
+        return sys.stdin.buffer.read()
+    try:
+        return Path(path_str).read_bytes()
+    except FileNotFoundError:
+        _emit_local_error(
+            "body_invalid_chars",
+            f"--message-file: file not found: {path_str}",
+            json_mode,
+        )
+        return CLI_EXIT_CODE_MAP.get("body_invalid_chars", 11)
+    except OSError as exc:
+        _emit_local_error(
+            "body_invalid_chars",
+            f"--message-file: cannot read {path_str}: {exc}",
+            json_mode,
+        )
+        return CLI_EXIT_CODE_MAP.get("body_invalid_chars", 11)
+
+
+def _send_input_lookup_self_agent_id(
+    *,
+    socket_path: Path,
+    target: Any,
+    json_mode: bool,
+) -> str | int:
+    """List agents in the caller's container and match by pane key to
+    find the caller's own ``agent_id``. Returns the agent_id string on
+    success, an integer exit code on failure."""
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    list_params = {"container_id": target.container_id, "active_only": True}
+    try:
+        list_result = send_request(
+            socket_path, "list_agents", list_params,
+            connect_timeout=1.0, read_timeout=5.0,
+        )
+    except DaemonUnavailable:
+        print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
+        return CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
+    except DaemonError as exc:
+        return _send_input_emit_daemon_error(exc, json_mode)
+    agents = list_result.get("agents", []) or []
+    pane_key = target.pane_key
+    for record in agents:
+        if (
+            record.get("container_id") == pane_key[0]
+            and record.get("tmux_socket_path") == pane_key[1]
+            and record.get("tmux_session_name") == pane_key[2]
+            and int(record.get("tmux_window_index", -1)) == pane_key[3]
+            and int(record.get("tmux_pane_index", -1)) == pane_key[4]
+            and record.get("tmux_pane_id") == pane_key[5]
+        ):
+            return str(record["agent_id"])
+    # No matching agent — caller pane has never been registered. Surface
+    # the same code FR-021/FR-023 give for an unregistered sender.
+    _emit_local_error(
+        "sender_role_not_permitted",
+        "caller pane is not registered; run `agenttower register-self --role master --confirm`",
+        json_mode,
+    )
+    return CLI_EXIT_CODE_MAP.get("sender_role_not_permitted", 4)
+
+
+def _send_input_emit_daemon_error(exc: DaemonError, json_mode: bool) -> int:
+    """Map a daemon-side DaemonError to a send-input exit code.
+
+    Uses the FEAT-009 CLI_EXIT_CODE_MAP first, falling back to the
+    FEAT-002 `_exit_code_for` for codes outside the FEAT-009 set
+    (e.g. ``host_context_unsupported``, ``schema_version_newer``).
+    """
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    _emit_local_error(exc.code, exc.message, json_mode)
+    if exc.code in CLI_EXIT_CODE_MAP:
+        return CLI_EXIT_CODE_MAP[exc.code]
+    return _exit_code_for(exc.code)
+
+
+def _send_input_render(
+    row: dict[str, Any], *, json_mode: bool, no_wait: bool,
+) -> int:
+    """Render the row payload to stdout (or stderr on failure) and
+    return the integer exit code mapped from the row's terminal state."""
+    from .routing.errors import CLI_EXIT_CODE_MAP
+
+    state = row.get("state")
+    block_reason = row.get("block_reason")
+    failure_reason = row.get("failure_reason")
+    waited_to_terminal = bool(row.get("waited_to_terminal", False))
+
+    # Determine the closed-set string code for exit mapping.
+    if state == "delivered":
+        exit_code = 0
+        exit_label = "delivered"
+    elif state == "blocked":
+        # block_reason carries the closed-set token.
+        exit_label = block_reason or "blocked"
+        # kill_switch_off → routing_disabled CLI code (FR-027 / table).
+        if block_reason == "kill_switch_off":
+            exit_label = "routing_disabled"
+        exit_code = CLI_EXIT_CODE_MAP.get(exit_label, 13)
+    elif state == "failed":
+        exit_label = failure_reason or "attempt_interrupted"
+        exit_code = CLI_EXIT_CODE_MAP.get(exit_label, 13)
+    elif state == "canceled":
+        exit_label = "canceled"
+        exit_code = 13
+    elif state in ("queued", "blocked") and not waited_to_terminal and not no_wait:
+        # wait budget elapsed before terminal — FR-009.
+        exit_label = "delivery_wait_timeout"
+        exit_code = CLI_EXIT_CODE_MAP.get("delivery_wait_timeout", 1)
+    else:
+        # --no-wait return with a non-terminal state is exit 0 (success
+        # at enqueue; the caller didn't ask to wait).
+        exit_code = 0
+        exit_label = state or "queued"
+
+    if json_mode:
+        # Strip the dispatcher's waited_to_terminal flag — it's not part
+        # of the queue-row-schema contract.
+        payload = {k: v for k, v in row.items() if k != "waited_to_terminal"}
+        print(json.dumps(payload, separators=(",", ":")))
+    else:
+        message_id = row.get("message_id") or "?"
+        target = row.get("target") or {}
+        target_label = target.get("label") or ""
+        target_agent_id = target.get("agent_id") or ""
+        target_str = (
+            f"{target_label}({target_agent_id})" if target_label else target_agent_id
+        )
+        if exit_code == 0:
+            print(f"{exit_label}: msg={message_id} target={target_str}")
+        else:
+            reason = block_reason or failure_reason or exit_label
+            print(
+                f"send-input failed: {exit_label} — {reason} (msg={message_id})",
+                file=sys.stderr,
+            )
+    return exit_code
 
 
 if __name__ == "__main__":

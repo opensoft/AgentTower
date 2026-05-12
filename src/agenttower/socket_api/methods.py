@@ -1189,9 +1189,14 @@ def _queue_error_to_envelope(exc: Exception, *, method: str) -> dict[str, Any]:
     )
 
 
-def _queue_row_to_payload(row: Any) -> dict[str, Any]:
+def _queue_row_to_payload(row: Any, *, excerpt: str = "") -> dict[str, Any]:
     """Render a :class:`routing.dao.QueueRow` into the wire shape from
-    ``contracts/queue-row-schema.md`` (FR-011)."""
+    ``contracts/queue-row-schema.md`` (FR-011).
+
+    ``excerpt`` is the rendered preview (FR-047b). The caller computes it
+    from the envelope body and passes it in; this helper does not read
+    the body itself to keep the dispatcher's hot path clean.
+    """
     return {
         "message_id": row.message_id,
         "state": row.state,
@@ -1209,6 +1214,8 @@ def _queue_row_to_payload(row: Any) -> dict[str, Any]:
             "role": row.target_role,
             "capability": row.target_capability,
         },
+        "envelope_size_bytes": row.envelope_size_bytes,
+        "envelope_body_sha256": row.envelope_body_sha256,
         "enqueued_at": row.enqueued_at,
         "delivery_attempt_started_at": row.delivery_attempt_started_at,
         "delivered_at": row.delivered_at,
@@ -1218,6 +1225,7 @@ def _queue_row_to_payload(row: Any) -> dict[str, Any]:
         "operator_action": row.operator_action,
         "operator_action_at": row.operator_action_at,
         "operator_action_by": row.operator_action_by,
+        "excerpt": excerpt,
     }
 
 
