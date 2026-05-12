@@ -58,8 +58,9 @@ def test_ping_does_not_open_sqlite_connection(tmp_path: Path, monkeypatch) -> No
 
 def test_dispatch_table_keys_are_closed_set() -> None:
     # FEAT-002 keys + FEAT-003 additions + FEAT-004 additions + FEAT-006
-    # additions + FEAT-007 additions + FEAT-008 additions (FR-022 /
-    # FR-030 backward-compat; FR-023 for FEAT-006; FR-038 for FEAT-007).
+    # additions + FEAT-007 additions + FEAT-008 additions + FEAT-009
+    # additions (FR-022 / FR-030 backward-compat; FR-023 for FEAT-006;
+    # FR-038 for FEAT-007).
     assert set(DISPATCH.keys()) == {
         "ping",
         "status",
@@ -82,6 +83,15 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "events.follow_next",
         "events.follow_close",
         "events.classifier_rules",
+        # FEAT-009 — queue + routing dispatch (T049).
+        "queue.send_input",
+        "queue.list",
+        "queue.approve",
+        "queue.delay",
+        "queue.cancel",
+        "routing.enable",
+        "routing.disable",
+        "routing.status",
     }
 
 
@@ -112,8 +122,22 @@ def test_status_returns_documented_shape(tmp_path: Path) -> None:
         # fields are present with the documented "not running" defaults.
         "events_reader",
         "events_persistence",
+        # FEAT-009 — plan §"Status surface". With no routing service or
+        # audit writer wired, the blocks report the not-running defaults.
+        "routing",
+        "queue_audit",
     }
     assert set(result.keys()) == expected_keys
+    assert result["routing"] == {
+        "value": None,
+        "last_updated_at": None,
+        "last_updated_by": None,
+    }
+    assert result["queue_audit"] == {
+        "degraded": False,
+        "pending_rows": 0,
+        "last_failure_exc_class": None,
+    }
     assert result["events_reader"] == {
         "running": False,
         "last_cycle_started_at": None,
