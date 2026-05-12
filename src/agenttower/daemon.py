@@ -260,6 +260,140 @@ def _build_agent_service(paths: Paths, logger: LifecycleLogger) -> AgentService:
     )
 
 
+def _build_feat009_services(
+    *,
+    paths: Paths,
+    discovery_service: DiscoveryService | None,
+    pane_service: PaneDiscoveryService | None,
+) -> tuple[
+    sqlite3.Connection,
+    object,  # QueueService
+    object,  # RoutingFlagService
+    object,  # QueueAuditWriter
+    object,  # DeliveryWorker
+    object,  # MessageQueueDao
+    object,  # DaemonStateDao
+]:
+    """Construct FEAT-009 queue / routing / delivery services (T048).
+
+    Opens a DEDICATED per-worker SQLite connection (``check_same_thread=False``)
+    that the :class:`MessageQueueDao` + :class:`DaemonStateDao` + the
+    :class:`QueueAuditWriter` share — this is the worker thread's
+    BEGIN IMMEDIATE serialization point. The adapter classes
+    (:class:`RegistryAgentsLookup`, :class:`DiscoveryContainerPaneLookup`)
+    open their own short-lived connections to avoid blocking the
+    worker's transactions.
+
+    Runs :meth:`DeliveryWorker.run_recovery_pass` synchronously here
+    BEFORE returning the worker (research §R-012); the caller is
+    expected to invoke :meth:`DeliveryWorker.start` immediately after
+    receiving the tuple.
+    """
+    # Local imports keep the daemon module's import graph independent
+    # of the FEAT-009 module tree during FEAT-001..008-only test runs.
+    from .routing.audit_writer import QueueAuditWriter
+    from .routing.daemon_adapters import (
+        DiscoveryContainerPaneLookup,
+        RegistryAgentsLookup,
+        RegistryDeliveryContextResolver,
+    )
+    from .routing.dao import DaemonStateDao, MessageQueueDao
+    from .routing.delivery import DeliveryWorker
+    from .routing.kill_switch import RoutingFlagService
+    from .routing.service import ContainerPaneLookup, QueueService
+
+    # Dedicated per-worker connection. ``check_same_thread=False`` is
+    # necessary because the worker thread owns the connection while
+    # boot-time recovery + audit setup runs in the main thread.
+    # ``isolation_level=None`` matches FEAT-004's pane-service connection
+    # so the DAO's explicit ``BEGIN IMMEDIATE`` controls the transaction
+    # boundary (rather than the implicit driver-managed mode).
+    worker_conn = sqlite3.connect(
+        str(paths.state_db),
+        isolation_level=None,
+        check_same_thread=False,
+    )
+
+    message_queue_dao = MessageQueueDao(worker_conn)
+    daemon_state_dao = DaemonStateDao(worker_conn)
+    routing_flag = RoutingFlagService(daemon_state_dao)
+    audit_writer = QueueAuditWriter(worker_conn, paths.events_file)
+
+    # Read-only adapters share a connection factory; each method opens
+    # its own short-lived connection so reads don't block the worker
+    # thread's BEGIN IMMEDIATE.
+    def _read_conn_factory() -> sqlite3.Connection:
+        return sqlite3.connect(str(paths.state_db))
+
+    agents_lookup = RegistryAgentsLookup(_read_conn_factory)
+    if discovery_service is None or pane_service is None:
+        # Fail-soft path: if FEAT-003/004 services aren't wired (e.g., a
+        # configuration that disabled them), the FEAT-009 surface stays
+        # off rather than crashing — every permission gate will surface
+        # ``target_container_inactive`` until they're back.
+        container_pane_lookup: ContainerPaneLookup = _NullContainerPaneLookup()
+    else:
+        container_pane_lookup = DiscoveryContainerPaneLookup(
+            discovery_service, pane_service,
+        )
+
+    queue_service = QueueService(
+        dao=message_queue_dao,
+        routing_flag=routing_flag,
+        agents_lookup=agents_lookup,
+        container_pane_lookup=container_pane_lookup,
+        audit_writer=audit_writer,
+    )
+
+    tmux_adapter = _resolve_tmux_adapter()
+    if tmux_adapter is None:
+        # No tmux adapter (e.g., misconfigured environment) — worker
+        # would crash on first delivery attempt. Use a fallback
+        # SubprocessTmuxAdapter; the delivery itself will surface
+        # docker_exec_failed via the worker's normal error path.
+        tmux_adapter = SubprocessTmuxAdapter()
+
+    delivery_context_resolver = RegistryDeliveryContextResolver(_read_conn_factory)
+    delivery_worker = DeliveryWorker(
+        dao=message_queue_dao,
+        routing_flag=routing_flag,
+        agents_lookup=agents_lookup,
+        container_panes=container_pane_lookup,
+        tmux=tmux_adapter,
+        audit_writer=audit_writer,
+        queue_service=queue_service,
+        delivery_context_resolver=delivery_context_resolver,
+    )
+
+    # FR-040 / research §R-012: synchronous recovery BEFORE start().
+    # SqliteLockConflict here is fatal — propagates to the caller.
+    delivery_worker.run_recovery_pass()
+    delivery_worker.start()
+
+    return (
+        worker_conn,
+        queue_service,
+        routing_flag,
+        audit_writer,
+        delivery_worker,
+        message_queue_dao,
+        daemon_state_dao,
+    )
+
+
+class _NullContainerPaneLookup:
+    """Inert :class:`ContainerPaneLookup` used when FEAT-003 / FEAT-004
+    aren't wired (returns ``False`` for every check — every queued row
+    will land in ``blocked`` with ``target_container_inactive`` until
+    the services come up)."""
+
+    def is_container_active(self, container_id: str) -> bool:  # noqa: ARG002
+        return False
+
+    def is_pane_resolvable(self, container_id: str, pane_id: str) -> bool:  # noqa: ARG002
+        return False
+
+
 def _build_context(
     *,
     paths: Paths,
@@ -273,6 +407,13 @@ def _build_context(
     events_reader: object | None = None,
     follow_session_registry: object | None = None,
     events_config: object | None = None,
+    state_conn: sqlite3.Connection | None = None,
+    queue_service: object | None = None,
+    routing_flag_service: object | None = None,
+    delivery_worker: object | None = None,
+    queue_audit_writer: object | None = None,
+    message_queue_dao: object | None = None,
+    daemon_state_dao: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -291,6 +432,13 @@ def _build_context(
         events_reader=events_reader,
         follow_session_registry=follow_session_registry,
         events_config=events_config,
+        state_conn=state_conn,
+        queue_service=queue_service,
+        routing_flag_service=routing_flag_service,
+        delivery_worker=delivery_worker,
+        queue_audit_writer=queue_audit_writer,
+        message_queue_dao=message_queue_dao,
+        daemon_state_dao=daemon_state_dao,
     )
 
 
@@ -523,6 +671,26 @@ def _run(args: argparse.Namespace) -> int:
         # event is "missed" — they're just observed via the backlog
         # path rather than the live notify.
         events_reader.start()
+
+        # FEAT-009 T048 — instantiate the queue/routing/delivery services,
+        # run the FR-040 recovery pass synchronously, then start the
+        # delivery worker thread. Order matters: recovery_pass MUST
+        # commit BEFORE the worker thread starts (research §R-012) so
+        # the worker never picks up a row still in
+        # ``delivery_attempt_started_at`` limbo from a prior crash.
+        (
+            worker_conn,
+            queue_service,
+            routing_flag,
+            audit_writer,
+            delivery_worker,
+            message_queue_dao,
+            daemon_state_dao,
+        ) = _build_feat009_services(
+            paths=paths,
+            discovery_service=discovery_service,
+            pane_service=pane_service,
+        )
         try:
             ctx = _build_context(
                 paths=paths,
@@ -536,6 +704,13 @@ def _run(args: argparse.Namespace) -> int:
                 events_reader=events_reader,
                 follow_session_registry=follow_registry,
                 events_config=events_config,
+                state_conn=worker_conn,
+                queue_service=queue_service,
+                routing_flag_service=routing_flag,
+                delivery_worker=delivery_worker,
+                queue_audit_writer=audit_writer,
+                message_queue_dao=message_queue_dao,
+                daemon_state_dao=daemon_state_dao,
             )
 
             server = _bind_control_server(paths, ctx, logger)
@@ -547,6 +722,18 @@ def _run(args: argparse.Namespace) -> int:
             _install_signal_handlers(shutdown_event)
             _serve_until_shutdown(server, shutdown_event, logger)
         finally:
+            # Stop the worker BEFORE the events reader so the worker's
+            # final audit writes don't race the reader's cycle. Group-A
+            # walk Q4: abort-not-drain shutdown — the next boot's
+            # recovery pass cleans up any in-flight row.
+            try:
+                delivery_worker.stop()
+            except Exception:  # pragma: no cover — defensive
+                pass
+            try:
+                worker_conn.close()
+            except Exception:  # pragma: no cover — defensive
+                pass
             # Always stop the reader thread, regardless of which phase of
             # startup raised — bind/build_context/write_pid_file/emit all
             # run after ``events_reader.start()``, so any of them raising
