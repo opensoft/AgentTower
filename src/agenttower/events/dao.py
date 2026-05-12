@@ -1,18 +1,23 @@
-"""FEAT-008 events table DAO.
+"""``events`` table DAO — FEAT-008 classifier events + FEAT-009 audit rows.
 
 Surface:
 
 * :class:`EventRow` — frozen dataclass mirroring the SQLite ``events``
-  schema in ``data-model.md`` §2.
+  schema in ``data-model.md`` §2 (FEAT-008 shape).
 * :class:`EventFilter` — query filter for ``events.list``.
 * :func:`encode_cursor` / :func:`decode_cursor` — opaque pagination
   cursor codec (Research §R8). Cursor is integer-backed but
   base64url-encoded JSON at the CLI boundary.
-* :func:`insert_event` — single-row insert; returns the new
-  ``event_id``. Used inside the reader's atomic SQLite + offset
-  commit.
+* :func:`insert_event` — single-row insert for FEAT-008 classifier
+  events; returns the new ``event_id``. Used inside the reader's
+  FR-006 atomic SQLite + offset commit.
+* :func:`insert_audit_event` — single-row insert for FEAT-009
+  ``queue_message_*`` / ``routing_toggled`` audit events; NULL-fills
+  the FEAT-008-specific columns made nullable by the v6 → v7 migration.
+  Used by :class:`agenttower.routing.audit_writer.QueueAuditWriter` for
+  the FR-046 dual-write (SQLite + JSONL).
 * :func:`mark_jsonl_appended` — set ``jsonl_appended_at`` after a
-  successful JSONL write (FR-029 watermark).
+  successful JSONL write (FR-029 watermark; reused by FEAT-009 audit).
 * :func:`select_events` — page through events; returns
   ``(rows, next_cursor)``.
 * :func:`select_pending_jsonl` — return rows whose
@@ -20,8 +25,13 @@ Surface:
 * :func:`select_event_by_id` — single-row lookup, used by the follow
   registry to confirm an event still exists.
 
-This module is the SOLE production-side writer to the ``events``
-table. The reader calls these functions; nothing else does.
+This module is the production-side writer for BOTH FEAT-008 classifier
+events and FEAT-009 audit events (per Clarifications session 2026-05-12
+Q1 dual-write decision; data-model.md §7.1 column mapping). The FEAT-008
+reader calls :func:`insert_event`; the FEAT-009 audit writer calls
+:func:`insert_audit_event`. Both rows land in the same ``events``
+table and are surfaced through the existing FEAT-008 ``events.list``
+reader without a reader-side code change.
 """
 
 from __future__ import annotations
@@ -304,12 +314,107 @@ def insert_event(conn: sqlite3.Connection, row: EventRow) -> int:
 def mark_jsonl_appended(
     conn: sqlite3.Connection, event_id: int, ts_iso: str
 ) -> None:
-    """Set ``jsonl_appended_at`` on a single row (FR-029 watermark)."""
+    """Set ``jsonl_appended_at`` on a single row (FR-029 watermark).
+
+    Used by both FEAT-008 (classifier rows) and FEAT-009 (audit rows)
+    after their respective JSONL appends succeed.
+    """
     conn.execute(
         "UPDATE events SET jsonl_appended_at = ? WHERE event_id = ? "
         "AND jsonl_appended_at IS NULL",
         (ts_iso, event_id),
     )
+
+
+def insert_audit_event(
+    conn: sqlite3.Connection,
+    *,
+    event_type: str,
+    agent_id: str,
+    observed_at: str,
+    excerpt: str,
+    schema_version: int = 1,
+    jsonl_appended_at: str | None = None,
+) -> int:
+    """Insert a FEAT-009 audit row into the ``events`` table.
+
+    NULL-fills the FEAT-008-specific columns (``attachment_id``,
+    ``log_path``, ``byte_range_start``, ``byte_range_end``,
+    ``line_offset_start``, ``line_offset_end``, ``classifier_rule_id``,
+    ``debounce_window_*``) made nullable by the v6 → v7 migration
+    (data-model.md §2 events_new + §7.1 column mapping).
+
+    Used by :class:`agenttower.routing.audit_writer.QueueAuditWriter`
+    for the FR-046 dual-write — the SQLite INSERT is the source of
+    truth (FR-048); the JSONL append is best-effort with a watermark.
+
+    Caller MUST be inside an explicit transaction. ``event_type`` is
+    validated against the closed set at the SQLite layer (the CHECK
+    constraint rejects unknown values); we don't repeat the check
+    here to keep this module decoupled from ``routing/errors.py``.
+
+    Args:
+        conn: SQLite connection (caller manages transaction).
+        event_type: One of the 8 FEAT-009 audit types
+            (``queue_message_*`` or ``routing_toggled``).
+        agent_id: For ``queue_message_*`` rows this is the target's
+            ``agent_id`` (data-model.md §7.1.1 — so ``events --target
+            <agent>`` surfaces queue events delivered to that agent);
+            for ``routing_toggled`` this is the operator identity
+            (``host-operator`` since routing toggle is host-only).
+        observed_at: Transition timestamp (canonical ISO 8601 ms UTC).
+        excerpt: Redacted, whitespace-collapsed, ≤ 240-char excerpt
+            (for ``queue_message_*``) or human summary (for
+            ``routing_toggled``, e.g., ``"routing disabled (was enabled)"``).
+        schema_version: Audit row schema version (default 1).
+        jsonl_appended_at: Always ``None`` at initial insert; the caller
+            invokes :func:`mark_jsonl_appended` after the JSONL write
+            succeeds (Group-A walk Q6 / Clarifications Q1).
+
+    Returns:
+        The new ``event_id``.
+    """
+    cur = conn.execute(
+        """
+        INSERT INTO events (
+            event_type,
+            agent_id,
+            attachment_id, log_path,
+            byte_range_start, byte_range_end,
+            line_offset_start, line_offset_end,
+            observed_at,
+            record_at,
+            excerpt,
+            classifier_rule_id,
+            debounce_window_id,
+            debounce_collapsed_count,
+            debounce_window_started_at,
+            debounce_window_ended_at,
+            schema_version,
+            jsonl_appended_at
+        ) VALUES (
+            ?, ?,
+            NULL, NULL,
+            NULL, NULL,
+            NULL, NULL,
+            ?,
+            NULL,
+            ?,
+            NULL,
+            NULL,
+            1,
+            NULL,
+            NULL,
+            ?,
+            ?
+        )
+        """,
+        (event_type, agent_id, observed_at, excerpt, schema_version, jsonl_appended_at),
+    )
+    last_rowid = cur.lastrowid
+    if last_rowid is None:
+        raise sqlite3.OperationalError("insert_audit_event: lastrowid is None")
+    return int(last_rowid)
 
 
 _SELECT_FIELDS = (
