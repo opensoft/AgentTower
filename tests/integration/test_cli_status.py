@@ -65,6 +65,9 @@ def test_status_json_output_shape(env: dict[str, str]) -> None:
         # FEAT-008 — data-model.md §7.
         "events_reader",
         "events_persistence",
+        # FEAT-009 — plan §"Status surface".
+        "routing",
+        "queue_audit",
         "socket_path",
         "state_path",
         "schema_version",

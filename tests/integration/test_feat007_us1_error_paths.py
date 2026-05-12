@@ -756,8 +756,9 @@ def test_t064_client_older_schema_version_rejected(primed) -> None:
         f"got code={exc_info.value.code!r}, message={exc_info.value.message!r}"
     )
     # Message lists daemon vs. client schema for actionability.
-    # Daemon advertises CURRENT_SCHEMA_VERSION; FEAT-008 bumped it to 6.
-    assert "schema_version=6" in exc_info.value.message
+    # Daemon advertises CURRENT_SCHEMA_VERSION; FEAT-009 bumped it to 7.
+    from agenttower.state.schema import CURRENT_SCHEMA_VERSION
+    assert f"schema_version={CURRENT_SCHEMA_VERSION}" in exc_info.value.message
     assert "expected=4" in exc_info.value.message
 
     # Repeat the gate against detach_log + attach_log_status + attach_log_preview
