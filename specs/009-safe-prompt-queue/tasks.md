@@ -170,8 +170,8 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Implementation for User Story 2
 
-- [ ] T064 [US2] In `routing/service.py`, ensure `send_input` invokes `permissions.evaluate_enqueue_permissions` BEFORE the DAO insert when the failure must be `agent_not_found` (no row created) and DURING the DAO insert when the failure must surface as a `blocked` row (FR-019/FR-020 precedence).
-- [ ] T065 [US2] Emit `queue_message_blocked` audit at enqueue for every row that lands in `blocked` (FR-046), with the `reason` field carrying the `block_reason`.
+- [X] T064 [US2] In `routing/service.py`, ensure `send_input` invokes `permissions.evaluate_enqueue_permissions` BEFORE the DAO insert when the failure must be `agent_not_found` (no row created) and DURING the DAO insert when the failure must surface as a `blocked` row (FR-019/FR-020 precedence). (Already implemented in Slice 5 — `service.py:214` calls `evaluate_enqueue_permissions` BEFORE the DAO insert at line 249; `agent_not_found` is raised earlier by `resolve_target` so no row is ever created; permission failures land the row in `blocked` with the matching block_reason.)
+- [X] T065 [US2] Emit `queue_message_blocked` audit at enqueue for every row that lands in `blocked` (FR-046), with the `reason` field carrying the `block_reason`. (Already implemented in Slice 5 — `service.py:262` emits `append_queue_transition(to_state="blocked", reason=decision.block_reason, ...)` for every row inserted into the blocked state at enqueue.)
 
 **Checkpoint**: US2 complete. Permission gate is end-to-end enforced and audited.
 
