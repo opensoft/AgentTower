@@ -315,7 +315,21 @@ Out of scope:
 - Prompt routing from events.
 - Desktop notifications.
 
-## FEAT-009: Safe Prompt Queue and Input Delivery
+## FEAT-009: Safe Prompt Queue and Input Delivery — **shipped**
+
+Status: shipped on the `009-safe-prompt-queue` branch. See
+[`specs/009-safe-prompt-queue/`](../specs/009-safe-prompt-queue/) for
+the full spec, contracts (queue-row schema, queue-audit schema,
+socket-queue, socket-routing, cli-send-input, cli-queue, cli-routing),
+and the integration-test suite. The CLI quickstart lives at
+[`specs/009-safe-prompt-queue/quickstart.md`](../specs/009-safe-prompt-queue/quickstart.md).
+
+FEAT-009 lands the durable per-target FIFO message queue plus
+permission gate plus global routing kill switch plus tmux-safe
+paste-buffer delivery. It is the primitive on which FEAT-010
+multi-master arbitration will later build (see FR-052 for the explicit
+non-goal). Schema version moved 6 → 7; the new `message_queue` and
+`daemon_state` tables join the existing FEAT-001..008 surfaces.
 
 Goal: safely deliver structured prompts from masters to eligible targets.
 
