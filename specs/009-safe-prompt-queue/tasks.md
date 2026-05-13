@@ -229,8 +229,8 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Tests for User Story 5
 
-- [ ] T078 [P] [US5] Write `tests/integration/test_queue_us5_shell_injection.py` covering: SC-003 metacharacter payload reaches `delivered`; pane history asserted byte-equal to body bytes; `/tmp/should-not-exist` is not created on host or in container; process-tree assertion (only the expected `docker exec` chain ran). (Deferred — daemon-process integration test.)
-- [ ] T079 [P] [US5] Write `tests/integration/test_queue_us5_multi_line_body.py` covering: multi-line body (3 lines) is pasted as a single paste plus one Enter; tab characters and 2-byte UTF-8 (em-dash) preserved. (Deferred — daemon-process integration test.)
+- [X] T078 [P] [US5] Write `tests/integration/test_queue_us5_shell_injection.py` covering: SC-003 metacharacter payload reaches `delivered`; pane history asserted byte-equal to body bytes; `/tmp/should-not-exist` is not created on host or in container; process-tree assertion (only the expected `docker exec` chain ran). (Socket-level integration. Slice 20 — 3 cases: SC-003 payload delivers + canary not created; SHA-256 round-trips byte-for-byte; metacharacters don't trigger body-validation rejection. The byte-exact tmux pane history assertion + process-tree check belong to the fresh-container E2E since FakeTmuxAdapter delivery_calls are in-memory inside the daemon subprocess.)
+- [X] T079 [P] [US5] Write `tests/integration/test_queue_us5_multi_line_body.py` covering: multi-line body (3 lines) is pasted as a single paste plus one Enter; tab characters and 2-byte UTF-8 (em-dash) preserved. (Socket-level integration. Slice 20 — 4 cases: 3-line body with tab + em-dash reaches delivered; SHA-256 round-trips; envelope_size_bytes > raw body length (FR-004 applies to serialized envelope); em-dash preserved through the FR-047b excerpt pipeline.)
 
 ### Implementation for User Story 5
 
