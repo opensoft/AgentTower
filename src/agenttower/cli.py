@@ -2758,7 +2758,20 @@ def _queue_operator_render(
 
 
 def _routing_command_factory(op_name: str):
-    """Build the handler for one ``routing`` subcommand."""
+    """Build the handler for one ``routing`` subcommand.
+
+    For ``enable`` / ``disable`` we auto-probe the runtime: if the CLI
+    is running INSIDE a bench container (FEAT-005 ``runtime_detect``
+    returns a non-host context), we include ``caller_pane`` in the
+    request so the daemon's dispatch-boundary host-only gate
+    (R-005 / FR-027) refuses with ``routing_toggle_host_only``. From
+    the host the probe surfaces ``host_context_unsupported`` and we
+    proceed with an empty params dict — the daemon then accepts the
+    toggle.
+
+    ``status`` has no origin restriction (contracts/socket-routing.md
+    §"Caller context") so we always send empty params.
+    """
     method_name = f"routing.{op_name}"
 
     def handler(args: argparse.Namespace) -> int:
@@ -2767,9 +2780,14 @@ def _routing_command_factory(op_name: str):
         json_mode = bool(args.json)
         _, resolved = _resolve_socket_with_paths()
         socket_path = resolved.path
+
+        params: dict[str, Any] = {}
+        if op_name in ("enable", "disable"):
+            params = _routing_probe_caller_pane(socket_path, json_mode)
+
         try:
             result = send_request(
-                socket_path, method_name, {},
+                socket_path, method_name, params,
                 connect_timeout=2.0, read_timeout=5.0,
             )
         except DaemonUnavailable:
@@ -2780,6 +2798,57 @@ def _routing_command_factory(op_name: str):
         return _routing_render(op_name, result, json_mode=json_mode)
 
     return handler
+
+
+def _routing_probe_caller_pane(
+    socket_path: Path, json_mode: bool,
+) -> dict[str, Any]:
+    """Detect bench-container vs host context for routing toggles.
+
+    Returns ``{"caller_pane": {...}}`` if we're in a bench container
+    so the daemon refuses the toggle, ``{}`` if we're on the host or
+    the probe inconclusive. The daemon's gate is the canonical
+    enforcement point — this probe just hands the daemon the signal
+    it needs (FR-024 trusts the same-uid peer).
+    """
+    from .agents.client_resolve import resolve_pane_composite_key
+    from .agents.errors import RegistrationError
+
+    try:
+        target = resolve_pane_composite_key(
+            socket_path=socket_path,
+            env=os.environ,
+            proc_root=os.environ.get("AGENTTOWER_TEST_PROC_ROOT"),
+            connect_timeout=1.0,
+            read_timeout=5.0,
+        )
+    except RegistrationError:
+        # host_context_unsupported, container_unresolved, not_in_tmux,
+        # tmux_pane_malformed, pane_unknown_to_daemon — any of these
+        # means we can't claim bench-container origin, so send empty
+        # params and let the daemon's host-only gate proceed (it'll
+        # only accept if peer_uid matches AND caller_pane is None).
+        return {}
+    except Exception:  # noqa: BLE001
+        return {}
+    # Bench-container origin detected; include caller_pane so the
+    # daemon refuses with routing_toggle_host_only.
+    self_agent_id = _send_input_lookup_self_agent_id(
+        socket_path=socket_path, target=target, json_mode=json_mode,
+    )
+    if isinstance(self_agent_id, int):
+        # The lookup failed (e.g., pane not registered) — fall back to
+        # the bare pane info so the daemon still sees we're in a
+        # container.
+        return {"caller_pane": {"pane_composite_key": {
+            "container_id": target.pane_key[0],
+            "tmux_socket_path": target.pane_key[1],
+            "tmux_session_name": target.pane_key[2],
+            "tmux_window_index": target.pane_key[3],
+            "tmux_pane_index": target.pane_key[4],
+            "tmux_pane_id": target.pane_key[5],
+        }}}
+    return {"caller_pane": {"agent_id": self_agent_id}}
 
 
 def _routing_emit_daemon_error(
