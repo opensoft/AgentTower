@@ -54,6 +54,7 @@ from typing import Final
 
 from agenttower.events.dao import insert_audit_event, mark_jsonl_appended
 from agenttower.events.writer import append_event
+from agenttower.routing.dao import _conn_tx_lock
 
 
 __all__ = [
@@ -174,19 +175,23 @@ class QueueAuditWriter:
             "excerpt": excerpt,
         }
         # Step 1: SQLite insert (must succeed; propagates exceptions).
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            event_id = insert_audit_event(
-                self._conn,
-                event_type=event_type,
-                agent_id=target["agent_id"],
-                observed_at=observed_at,
-                excerpt=excerpt,
-            )
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        # Serialize with the DAO via the per-connection lock
+        # (Slice 16 — multi-threaded daemon would otherwise race BEGIN
+        # IMMEDIATE against the worker/dispatcher DAOs sharing this conn).
+        with _conn_tx_lock(self._conn):
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                event_id = insert_audit_event(
+                    self._conn,
+                    event_type=event_type,
+                    agent_id=target["agent_id"],
+                    observed_at=observed_at,
+                    excerpt=excerpt,
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
 
         # Step 2 + 3: JSONL append (best-effort).
         self._append_jsonl_then_watermark(event_id, payload, watermark_ts=observed_at)
@@ -224,19 +229,20 @@ class QueueAuditWriter:
             "operator": operator,
         }
         # Step 1: SQLite insert.
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            event_id = insert_audit_event(
-                self._conn,
-                event_type=_ROUTING_TOGGLED_EVENT_TYPE,
-                agent_id=operator,
-                observed_at=observed_at,
-                excerpt=excerpt,
-            )
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        with _conn_tx_lock(self._conn):
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                event_id = insert_audit_event(
+                    self._conn,
+                    event_type=_ROUTING_TOGGLED_EVENT_TYPE,
+                    agent_id=operator,
+                    observed_at=observed_at,
+                    excerpt=excerpt,
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
 
         # Step 2 + 3: JSONL append.
         self._append_jsonl_then_watermark(event_id, payload, watermark_ts=observed_at)
@@ -324,10 +330,11 @@ class QueueAuditWriter:
             return
 
         # JSONL succeeded; back-fill the watermark.
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            mark_jsonl_appended(self._conn, event_id, watermark_ts)
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        with _conn_tx_lock(self._conn):
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                mark_jsonl_appended(self._conn, event_id, watermark_ts)
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise

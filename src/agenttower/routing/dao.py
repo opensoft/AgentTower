@@ -17,6 +17,7 @@ and kill-switch service call into it.
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from typing import Final
@@ -111,7 +112,12 @@ class QueueListFilter:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def with_lock_retry(operation, *, retries: tuple[float, ...] | None = None):
+def with_lock_retry(
+    operation,
+    *,
+    retries: tuple[float, ...] | None = None,
+    conn: sqlite3.Connection | None = None,
+):
     """Run ``operation()`` with bounded retry on SQLite lock conflict.
 
     On ``sqlite3.OperationalError`` whose message contains "database is
@@ -126,23 +132,69 @@ def with_lock_retry(operation, *, retries: tuple[float, ...] | None = None):
     ``i+1``. Default ``_LOCK_RETRY_DELAYS_S = (0.010, 0.050, 0.250)``
     gives 4 attempts separated by 3 sleeps; total worst-case wait
     ≤ 310 ms (comfortably inside SC-001's 3 s budget).
+
+    When ``conn`` is supplied, the entire retry loop runs inside the
+    per-connection transaction-serializer lock so multi-threaded
+    callers (the dispatcher thread + the delivery worker, sharing the
+    daemon's ``worker_conn``) can't race on ``BEGIN IMMEDIATE``.
     """
     delays = retries if retries is not None else _LOCK_RETRY_DELAYS_S
-    last_exc: sqlite3.OperationalError | None = None
-    # `len(delays) + 1` total attempts.
-    for attempt_index in range(len(delays) + 1):
-        try:
-            return operation()
-        except sqlite3.OperationalError as exc:
-            if "database is locked" not in str(exc).lower():
-                raise
-            last_exc = exc
-            # Sleep before the NEXT attempt, if any.
-            if attempt_index < len(delays):
-                time.sleep(delays[attempt_index])
-    raise SqliteLockConflict(
-        f"BEGIN IMMEDIATE failed after {len(delays) + 1} attempts: {last_exc}"
-    )
+    lock = _conn_tx_lock(conn) if conn is not None else None
+
+    def _attempt_chain() -> object:
+        last_exc: sqlite3.OperationalError | None = None
+        for attempt_index in range(len(delays) + 1):
+            try:
+                return operation()
+            except sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc).lower():
+                    raise
+                last_exc = exc
+                if attempt_index < len(delays):
+                    time.sleep(delays[attempt_index])
+        raise SqliteLockConflict(
+            f"BEGIN IMMEDIATE failed after {len(delays) + 1} attempts: {last_exc}"
+        )
+
+    if lock is None:
+        return _attempt_chain()
+    with lock:
+        return _attempt_chain()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-connection transaction serializer (Slice 16 — bench-container
+# integration test surfaced multi-threaded BEGIN IMMEDIATE races).
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _conn_tx_lock(conn: sqlite3.Connection) -> threading.Lock:
+    """Return a per-connection ``threading.Lock`` that serializes every
+    transactional write the FEAT-009 DAOs + audit writer issue against
+    a shared :class:`sqlite3.Connection`.
+
+    The daemon's :func:`_build_feat009_services` hands one connection
+    (``check_same_thread=False``, ``isolation_level=None``) to the
+    :class:`MessageQueueDao`, :class:`DaemonStateDao`, and
+    :class:`QueueAuditWriter`. Multiple threads — the socket dispatcher
+    (running ``queue_service.send_input``) and the delivery worker —
+    issue their own ``BEGIN IMMEDIATE`` blocks against that connection.
+
+    Without serialization, a thread that opens a transaction can race
+    a sibling thread that also tries to open one, surfacing as
+    ``sqlite3.OperationalError: cannot start a transaction within a
+    transaction``. SQLite serializes the underlying file's lock but
+    only one ``BEGIN`` is allowed per connection at a time.
+
+    The lock is attached to the connection object so every helper that
+    touches the same connection picks up the same lock. We resolve to
+    a single lock via the connection's ``id()`` to avoid mutating the
+    sqlite3 driver's slot table.
+    """
+    return _CONN_LOCKS.setdefault(id(conn), threading.Lock())
+
+
+_CONN_LOCKS: dict[int, threading.Lock] = {}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -259,7 +311,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     def insert_blocked(
         self,
@@ -306,19 +358,31 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     # ─── Worker-side transitions (FR-041 / FR-042 / FR-043) ───────────
 
     def pick_next_ready_row(self) -> QueueRow | None:
-        """Return the oldest ``queued`` row (FR-031 ordering: ``enqueued_at`` ASC,
-        ``message_id`` ASC tie-break), or ``None`` if no row is ready.
+        """Return the oldest ``queued`` row that the live worker may claim
+        (FR-031 ordering: ``enqueued_at`` ASC, ``message_id`` ASC
+        tie-break), or ``None`` if no row is ready.
 
         Read-only — no lock retry needed.
+
+        Half-stamped rows (``delivery_attempt_started_at IS NOT NULL``
+        with the terminal stamps still unset) are EXCLUDED here. Those
+        rows are owned by the recovery pass at the next daemon boot
+        (FR-040 / data-model §3.1 / Research §R-012); picking them up
+        again from the live worker would crash-loop on the next
+        ``stamp_delivery_attempt_started`` call (which rejects a row
+        whose stamp is already set). The recovery pass transitions such
+        rows to ``failed`` with ``failure_reason='attempt_interrupted'``
+        on boot.
         """
         cur = self._conn.execute(
             f"SELECT {_QUEUE_COLUMNS} FROM message_queue "
             "WHERE state = 'queued' "
+            "AND delivery_attempt_started_at IS NULL "
             "ORDER BY enqueued_at ASC, message_id ASC LIMIT 1"
         )
         row = cur.fetchone()
@@ -355,7 +419,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     def transition_queued_to_delivered(self, message_id: str, ts: str) -> None:
         """FR-042: commit ``delivered`` (terminal) after a successful paste+submit."""
@@ -424,7 +488,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     def transition_queued_to_blocked_re_check(
         self, message_id: str, block_reason: str, ts: str,
@@ -458,7 +522,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     # ─── Operator-driven transitions (FR-031 — FR-036) ────────────────
 
@@ -562,7 +626,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     def _operator_transition(
         self,
@@ -658,7 +722,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
 
     # ─── FR-040 recovery ──────────────────────────────────────────────
 
@@ -694,7 +758,7 @@ class MessageQueueDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        return with_lock_retry(_op)
+        return with_lock_retry(_op, conn=self._conn)
 
     # ─── Reads (no lock retry needed) ─────────────────────────────────
 
@@ -829,4 +893,4 @@ class DaemonStateDao:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op)
+        with_lock_retry(_op, conn=self._conn)
