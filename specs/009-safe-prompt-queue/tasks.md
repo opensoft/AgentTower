@@ -207,8 +207,8 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Tests for User Story 4
 
-- [ ] T072 [P] [US4] Write `tests/integration/test_queue_us4_kill_switch.py` covering all five US4 acceptance scenarios plus Session 2 Q1 (in-flight rows finish after `disable`). (Deferred — daemon-process integration test, lands in polish slice.)
-- [ ] T073 [P] [US4] Write `tests/integration/test_queue_routing_toggle_host_only.py` covering bench-container toggle rejection. (Deferred — daemon-process integration test.)
+- [X] T072 [P] [US4] Write `tests/integration/test_queue_us4_kill_switch.py` covering all five US4 acceptance scenarios plus Session 2 Q1 (in-flight rows finish after `disable`). (Socket-level integration. Slice 19 — 7 cases: AS1 status returns disabled + last-toggle metadata; AS2 send_input → blocked kill_switch_off; AS3 list + cancel work while disabled; AS4 worker doesn't pick queued rows while disabled; AS5 re-enable resumes new deliveries but keeps kill_switch_off blocked rows; plus idempotent-disable + idempotent-enable returning changed=False.)
+- [X] T073 [P] [US4] Write `tests/integration/test_queue_routing_toggle_host_only.py` covering bench-container toggle rejection. (Socket-level integration. Slice 19 — 3 cases: bench-container routing.disable refused with flag unchanged; bench-container routing.enable refused with flag unchanged; bench-container routing.status accepted with full payload.)
 
 ### Implementation for User Story 4
 
