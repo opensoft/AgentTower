@@ -164,9 +164,9 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Tests for User Story 2
 
-- [ ] T061 [P] [US2] Write `tests/integration/test_queue_us2_permission_matrix.py` covering all seven US2 acceptance scenarios: unknown sender, slave/swarm sender, master sender to disallowed target roles, master sender to unknown target (no row created), master sender to inactive slave, target container inactive, target pane missing.
-- [ ] T062 [P] [US2] Write `tests/integration/test_queue_send_input_host_refused.py` (Q3 from Clarifications): host-side `send-input` returns `sender_not_in_pane` and creates no row.
-- [ ] T063 [P] [US2] Write `tests/integration/test_queue_target_resolver_integration.py` covering `--target` resolution end-to-end: agent_id, unique label, ambiguous label → `target_label_ambiguous`, unknown → `agent_not_found`.
+- [X] T061 [P] [US2] Write `tests/integration/test_queue_us2_permission_matrix.py` covering all seven US2 acceptance scenarios: unknown sender, slave/swarm sender, master sender to disallowed target roles, master sender to unknown target (no row created), master sender to inactive slave, target container inactive, target pane missing. (Socket-level integration. Slice 17 — 8 cases.)
+- [X] T062 [P] [US2] Write `tests/integration/test_queue_send_input_host_refused.py` (Q3 from Clarifications): host-side `send-input` returns `sender_not_in_pane` and creates no row. (CLI integration — drives the `agenttower send-input` subprocess with a fake host-context proc_root. Slice 17 — 2 cases.)
+- [X] T063 [P] [US2] Write `tests/integration/test_queue_target_resolver_integration.py` covering `--target` resolution end-to-end: agent_id, unique label, ambiguous label → `target_label_ambiguous`, unknown → `agent_not_found`. (Socket-level integration. Slice 17 — 4 cases.)
 
 ### Implementation for User Story 2
 
