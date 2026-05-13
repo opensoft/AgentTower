@@ -8,6 +8,9 @@ item is intended to be run through spec-kit as a separate feature spec. The
 ordering is deliberate: prove host control and container discovery first, then
 registration, observation, eventing, and finally prompt routing.
 
+After `FEAT-010` lands, verify the full MVP with the ordered test plans in
+`docs/mvp-test-plans.md`.
+
 ## Build Principles
 
 - The Tower deploys first as a host daemon, not an in-container daemon.
