@@ -185,7 +185,7 @@ description: "Implementation tasks for FEAT-009 Safe Prompt Queue and Input Deli
 
 ### Tests for User Story 3
 
-- [ ] T066 [P] [US3] Write `tests/integration/test_queue_us3_operator_overrides.py` covering all seven US3 acceptance scenarios: list ordering, filter AND-combination, approve (every operator-resolvable reason), delay, cancel, terminal-row rejection, `--json` shape across every subcommand. (Deferred — daemon-process integration test, lands with the polish slice once the integration suite harness is set up.)
+- [X] T066 [P] [US3] Write `tests/integration/test_queue_us3_operator_overrides.py` covering all seven US3 acceptance scenarios: list ordering, filter AND-combination, approve (every operator-resolvable reason), delay, cancel, terminal-row rejection, `--json` shape across every subcommand. (Socket-level integration. Slice 18 — 10 cases covering AS1 list ordering, AS2 filter AND-combine, AS3 approve happy path + approval_not_applicable refusal, AS4 delay → operator_delayed, AS5 cancel from queued + cancel from blocked, AS6 terminal-row guard on both cancel and approve, plus the message_id_not_found path. Tests routing.disable to give the worker a quiet window before operator actions.)
 - [X] T067 [P] [US3] Write `tests/unit/test_queue_listing_format.py` covering the human-readable column shape (`MESSAGE_ID STATE SENDER TARGET ENQUEUED LAST_UPDATED EXCERPT`), the `<label>(<agent_id-prefix>)` rendering rule, the empty-state line (`(no rows match)`), and the empty `[]` JSON output.
 
 ### Implementation for User Story 3
