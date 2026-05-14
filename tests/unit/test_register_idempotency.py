@@ -31,10 +31,12 @@ def test_idempotent_returns_same_agent_id(tmp_path: Path) -> None:
         register_params(role="slave", capability="codex", label="lbl"),
         socket_peer_uid=1000,
     )
-    # 5 ms sleep is enough margin to keep the strict ``>`` assertion
-    # below stable on fast hardware where two ISO-8601-microsecond
-    # timestamps could otherwise collide (review-pass-6 N34).
-    time.sleep(0.005)
+    # Sleep long enough that the second register_agent call's
+    # microsecond-precision ``last_registered_at`` is strictly greater
+    # than the first's, even under coverage instrumentation (which
+    # can compress sub-millisecond gaps). 50 ms is well above the
+    # observed microsecond clock granularity on every CI host.
+    time.sleep(0.050)
     second = service.register_agent(
         register_params(role="slave", capability="codex", label="lbl"),
         socket_peer_uid=1000,

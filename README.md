@@ -128,6 +128,30 @@ product contract:
 - AgentTower should summarize terminal activity instead of blindly forwarding
   large raw logs.
 
+## SonarQube CI
+
+This repo runs SonarQube analysis as a GitHub Actions workflow, NOT
+via the SonarCloud / SonarQube GitHub App. The workflow at
+`.github/workflows/sonarqube.yml` runs `pytest` with coverage and
+then `sonar-scanner`, passing PR-decoration context through the
+GitHub Actions env vars.
+
+To enable analysis on a repo:
+
+1. Generate a long-lived analysis token in your Sonar instance
+   (Account → Security → Generate Tokens). The token needs at
+   least "Execute Analysis" on the project.
+2. Add it as a repository **secret** named `SONAR_TOKEN`
+   (Settings → Secrets and variables → Actions → Secrets).
+3. (Optional, self-hosted only.) If your Sonar server is NOT
+   SonarCloud, add a repository **variable** named `SONAR_HOST_URL`
+   pointing at the server, e.g. `https://sonar.example.com`. The
+   workflow falls back to `https://sonarcloud.io` when this variable
+   is unset.
+
+Project-level configuration (`sonar.projectKey`, exclusions, coverage
+paths, Python version targets) lives in `sonar-project.properties`.
+
 ## Roadmap
 
 1. Build tmux and Docker discovery.
