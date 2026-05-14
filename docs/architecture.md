@@ -536,7 +536,19 @@ Before delivery, the daemon checks:
 Idle detection is conservative in MVP. If the daemon is not confident the pane
 is ready, it queues the message.
 
-## 17. Multi-Master Arbitration
+## 17. Routing Layer + Multi-Master Arbitration
+
+FEAT-009 ships the foundational routing primitive: a durable per-target
+FIFO message queue (`message_queue` SQLite table) with permission
+checks, the global routing kill switch (`daemon_state.routing_enabled`),
+and tmux-safe paste-buffer delivery from master agents to eligible
+target agents (`slave` / `swarm`).
+
+Multi-master arbitration is built on top of that queue and is deferred
+to FEAT-010 — FEAT-009 supplies only the per-target FIFO primitive on
+which arbitration will later build. See FR-052 for the explicit
+non-goal and [`specs/009-safe-prompt-queue/`](../specs/009-safe-prompt-queue/)
+for the queue's contracts.
 
 Multiple masters may address the same slave. AgentTower serializes messages per
 target pane, but it does not enforce exclusive ownership.
@@ -674,8 +686,20 @@ agenttower queue
 agenttower queue approve <message-id>
 agenttower queue delay <message-id>
 agenttower queue cancel <message-id>
-agenttower route
+agenttower routing enable           # host-only (FEAT-009 / Clarifications Q2)
+agenttower routing disable          # host-only
+agenttower routing status           # any caller
 ```
+
+FEAT-009 ships the durable message queue + permission gate + global
+routing kill switch + tmux-safe paste-buffer delivery from master
+agents to eligible target agents. See
+[`specs/009-safe-prompt-queue/`](../specs/009-safe-prompt-queue/) for
+the full spec, contracts, and integration-test suite. The host-origin
+constraint on `routing enable | disable` is enforced via
+`caller_pane is None AND peer_uid == os.getuid()` at the socket
+dispatch boundary; bench-container thin clients receive
+`routing_toggle_host_only`.
 
 Useful later commands:
 
