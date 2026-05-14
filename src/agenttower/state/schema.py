@@ -573,11 +573,10 @@ def _apply_migration_v7(conn: sqlite3.Connection) -> None:
             -- FEAT-008 classifier rows insert non-NULL pairs only. The
             -- conditional ranges guard the FEAT-008 invariant
             -- (end >= start) WHILE preserving the FEAT-009 NULL-pair
-            -- shape. The earlier form ``end >= start`` evaluated to
-            -- NULL when start was NULL and end wasn't, which SQLite
-            -- treats as CHECK-pass — letting through a malformed
-            -- classifier row. The ``start IS NOT NULL AND ...`` form
-            -- forces both columns to be set together.
+            -- shape. Both columns of a pair MUST be set together — a
+            -- per-column CHECK can't enforce that on its own (it only
+            -- sees its own value), so we add a table-level CHECK
+            -- below that pins the paired-nullability invariant.
             byte_range_start   INTEGER CHECK (byte_range_start IS NULL OR byte_range_start >= 0),
             byte_range_end     INTEGER CHECK (
                 byte_range_end IS NULL
@@ -600,7 +599,24 @@ def _apply_migration_v7(conn: sqlite3.Connection) -> None:
             debounce_window_ended_at    TEXT,
             schema_version     INTEGER NOT NULL DEFAULT 1
                                CHECK (schema_version >= 1),
-            jsonl_appended_at  TEXT
+            jsonl_appended_at  TEXT,
+            -- Paired-nullability invariants for the FEAT-008 byte/line
+            -- range columns. Per-column CHECKs above guard ``>= 0`` and
+            -- ``end >= start`` shapes, but only a table-level CHECK can
+            -- enforce "both NULL or both non-NULL" — the per-column
+            -- forms can't see the other column. Without this constraint
+            -- a row could insert with only one half of a pair populated
+            -- (start without end OR end without start), breaking the
+            -- FEAT-008 invariant that classifier rows always have both
+            -- bounds.
+            CHECK (
+                (byte_range_start IS NULL AND byte_range_end IS NULL)
+                OR (byte_range_start IS NOT NULL AND byte_range_end IS NOT NULL)
+            ),
+            CHECK (
+                (line_offset_start IS NULL AND line_offset_end IS NULL)
+                OR (line_offset_start IS NOT NULL AND line_offset_end IS NOT NULL)
+            )
         )
         """
     )

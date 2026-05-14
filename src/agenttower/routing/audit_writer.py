@@ -151,6 +151,7 @@ class QueueAuditWriter:
     def append_queue_transition(
         self,
         *,
+        event_type: str,
         message_id: str,
         from_state: str | None,
         to_state: str,
@@ -163,6 +164,17 @@ class QueueAuditWriter:
     ) -> int:
         """Emit one ``queue_message_*`` audit record (FR-046).
 
+        ``event_type`` is the FEAT-009 closed-set transition verb
+        (``queue_message_enqueued`` / ``_delivered`` / ``_blocked`` /
+        ``_failed`` / ``_canceled`` / ``_approved`` / ``_delayed``).
+        ``to_state`` is the resulting QUEUE STATE per
+        ``contracts/queue-audit-schema.md`` (one of
+        ``queued|blocked|delivered|canceled|failed``). The two are
+        intentionally decoupled: ``queue_message_approved`` ends in
+        ``to_state='queued'`` (the row is now eligible for the worker
+        again); ``queue_message_delayed`` ends in ``to_state='blocked'``
+        with ``reason='operator_delayed'``.
+
         Returns the SQLite ``event_id``. The dual-write order is:
         1. INSERT into ``events`` (source of truth; propagates exceptions).
         2. Append to ``events.jsonl`` (best-effort; failures buffered).
@@ -172,7 +184,14 @@ class QueueAuditWriter:
         target's ``agent_id`` so a subsequent ``events --target <agent>``
         surfaces this row.
         """
-        event_type = _QUEUE_MESSAGE_EVENT_PREFIX + to_state
+        # Defense-in-depth: the closed-set check guards against a
+        # mis-named ``event_type`` slipping through and breaking the
+        # R-008 disjointness invariant.
+        if not event_type.startswith(_QUEUE_MESSAGE_EVENT_PREFIX):
+            raise ValueError(
+                f"event_type {event_type!r} must start with "
+                f"{_QUEUE_MESSAGE_EVENT_PREFIX!r}"
+            )
         payload = {
             "schema_version": 1,
             "event_type": event_type,

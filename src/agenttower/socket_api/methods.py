@@ -1147,16 +1147,48 @@ def _resolve_caller_agent(
             errors.BAD_REQUEST,
             "params.caller_pane.agent_id must be a non-empty string",
         )
-    conn = getattr(ctx, "state_conn", None)
-    if conn is None:
-        return None, errors.make_error(
-            errors.INTERNAL_ERROR, "agent registry unavailable"
-        )
-    # Lazy import keeps the FEAT-009 dispatch module independent of the
-    # state package's import graph for FEAT-001..004 boot paths.
+
+    # Resolve the agents row via a per-request SQLite connection so
+    # the dispatcher thread doesn't race the worker / DAOs on the
+    # daemon's shared ``worker_conn`` (sqlite3.Connection isn't
+    # thread-safe even with ``check_same_thread=False``).
+    #
+    # The daemon's ``_build_context`` exposes both ``state_path`` (the
+    # state dir on disk) and ``state_conn`` (the shared worker_conn).
+    # We prefer opening a fresh connection from the on-disk state DB
+    # — that's production-safe and cleans up immediately. Tests that
+    # pre-populate an in-memory ``state_conn`` (without an on-disk
+    # DB) fall through to the connection-from-ctx path; tests are
+    # single-threaded against that connection so the concurrency
+    # concern doesn't apply.
+    # Lazy import keeps the FEAT-009 dispatch module independent of
+    # the state package's import graph for FEAT-001..004 boot paths.
     from ..state.agents import select_agent_by_id
 
-    record = select_agent_by_id(conn, agent_id=agent_id)
+    state_dir = getattr(ctx, "state_path", None)
+    state_db = (state_dir / "agenttower.sqlite3") if state_dir is not None else None
+    if state_db is not None and state_db.exists():
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(state_db))
+        except sqlite3.Error as exc:  # pragma: no cover — defensive
+            return None, errors.make_error(
+                errors.INTERNAL_ERROR,
+                _internal_error_message(str(exc), prefix="agent registry"),
+            )
+        try:
+            record = select_agent_by_id(conn, agent_id=agent_id)
+        finally:
+            conn.close()
+    else:
+        # No on-disk state DB → test fixture path. Use the
+        # in-memory ``state_conn`` the test wired into the context.
+        fallback_conn = getattr(ctx, "state_conn", None)
+        if fallback_conn is None:
+            return None, errors.make_error(
+                errors.INTERNAL_ERROR, "agent registry unavailable"
+            )
+        record = select_agent_by_id(fallback_conn, agent_id=agent_id)
     if record is None or not record.active:
         return None, errors.make_error(
             errors.OPERATOR_PANE_INACTIVE,
@@ -1543,6 +1575,11 @@ def _routing_toggle(
     from ..routing.timestamps import now_iso_ms_utc
 
     ts = now_iso_ms_utc()
+    # Pick the dispatched method name (``routing.enable`` /
+    # ``routing.disable``) for log/error correlation. The local
+    # ``value`` is the flag's target state (``enabled`` / ``disabled``)
+    # which doesn't match the RPC method name.
+    method_name = "routing.enable" if value == "enabled" else "routing.disable"
     try:
         result = (
             routing.enable(operator=HOST_OPERATOR_SENTINEL, ts=ts)
@@ -1552,7 +1589,7 @@ def _routing_toggle(
     except Exception as exc:
         return errors.make_error(
             errors.INTERNAL_ERROR,
-            _internal_error_message(str(exc), prefix=f"routing.{value}"),
+            _internal_error_message(str(exc), prefix=method_name),
         )
     if result.changed and getattr(ctx, "queue_audit_writer", None) is not None:
         try:

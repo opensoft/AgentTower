@@ -170,6 +170,7 @@ class DeliveryWorker:
         # Emit one audit row per recovered row.
         for r in rows:
             self._audit.append_queue_transition(
+                event_type="queue_message_failed",
                 message_id=r[0],
                 from_state="queued",
                 to_state="failed",
@@ -416,6 +417,7 @@ class DeliveryWorker:
             return
         # Audit + notify waiters.
         self._audit.append_queue_transition(
+            event_type="queue_message_delivered",
             message_id=row.message_id,
             from_state="queued",
             to_state="delivered",
@@ -444,6 +446,7 @@ class DeliveryWorker:
             )
             return
         self._audit.append_queue_transition(
+            event_type="queue_message_blocked",
             message_id=row.message_id,
             from_state="queued",
             to_state="blocked",
@@ -468,6 +471,7 @@ class DeliveryWorker:
             )
             return
         self._audit.append_queue_transition(
+            event_type="queue_message_failed",
             message_id=row.message_id,
             from_state="queued",
             to_state="failed",
