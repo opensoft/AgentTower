@@ -35,6 +35,7 @@ delivery worker notifies the condition after every terminal transition.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import uuid
 from collections.abc import Callable
@@ -229,11 +230,35 @@ class QueueService:
         )
         ts = now_iso_ms_utc(self._clock)
 
-        # Step 4: DAO insert (queued or blocked).
+        # Step 4: DAO insert (queued or blocked) — atomic with the
+        # FR-046 audit row INSERT via the ``audit_callback`` plumbing
+        # (see audit_writer.py module docstring). The DAO opens
+        # BEGIN IMMEDIATE, INSERTs the message_queue row, runs the
+        # callback (which INSERTs the events row), then COMMITs. If
+        # the audit INSERT raises, the queue row INSERT rolls back —
+        # state transition and audit row commit/fail together.
         sender_dict = _identity_to_dict(sender_identity)
         target_dict = _identity_to_dict(target_identity, container=resolved_target)
+        excerpt_str = render_excerpt(body_bytes)
         if decision.ok:
-            self._dao.insert_queued(
+            def _audit_enqueue_queued(conn: sqlite3.Connection) -> tuple[int, dict]:
+                # Audit queue_message_enqueued: event_type is the
+                # transition verb; to_state is the resulting queue
+                # state (``queued``, permission gate passed).
+                return self._audit.insert_queue_transition_in_tx(
+                    conn,
+                    event_type="queue_message_enqueued",
+                    message_id=message_id,
+                    from_state=None,
+                    to_state="queued",
+                    reason=None,
+                    operator=None,
+                    observed_at=ts,
+                    sender=sender_dict,
+                    target=target_dict,
+                    excerpt=excerpt_str,
+                )
+            audit_event_id, audit_payload = self._dao.insert_queued(
                 message_id=message_id,
                 sender=sender_dict,
                 target=target_dict,
@@ -241,26 +266,33 @@ class QueueService:
                 envelope_body_sha256=envelope_body_sha256,
                 envelope_size_bytes=envelope_size_bytes,
                 enqueued_at=ts,
-            )
-            # Audit queue_message_enqueued — event_type is the
-            # transition verb; to_state is the resulting queue state
-            # (``queued``, since the permission gate passed and we
-            # inserted via ``insert_queued``).
-            self._audit.append_queue_transition(
-                event_type="queue_message_enqueued",
-                message_id=message_id,
-                from_state=None,
-                to_state="queued",
-                reason=None,
-                operator=None,
-                observed_at=ts,
-                sender=sender_dict,
-                target=target_dict,
-                excerpt=render_excerpt(body_bytes),
+                audit_callback=_audit_enqueue_queued,
             )
         else:
             assert decision.block_reason is not None
-            self._dao.insert_blocked(
+            block_reason_val = decision.block_reason
+            def _audit_enqueue_blocked(conn: sqlite3.Connection) -> tuple[int, dict]:
+                # Per the audit schema, an at-enqueue blocked landing
+                # is still a queue_message_enqueued event (it's the
+                # first event for this message_id). The
+                # ``to_state='blocked'`` + ``reason=<block_reason>``
+                # distinguishes it from a ``queue_message_blocked``
+                # mid-flight transition (which the worker emits when
+                # the pre-paste re-check fails).
+                return self._audit.insert_queue_transition_in_tx(
+                    conn,
+                    event_type="queue_message_enqueued",
+                    message_id=message_id,
+                    from_state=None,
+                    to_state="blocked",
+                    reason=block_reason_val,
+                    operator=None,
+                    observed_at=ts,
+                    sender=sender_dict,
+                    target=target_dict,
+                    excerpt=excerpt_str,
+                )
+            audit_event_id, audit_payload = self._dao.insert_blocked(
                 message_id=message_id,
                 sender=sender_dict,
                 target=target_dict,
@@ -269,25 +301,15 @@ class QueueService:
                 envelope_size_bytes=envelope_size_bytes,
                 enqueued_at=ts,
                 block_reason=decision.block_reason,
+                audit_callback=_audit_enqueue_blocked,
             )
-            # Per the audit schema, an at-enqueue blocked landing is
-            # still a queue_message_enqueued event (it's the first
-            # event for this message_id). The ``to_state='blocked'``
-            # + ``reason=<block_reason>`` distinguishes it from a
-            # ``queue_message_blocked`` mid-flight transition (which
-            # the worker emits when the pre-paste re-check fails).
-            self._audit.append_queue_transition(
-                event_type="queue_message_enqueued",
-                message_id=message_id,
-                from_state=None,
-                to_state="blocked",
-                reason=decision.block_reason,
-                operator=None,
-                observed_at=ts,
-                sender=sender_dict,
-                target=target_dict,
-                excerpt=render_excerpt(body_bytes),
-            )
+
+        # Step 4b: JSONL append (best-effort; runs AFTER the atomic
+        # SQLite commit). Failures buffer + mark degraded; the worker
+        # drains on its next cycle.
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts,
+        )
 
         # Step 5: read back the row (so the response carries the canonical
         # SQLite state, not the in-memory assumption).
@@ -329,56 +351,83 @@ class QueueService:
             self._check_approve_applicable(row)
         # If state != 'blocked', the DAO will raise approval_not_applicable.
         ts = now_iso_ms_utc(self._clock)
-        self._dao.transition_blocked_to_queued_approve(
-            message_id, operator=operator, ts=ts,
-        )
-        # Capture the resolved block_reason BEFORE the transition so
-        # the audit row can carry it. After ``transition_blocked_to_queued_approve``
-        # commits, ``block_reason`` is cleared on the row (FR-033),
-        # so we must read it pre-transition.
+        # Capture identity + block_reason from the pre-transition row.
+        # After the transition commits, block_reason is cleared on the
+        # row (FR-033), so we must read it BEFORE the DAO call. The
+        # audit_callback runs inside the DAO's transaction, so it sees
+        # these values via closure.
+        sender_dict = _row_sender_dict(row)
+        target_dict = _row_target_dict(row)
         prior_block_reason = row.block_reason
+
+        def _audit_approve(conn: sqlite3.Connection) -> tuple[int, dict]:
+            # event_type is the action verb; to_state is the RESULTING
+            # queue state (queued, since approve takes blocked →
+            # queued). reason carries the resolved block_reason per the
+            # audit contract (e.g. operator_delayed / target_not_active).
+            return self._audit.insert_queue_transition_in_tx(
+                conn,
+                event_type="queue_message_approved",
+                message_id=message_id,
+                from_state="blocked",
+                to_state="queued",
+                reason=prior_block_reason,
+                operator=operator,
+                observed_at=ts,
+                sender=sender_dict,
+                target=target_dict,
+                excerpt="",  # operator action has no body context
+            )
+        audit_event_id, audit_payload = self._dao.transition_blocked_to_queued_approve(
+            message_id, operator=operator, ts=ts,
+            audit_callback=_audit_approve,
+        )
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts,
+        )
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
-        # event_type is the action verb; to_state is the RESULTING
-        # queue state (queued, since approve takes blocked → queued).
-        # reason carries the resolved block_reason per the audit
-        # contract (e.g. operator_delayed / target_not_active).
-        self._audit.append_queue_transition(
-            event_type="queue_message_approved",
-            message_id=message_id,
-            from_state="blocked",
-            to_state="queued",
-            reason=prior_block_reason,
-            operator=operator,
-            observed_at=ts,
-            sender=_row_sender_dict(row),
-            target=_row_target_dict(row),
-            excerpt="",  # operator action has no body context
-        )
         return row
 
     def delay(self, message_id: str, *, operator: str) -> QueueRow:
         """Operator ``delay``: ``queued → blocked operator_delayed`` (FR-034)."""
+        # Capture identity from the pre-transition row so the
+        # audit_callback (running inside the DAO transaction) doesn't
+        # have to re-read the row after the UPDATE.
+        pre_row = self._dao.get_row_by_id(message_id)
+        if pre_row is None:
+            raise QueueServiceError(
+                "message_id_not_found", f"unknown message_id {message_id!r}",
+            )
+        sender_dict = _row_sender_dict(pre_row)
+        target_dict = _row_target_dict(pre_row)
         ts = now_iso_ms_utc(self._clock)
-        self._dao.transition_queued_to_blocked_delay(
+
+        def _audit_delay(conn: sqlite3.Connection) -> tuple[int, dict]:
+            # event_type is the action verb; to_state is the RESULTING
+            # queue state (blocked, since delay takes queued → blocked).
+            return self._audit.insert_queue_transition_in_tx(
+                conn,
+                event_type="queue_message_delayed",
+                message_id=message_id,
+                from_state="queued",
+                to_state="blocked",
+                reason="operator_delayed",
+                operator=operator,
+                observed_at=ts,
+                sender=sender_dict,
+                target=target_dict,
+                excerpt="",
+            )
+        audit_event_id, audit_payload = self._dao.transition_queued_to_blocked_delay(
             message_id, operator=operator, ts=ts,
+            audit_callback=_audit_delay,
+        )
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts,
         )
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
-        # event_type is the action verb; to_state is the RESULTING
-        # queue state (blocked, since delay takes queued → blocked).
-        self._audit.append_queue_transition(
-            event_type="queue_message_delayed",
-            message_id=message_id,
-            from_state="queued",
-            to_state="blocked",
-            reason="operator_delayed",
-            operator=operator,
-            observed_at=ts,
-            sender=_row_sender_dict(row),
-            target=_row_target_dict(row),
-            excerpt="",
-        )
         return row
 
     def cancel(self, message_id: str, *, operator: str) -> QueueRow:
@@ -388,22 +437,33 @@ class QueueService:
         # ``canceled`` and we lose the queued-vs-blocked distinction.
         pre_row = self._dao.get_row_by_id(message_id)
         pre_state = pre_row.state if pre_row is not None else None
+        sender_dict = _row_sender_dict(pre_row) if pre_row is not None else {}
+        target_dict = _row_target_dict(pre_row) if pre_row is not None else {}
         ts = now_iso_ms_utc(self._clock)
-        self._dao.transition_to_canceled(message_id, operator=operator, ts=ts)
+
+        def _audit_cancel(conn: sqlite3.Connection) -> tuple[int, dict]:
+            return self._audit.insert_queue_transition_in_tx(
+                conn,
+                event_type="queue_message_canceled",
+                message_id=message_id,
+                from_state=pre_state,
+                to_state="canceled",
+                reason=None,
+                operator=operator,
+                observed_at=ts,
+                sender=sender_dict,
+                target=target_dict,
+                excerpt="",
+            )
+        audit_event_id, audit_payload = self._dao.transition_to_canceled(
+            message_id, operator=operator, ts=ts,
+            audit_callback=_audit_cancel,
+        )
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts,
+        )
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
-        self._audit.append_queue_transition(
-            event_type="queue_message_canceled",
-            message_id=message_id,
-            from_state=pre_state,
-            to_state="canceled",
-            reason=None,
-            operator=operator,
-            observed_at=ts,
-            sender=_row_sender_dict(row),
-            target=_row_target_dict(row),
-            excerpt="",
-        )
         # Notify any waiter (cancel produces a terminal state).
         self._notify_terminal(message_id)
         return row

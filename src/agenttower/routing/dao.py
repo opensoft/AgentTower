@@ -20,7 +20,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Callable, Final
 
 from agenttower.routing.errors import (
     APPROVAL_NOT_APPLICABLE,
@@ -274,10 +274,19 @@ class MessageQueueDao:
         envelope_body_sha256: str,
         envelope_size_bytes: int,
         enqueued_at: str,
-    ) -> None:
-        """Insert a new row in state ``queued`` (FR-019 happy path)."""
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
+        """Insert a new row in state ``queued`` (FR-019 happy path).
 
-        def _op() -> None:
+        ``audit_callback`` (if supplied) runs inside the same
+        ``BEGIN IMMEDIATE`` transaction, AFTER the INSERT and BEFORE
+        the COMMIT — driving the FR-046 dual-write atomicity contract
+        (see :mod:`agenttower.routing.audit_writer`). The callback's
+        return value is returned to the caller; if it raises, the
+        INSERT is rolled back.
+        """
+
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.execute(
@@ -302,12 +311,14 @@ class MessageQueueDao:
                         enqueued_at, enqueued_at,
                     ),
                 )
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)
 
     def insert_blocked(
         self,
@@ -320,11 +331,16 @@ class MessageQueueDao:
         envelope_size_bytes: int,
         enqueued_at: str,
         block_reason: str,
-    ) -> None:
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """Insert a new row in state ``blocked`` (FR-020) with the
-        FR-019 first-failing-step ``block_reason``."""
+        FR-019 first-failing-step ``block_reason``.
 
-        def _op() -> None:
+        ``audit_callback`` runs in the same transaction as the INSERT
+        (see :meth:`insert_queued` for the FR-046 atomicity contract).
+        """
+
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.execute(
@@ -349,12 +365,14 @@ class MessageQueueDao:
                         enqueued_at, enqueued_at,
                     ),
                 )
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)
 
     # ─── Worker-side transitions (FR-041 / FR-042 / FR-043) ───────────
 
@@ -423,20 +441,39 @@ class MessageQueueDao:
 
         with_lock_retry(_op, lock=self._tx_lock)
 
-    def transition_queued_to_delivered(self, message_id: str, ts: str) -> None:
-        """FR-042: commit ``delivered`` (terminal) after a successful paste+submit."""
-        self._terminal_transition_from_in_flight(
+    def transition_queued_to_delivered(
+        self,
+        message_id: str,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
+        """FR-042: commit ``delivered`` (terminal) after a successful paste+submit.
+
+        ``audit_callback`` runs in the same transaction (FR-046 atomicity).
+        """
+        return self._terminal_transition_from_in_flight(
             message_id, new_state="delivered", stamp_column="delivered_at",
             ts=ts, reason_column=None, reason_value=None,
+            audit_callback=audit_callback,
         )
 
     def transition_queued_to_failed(
-        self, message_id: str, failure_reason: str, ts: str,
-    ) -> None:
-        """FR-043: transition to ``failed`` with a closed-set ``failure_reason``."""
-        self._terminal_transition_from_in_flight(
+        self,
+        message_id: str,
+        failure_reason: str,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
+        """FR-043: transition to ``failed`` with a closed-set ``failure_reason``.
+
+        ``audit_callback`` runs in the same transaction (FR-046 atomicity).
+        """
+        return self._terminal_transition_from_in_flight(
             message_id, new_state="failed", stamp_column="failed_at",
             ts=ts, reason_column="failure_reason", reason_value=failure_reason,
+            audit_callback=audit_callback,
         )
 
     def _terminal_transition_from_in_flight(
@@ -448,7 +485,8 @@ class MessageQueueDao:
         ts: str,
         reason_column: str | None,
         reason_value: str | None,
-    ) -> None:
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """Shared body for ``queued`` (in-flight) → terminal transitions.
 
         Precondition: row is in state ``queued``, ``delivery_attempt_started_at``
@@ -473,7 +511,7 @@ class MessageQueueDao:
             f"AND canceled_at IS NULL"
         )
 
-        def _op() -> None:
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 cur = self._conn.execute(update_sql, params)
@@ -483,25 +521,34 @@ class MessageQueueDao:
                         MESSAGE_ID_NOT_FOUND,
                         f"message {message_id} not in in-flight state",
                     )
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except QueueServiceError:
                 raise
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)
 
     def transition_queued_to_blocked_re_check(
-        self, message_id: str, block_reason: str, ts: str,
-    ) -> None:
+        self,
+        message_id: str,
+        block_reason: str,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """FR-025: pre-paste re-check failure transitions ``queued → blocked``.
 
         Called BEFORE ``stamp_delivery_attempt_started`` — the row's
         ``delivery_attempt_started_at`` is still NULL.
+
+        ``audit_callback`` runs in the same transaction (FR-046 atomicity).
         """
 
-        def _op() -> None:
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 cur = self._conn.execute(
@@ -517,53 +564,80 @@ class MessageQueueDao:
                         MESSAGE_ID_NOT_FOUND,
                         f"message {message_id} not in queued+unstamped state",
                     )
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except QueueServiceError:
                 raise
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)
 
     # ─── Operator-driven transitions (FR-031 — FR-036) ────────────────
 
     def transition_blocked_to_queued_approve(
-        self, message_id: str, operator: str, ts: str,
-    ) -> None:
+        self,
+        message_id: str,
+        operator: str,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """Operator ``approve``: ``blocked → queued`` (FR-033).
 
         Caller (service layer) is responsible for the FR-033 closed-set
         check (block_reason must be operator-resolvable); this DAO
         method only enforces the from-state transition.
+
+        ``audit_callback`` runs in the same transaction (FR-046 atomicity).
         """
-        self._operator_transition(
+        return self._operator_transition(
             message_id, operator=operator, ts=ts,
             from_state="blocked", to_state="queued",
             operator_action="approved",
             block_reason_new=None, stamp_column=None,
+            audit_callback=audit_callback,
         )
 
     def transition_queued_to_blocked_delay(
-        self, message_id: str, operator: str, ts: str,
-    ) -> None:
+        self,
+        message_id: str,
+        operator: str,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """Operator ``delay``: ``queued → blocked`` with
-        ``block_reason='operator_delayed'`` (FR-034)."""
-        self._operator_transition(
+        ``block_reason='operator_delayed'`` (FR-034).
+
+        ``audit_callback`` runs in the same transaction (FR-046 atomicity).
+        """
+        return self._operator_transition(
             message_id, operator=operator, ts=ts,
             from_state="queued", to_state="blocked",
             operator_action="delayed",
             block_reason_new="operator_delayed",
             stamp_column=None,
+            audit_callback=audit_callback,
         )
 
     def transition_to_canceled(
-        self, message_id: str, operator: str, ts: str,
-    ) -> None:
-        """Operator ``cancel``: ``queued | blocked → canceled`` (FR-035)."""
+        self,
+        message_id: str,
+        operator: str,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
+        """Operator ``cancel``: ``queued | blocked → canceled`` (FR-035).
+
+        ``audit_callback`` runs in the same transaction (FR-046 atomicity).
+        """
         # Operator cancel works from either non-terminal state, so we
         # need a slightly different precondition (state IN ('queued', 'blocked')).
-        def _op() -> None:
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 # First check the current state to give the operator a
@@ -621,14 +695,16 @@ class MessageQueueDao:
                         MESSAGE_ID_NOT_FOUND,
                         f"message {message_id} state changed mid-cancel",
                     )
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except QueueServiceError:
                 raise
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)
 
     def _operator_transition(
         self,
@@ -641,10 +717,11 @@ class MessageQueueDao:
         operator_action: str,
         block_reason_new: str | None,
         stamp_column: str | None,
-    ) -> None:
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """Shared body for approve / delay (FR-033 / FR-034)."""
 
-        def _op() -> None:
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 # Check row exists first → precise error.
@@ -745,18 +822,25 @@ class MessageQueueDao:
                             f"changed during transition (expected {from_state!r})"
                         )
                     raise QueueServiceError(code, msg)
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except QueueServiceError:
                 raise
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)
 
     # ─── FR-040 recovery ──────────────────────────────────────────────
 
-    def recover_in_flight_rows(self, ts: str) -> int:
+    def recover_in_flight_rows(
+        self,
+        ts: str,
+        *,
+        audit_callback: Callable[[sqlite3.Connection, int], Any] | None = None,
+    ) -> int:
         """FR-040: transition every row whose ``delivery_attempt_started_at``
         is set but whose terminal stamps are all unset → ``failed`` with
         ``failure_reason='attempt_interrupted'``.
@@ -764,6 +848,11 @@ class MessageQueueDao:
         Returns the number of rows affected. Called synchronously at
         boot BEFORE the delivery worker thread starts (research §R-012,
         T048 boot wiring).
+
+        ``audit_callback`` (if supplied) runs in the same transaction
+        as the UPDATE; it receives ``(conn, recovered_count)`` and lets
+        the caller emit per-row audit INSERTs atomically with the
+        recovery UPDATE (FR-046 atomicity for FR-040 recovery).
         """
 
         def _op() -> int:
@@ -782,6 +871,8 @@ class MessageQueueDao:
                     (ts, ts),
                 )
                 count = cur.rowcount
+                if audit_callback is not None:
+                    audit_callback(self._conn, count)
                 self._conn.execute("COMMIT")
                 return count
             except Exception:
@@ -924,19 +1015,29 @@ class DaemonStateDao:
         return RoutingFlag(value=row[0], last_updated_at=row[1], last_updated_by=row[2])
 
     def write_routing_flag(
-        self, value: str, *, ts: str, updated_by: str,
-    ) -> None:
+        self,
+        value: str,
+        *,
+        ts: str,
+        updated_by: str,
+        audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+    ) -> Any:
         """Set the routing flag to ``value`` (must be ``enabled`` or
         ``disabled``; CHECK constraint enforces this).
 
         Wrapped in the lock-retry helper. The caller (kill switch
         service) computes whether ``changed=True`` BEFORE calling — the
         DAO doesn't compute idempotency.
+
+        ``audit_callback`` (if supplied) runs inside the same
+        ``BEGIN IMMEDIATE`` transaction, AFTER the UPDATE and BEFORE
+        the COMMIT — the FR-046 ``routing_toggled`` audit row commits
+        atomically with the flag write.
         """
         if value not in ("enabled", "disabled"):
             raise ValueError(f"routing flag value must be 'enabled' or 'disabled', got {value!r}")
 
-        def _op() -> None:
+        def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.execute(
@@ -945,9 +1046,11 @@ class DaemonStateDao:
                     "WHERE key = ?",
                     (value, ts, updated_by, self._ROUTING_KEY),
                 )
+                result = audit_callback(self._conn) if audit_callback else None
                 self._conn.execute("COMMIT")
+                return result
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
-        with_lock_retry(_op, lock=self._tx_lock)
+        return with_lock_retry(_op, lock=self._tx_lock)

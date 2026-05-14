@@ -1092,8 +1092,8 @@ def _events_follow_close(
 # | queue.approve       | if caller_pane: liveness (operator_pane_inactive)       |
 # | queue.delay         | if caller_pane: liveness (operator_pane_inactive)       |
 # | queue.cancel        | if caller_pane: liveness (operator_pane_inactive)       |
-# | routing.enable      | caller_pane is None AND peer_uid==os.getuid()          |
-# | routing.disable     | caller_pane is None AND peer_uid==os.getuid()          |
+# | routing.enable      | caller_pane is None AND peer_uid==os.geteuid()         |
+# | routing.disable     | caller_pane is None AND peer_uid==os.geteuid()         |
 # | routing.status      | none                                                   |
 # ---------------------------------------------------------------------------
 
@@ -1580,29 +1580,58 @@ def _routing_toggle(
     # ``value`` is the flag's target state (``enabled`` / ``disabled``)
     # which doesn't match the RPC method name.
     method_name = "routing.enable" if value == "enabled" else "routing.disable"
+
+    # Build the audit_callback only if the daemon has an audit writer
+    # attached (test daemons sometimes skip it). The callback fires
+    # ONLY on the changed=True path (RoutingFlagService skips it on
+    # idempotent toggles per contracts/socket-routing.md). It commits
+    # the FR-046 audit row inside the same transaction as the
+    # daemon_state UPDATE — atomic per audit_writer.py docstring. A
+    # SQLite failure in the callback rolls back the flag UPDATE too;
+    # the caller sees an internal_error and the toggle is not applied.
+    audit_writer = getattr(ctx, "queue_audit_writer", None)
+    captured: list[tuple[int, dict]] = []
+    audit_callback = None
+    if audit_writer is not None:
+        def audit_callback(conn, previous_value):  # type: ignore[no-redef]
+            eid, payload = audit_writer.insert_routing_toggled_in_tx(
+                conn,
+                previous_value=previous_value,
+                current_value=value,
+                operator=HOST_OPERATOR_SENTINEL,
+                observed_at=ts,
+            )
+            captured.append((eid, payload))
+
     try:
         result = (
-            routing.enable(operator=HOST_OPERATOR_SENTINEL, ts=ts)
+            routing.enable(
+                operator=HOST_OPERATOR_SENTINEL, ts=ts,
+                audit_callback=audit_callback,
+            )
             if value == "enabled"
-            else routing.disable(operator=HOST_OPERATOR_SENTINEL, ts=ts)
+            else routing.disable(
+                operator=HOST_OPERATOR_SENTINEL, ts=ts,
+                audit_callback=audit_callback,
+            )
         )
     except Exception as exc:
         return errors.make_error(
             errors.INTERNAL_ERROR,
             _internal_error_message(str(exc), prefix=method_name),
         )
-    if result.changed and getattr(ctx, "queue_audit_writer", None) is not None:
+    # After the atomic SQLite commit, append the JSONL side
+    # (best-effort). On idempotent no-ops ``captured`` stays empty.
+    if result.changed and captured and audit_writer is not None:
+        eid, payload = captured[0]
         try:
-            ctx.queue_audit_writer.append_routing_toggled(
-                previous_value=result.previous_value,
-                current_value=result.current_value,
-                operator=result.last_updated_by,
-                observed_at=result.last_updated_at,
+            audit_writer.append_jsonl_for_routing_toggled(
+                eid, payload, watermark_ts=result.last_updated_at,
             )
         except Exception:
-            # Audit-emit failure must not fail the toggle; the audit
-            # writer's degraded-mode buffer handles JSONL faults. SQLite
-            # faults still surface through ``agenttower status``.
+            # JSONL append failure is non-fatal — the audit writer
+            # buffers + flags degraded; ``agenttower status`` surfaces
+            # the condition.
             pass
     return errors.make_ok(
         {

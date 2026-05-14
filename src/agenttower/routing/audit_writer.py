@@ -10,17 +10,44 @@
 2. The FEAT-008 ``events.jsonl`` stream (best-effort replica with a
    per-row ``jsonl_appended_at`` watermark; FR-029-style retry pattern).
 
+Two callsite patterns:
+
+* **Atomic (preferred)** — :meth:`insert_queue_transition_in_tx` /
+  :meth:`insert_routing_toggled_in_tx` perform ONLY the SQLite step,
+  inside the caller's already-open ``BEGIN IMMEDIATE`` transaction
+  (the caller MUST also hold the shared ``tx_lock``). The DAO row
+  INSERT/UPDATE and the audit row INSERT then commit together — if
+  the audit INSERT raises, the state transition rolls back atomically.
+  After the caller commits, it MUST invoke
+  :meth:`append_jsonl_for_queue_transition` (or
+  :meth:`append_jsonl_for_routing_toggled`) to perform the JSONL side
+  of the dual-write. The :class:`MessageQueueDao` state-mutating
+  methods accept an ``audit_callback`` parameter that drives this
+  pattern from service/delivery callers.
+
+* **Legacy** — :meth:`append_queue_transition` and
+  :meth:`append_routing_toggled` perform the SQLite step in their own
+  transaction and then append to JSONL. These remain as backward-
+  compatible thin wrappers (some unit tests target them directly),
+  but if the SQLite step succeeds and the caller's prior state
+  transition is in a SEPARATE committed transaction, a SQLite audit
+  failure CANNOT roll back the state transition. Prefer the atomic
+  pattern for new callers.
+
 Failure handling per Group-A walk Q6 (2026-05-12):
 
-* SQLite INSERT failure → exception propagates; the caller (queue
-  service / delivery worker) rolls back the state transition. The
-  SQLite write is the source of truth.
-* JSONL write failure of ANY exception class (not just ``OSError``) →
-  buffer the record in a bounded deque, capture the exception class
-  for forensics, set ``degraded_queue_audit_persistence`` on
-  ``agenttower status``. The SQLite row remains intact and the JSONL
-  watermark stays NULL until a later drain succeeds. The state
-  transition is NOT rolled back.
+* SQLite INSERT failure (atomic pattern) → exception propagates;
+  caller's surrounding transaction rolls back the state transition.
+  SQLite is the source of truth.
+* SQLite INSERT failure (legacy pattern) → exception propagates;
+  the prior state transition is already committed and cannot be
+  rolled back. Operator-visible state diverges from audit until ops
+  intervenes; this is the gap the atomic pattern closes.
+* JSONL write failure (either pattern) of ANY exception class → buffer
+  the record in a bounded deque, capture the exception class for
+  forensics, set ``degraded_queue_audit_persistence`` on ``agenttower
+  status``. The SQLite row remains intact and the JSONL watermark
+  stays NULL until a later drain succeeds.
 
 Drain semantics: :meth:`drain_pending` is called by the delivery
 worker at the top of every cycle (plan §"Delivery worker loop"). It
@@ -29,18 +56,15 @@ successful writes back-fill ``jsonl_appended_at`` via
 :func:`agenttower.events.dao.mark_jsonl_appended`. The first failure
 in a drain pass stops the drain (preserves FIFO; retries on next cycle).
 
-Two append methods:
-
-* :meth:`append_queue_transition` — for the seven ``queue_message_*``
-  event types. Per data-model.md §7.1.1 column mapping, ``agent_id``
-  is set to the target's ``agent_id`` so ``events --target <agent>``
-  surfaces queue activity to that agent.
-* :meth:`append_routing_toggled` — for the ``routing_toggled`` event
-  type. Per data-model.md §7.1.2, ``agent_id`` is the operator
-  identity (``host-operator`` for host-only toggles); the JSONL row
-  uses the routing-toggle audit schema with ``previous_value`` /
-  ``current_value`` rather than ``from_state`` / ``to_state``
-  (contracts/queue-audit-schema.md "Routing toggle audit entry").
+Per data-model.md §7.1.1 column mapping, ``agent_id`` for
+``queue_message_*`` events is set to the target's ``agent_id`` so
+``events --target <agent>`` surfaces queue activity to that agent.
+Per data-model.md §7.1.2, ``agent_id`` for ``routing_toggled`` events
+is the operator identity (``host-operator`` for host-only toggles);
+the JSONL row uses the routing-toggle audit schema with
+``previous_value`` / ``current_value`` rather than ``from_state`` /
+``to_state`` (contracts/queue-audit-schema.md "Routing toggle audit
+entry").
 """
 
 from __future__ import annotations
@@ -146,10 +170,11 @@ class QueueAuditWriter:
         clears the buffer)."""
         return self._degraded_exc_class
 
-    # ─── Append paths ─────────────────────────────────────────────────
+    # ─── Atomic (in-tx) append paths ──────────────────────────────────
 
-    def append_queue_transition(
+    def insert_queue_transition_in_tx(
         self,
+        conn: sqlite3.Connection,
         *,
         event_type: str,
         message_id: str,
@@ -161,28 +186,21 @@ class QueueAuditWriter:
         sender: dict,
         target: dict,
         excerpt: str,
-    ) -> int:
-        """Emit one ``queue_message_*`` audit record (FR-046).
+    ) -> tuple[int, dict]:
+        """SQLite-step only: INSERT the audit row inside the caller's
+        already-open ``BEGIN IMMEDIATE`` transaction.
 
-        ``event_type`` is the FEAT-009 closed-set transition verb
-        (``queue_message_enqueued`` / ``_delivered`` / ``_blocked`` /
-        ``_failed`` / ``_canceled`` / ``_approved`` / ``_delayed``).
-        ``to_state`` is the resulting QUEUE STATE per
-        ``contracts/queue-audit-schema.md`` (one of
-        ``queued|blocked|delivered|canceled|failed``). The two are
-        intentionally decoupled: ``queue_message_approved`` ends in
-        ``to_state='queued'`` (the row is now eligible for the worker
-        again); ``queue_message_delayed`` ends in ``to_state='blocked'``
-        with ``reason='operator_delayed'``.
+        Caller MUST hold the shared ``tx_lock`` and have already issued
+        ``BEGIN IMMEDIATE`` on ``conn``. Returns ``(event_id, payload)``
+        so the caller can invoke
+        :meth:`append_jsonl_for_queue_transition` AFTER its surrounding
+        transaction commits. If this method raises (CHECK violation,
+        disk I/O), the caller's outer transaction MUST roll back —
+        the DAO state transition and the audit row commit or fail
+        together (FR-046 atomicity).
 
-        Returns the SQLite ``event_id``. The dual-write order is:
-        1. INSERT into ``events`` (source of truth; propagates exceptions).
-        2. Append to ``events.jsonl`` (best-effort; failures buffered).
-        3. If JSONL succeeded, ``mark_jsonl_appended`` updates the watermark.
-
-        Per data-model.md §7.1.1, ``events.agent_id`` is set to the
-        target's ``agent_id`` so a subsequent ``events --target <agent>``
-        surfaces this row.
+        See :meth:`append_queue_transition` for the legacy non-atomic
+        wrapper. See the module docstring for the dual-write contract.
         """
         # Defense-in-depth: the closed-set check guards against a
         # mis-named ``event_type`` slipping through and breaking the
@@ -205,18 +223,85 @@ class QueueAuditWriter:
             "target": target,
             "excerpt": excerpt,
         }
-        # Step 1: SQLite insert (must succeed; propagates exceptions).
-        # Serialize with the DAO via the per-connection lock
-        # (Slice 16 — multi-threaded daemon would otherwise race BEGIN
-        # IMMEDIATE against the worker/dispatcher DAOs sharing this conn).
+        event_id = insert_audit_event(
+            conn,
+            event_type=event_type,
+            agent_id=target["agent_id"],
+            observed_at=observed_at,
+            excerpt=excerpt,
+        )
+        return event_id, payload
+
+    def append_jsonl_for_queue_transition(
+        self, event_id: int, payload: dict, *, watermark_ts: str,
+    ) -> None:
+        """JSONL-step only: append ``payload`` to ``events.jsonl`` and,
+        on success, back-fill the ``jsonl_appended_at`` watermark.
+
+        Caller invokes this AFTER its surrounding transaction commits
+        (the audit row is already on disk via
+        :meth:`insert_queue_transition_in_tx`). Failures are non-fatal:
+        the payload is buffered in the bounded deque and the writer is
+        marked degraded; :meth:`drain_pending` retries later.
+        """
+        self._append_jsonl_then_watermark(
+            event_id, payload, watermark_ts=watermark_ts,
+        )
+
+    # ─── Legacy (own-tx) append paths ─────────────────────────────────
+
+    def append_queue_transition(
+        self,
+        *,
+        event_type: str,
+        message_id: str,
+        from_state: str | None,
+        to_state: str,
+        reason: str | None,
+        operator: str | None,
+        observed_at: str,
+        sender: dict,
+        target: dict,
+        excerpt: str,
+    ) -> int:
+        """Legacy non-atomic ``queue_message_*`` audit emit.
+
+        Opens its OWN ``BEGIN IMMEDIATE`` for the SQLite step, then
+        appends to JSONL. Used by unit tests and any caller that does
+        not (or cannot) coordinate a shared transaction.
+
+        Atomicity warning: if the caller's prior state transition is
+        in a separate, already-committed transaction, a SQLite audit
+        failure here CANNOT roll back the state transition — see the
+        module docstring. Prefer :meth:`insert_queue_transition_in_tx`
+        from new production callsites.
+
+        ``event_type`` is the FEAT-009 closed-set transition verb
+        (``queue_message_enqueued`` / ``_delivered`` / ``_blocked`` /
+        ``_failed`` / ``_canceled`` / ``_approved`` / ``_delayed``).
+        ``to_state`` is the resulting QUEUE STATE per
+        ``contracts/queue-audit-schema.md`` (``queued|blocked|delivered
+        |canceled|failed``). The two are intentionally decoupled:
+        ``queue_message_approved`` ends in ``to_state='queued'``
+        because the row is now eligible for the worker again;
+        ``queue_message_delayed`` ends in ``to_state='blocked'`` with
+        ``reason='operator_delayed'``.
+        """
+        # Step 1: SQLite insert in its own transaction (legacy path).
         with self._tx_lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                event_id = insert_audit_event(
+                event_id, payload = self.insert_queue_transition_in_tx(
                     self._conn,
                     event_type=event_type,
-                    agent_id=target["agent_id"],
+                    message_id=message_id,
+                    from_state=from_state,
+                    to_state=to_state,
+                    reason=reason,
+                    operator=operator,
                     observed_at=observed_at,
+                    sender=sender,
+                    target=target,
                     excerpt=excerpt,
                 )
                 self._conn.execute("COMMIT")
@@ -225,30 +310,24 @@ class QueueAuditWriter:
                 raise
 
         # Step 2 + 3: JSONL append (best-effort).
-        self._append_jsonl_then_watermark(event_id, payload, watermark_ts=observed_at)
+        self.append_jsonl_for_queue_transition(
+            event_id, payload, watermark_ts=observed_at,
+        )
         return event_id
 
-    def append_routing_toggled(
+    def insert_routing_toggled_in_tx(
         self,
+        conn: sqlite3.Connection,
         *,
         previous_value: str,
         current_value: str,
         operator: str,
         observed_at: str,
-    ) -> int:
-        """Emit one ``routing_toggled`` audit record (FR-046 + Contracts
-        §queue-audit-schema "Routing toggle audit entry").
-
-        Per data-model.md §7.1.2: ``events.agent_id`` is the operator
-        identity (``host-operator`` for host-only toggles); the
-        ``excerpt`` is a fixed human summary string
-        (``"routing <current> (was <previous>)"``) — short, contains
-        no body content, satisfies FEAT-008's NOT NULL excerpt constraint.
-
-        Idempotent ``changed=False`` toggles MUST NOT call this method
-        (contracts/socket-routing.md "Success response"); the caller
-        (kill switch dispatcher in :mod:`socket_api/methods.py`)
-        enforces the gate.
+    ) -> tuple[int, dict]:
+        """SQLite-step only for ``routing_toggled``. Caller MUST hold
+        ``tx_lock`` and be in ``BEGIN IMMEDIATE`` on ``conn``. Returns
+        ``(event_id, payload)``; caller invokes
+        :meth:`append_jsonl_for_routing_toggled` after commit.
         """
         excerpt = f"routing {current_value} (was {previous_value})"
         payload = {
@@ -259,16 +338,61 @@ class QueueAuditWriter:
             "observed_at": observed_at,
             "operator": operator,
         }
-        # Step 1: SQLite insert.
+        event_id = insert_audit_event(
+            conn,
+            event_type=_ROUTING_TOGGLED_EVENT_TYPE,
+            agent_id=operator,
+            observed_at=observed_at,
+            excerpt=excerpt,
+        )
+        return event_id, payload
+
+    def append_jsonl_for_routing_toggled(
+        self, event_id: int, payload: dict, *, watermark_ts: str,
+    ) -> None:
+        """JSONL-step only for ``routing_toggled``. Caller invokes this
+        AFTER the surrounding transaction commits."""
+        self._append_jsonl_then_watermark(
+            event_id, payload, watermark_ts=watermark_ts,
+        )
+
+    def append_routing_toggled(
+        self,
+        *,
+        previous_value: str,
+        current_value: str,
+        operator: str,
+        observed_at: str,
+    ) -> int:
+        """Legacy non-atomic ``routing_toggled`` audit emit (FR-046 +
+        Contracts §queue-audit-schema "Routing toggle audit entry").
+
+        See :meth:`append_queue_transition` for the atomicity warning.
+        Prefer :meth:`insert_routing_toggled_in_tx` from new callers
+        that can coordinate a shared transaction.
+
+        Per data-model.md §7.1.2: ``events.agent_id`` is the operator
+        identity (``host-operator`` for host-only toggles); the
+        ``excerpt`` is a fixed human summary string
+        (``"routing <current> (was <previous>)"``) — short, contains
+        no body content, satisfies FEAT-008's NOT NULL excerpt
+        constraint.
+
+        Idempotent ``changed=False`` toggles MUST NOT call this method
+        (contracts/socket-routing.md "Success response"); the caller
+        (kill switch dispatcher in :mod:`socket_api/methods.py`)
+        enforces the gate.
+        """
+        # Step 1: SQLite insert in its own transaction (legacy path).
         with self._tx_lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                event_id = insert_audit_event(
+                event_id, payload = self.insert_routing_toggled_in_tx(
                     self._conn,
-                    event_type=_ROUTING_TOGGLED_EVENT_TYPE,
-                    agent_id=operator,
+                    previous_value=previous_value,
+                    current_value=current_value,
+                    operator=operator,
                     observed_at=observed_at,
-                    excerpt=excerpt,
                 )
                 self._conn.execute("COMMIT")
             except Exception:
@@ -276,7 +400,9 @@ class QueueAuditWriter:
                 raise
 
         # Step 2 + 3: JSONL append.
-        self._append_jsonl_then_watermark(event_id, payload, watermark_ts=observed_at)
+        self.append_jsonl_for_routing_toggled(
+            event_id, payload, watermark_ts=observed_at,
+        )
         return event_id
 
     # ─── Drain / degraded-buffer helpers ──────────────────────────────

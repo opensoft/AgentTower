@@ -267,7 +267,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         except FileNotFoundError as exc:
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
-                message=_bound(f"docker binary not executable: {exc}"),
+                message=_bound(f"docker binary not found or not executable: {exc}"),
             ) from exc
 
     # ─── FEAT-009 delivery surface ────────────────────────────────────
@@ -318,7 +318,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         except FileNotFoundError as exc:
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
-                message=_bound(f"docker binary not executable: {exc}"),
+                message=_bound(f"docker binary not found or not executable: {exc}"),
                 failure_reason="docker_exec_failed",
             ) from exc
 

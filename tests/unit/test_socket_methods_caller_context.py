@@ -61,7 +61,7 @@ class _FakeRoutingFlagService:
     def read_full(self) -> tuple[str, str, str]:
         return "enabled", "2026-05-11T00:00:00.000Z", HOST_OPERATOR
 
-    def enable(self, *, operator: str, ts: str) -> Any:
+    def enable(self, *, operator: str, ts: str, audit_callback=None) -> Any:
         self.calls.append(("enable", operator, ts))
 
         class _R:
@@ -72,7 +72,7 @@ class _FakeRoutingFlagService:
             last_updated_by = operator
         return _R()
 
-    def disable(self, *, operator: str, ts: str) -> Any:
+    def disable(self, *, operator: str, ts: str, audit_callback=None) -> Any:
         self.calls.append(("disable", operator, ts))
 
         class _R:
