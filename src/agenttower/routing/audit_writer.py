@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,6 @@ from typing import Final
 
 from agenttower.events.dao import insert_audit_event, mark_jsonl_appended
 from agenttower.events.writer import append_event
-from agenttower.routing.dao import _conn_tx_lock
 
 
 __all__ = [
@@ -77,31 +77,38 @@ _ROUTING_TOGGLED_EVENT_TYPE = "routing_toggled"
 _log = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass
 class PendingJsonl:
     """One buffered audit record waiting for a successful JSONL write.
 
     Captured fields: the event_id (so we can back-fill
     ``jsonl_appended_at`` after the JSONL write succeeds), the JSONL
-    record payload, and the exception class of the original failure
-    for forensics (visible through ``agenttower status``).
+    record payload, the exception class of the original failure for
+    forensics (visible through ``agenttower status``), and a flag
+    tracking whether the JSONL append has already succeeded — the
+    SQLite watermark update may still fail after JSONL succeeds, and
+    we MUST NOT re-append the same payload on retry (would produce
+    duplicate JSONL entries with the same ``event_id``).
     """
 
     event_id: int
     payload: dict
     failure_exc_class: str
+    jsonl_appended: bool = False
 
 
 class QueueAuditWriter:
     """FR-046 dual-write audit writer (SQLite + JSONL).
 
-    Thread-safety: each mutating method acquires the per-connection
-    transaction-serializer lock (``_conn_tx_lock``) before issuing
-    ``BEGIN IMMEDIATE`` so the dispatcher thread and the delivery worker
-    — both sharing the daemon's ``worker_conn`` — cannot race on the
-    same connection. In MVP there is only one delivery worker
-    (Clarifications session 2 Q5); the lock is cheap and forward-safe
-    if parallel workers are introduced later.
+    Thread-safety: shares the ``tx_lock`` constructor argument with
+    the DAOs that hold the same underlying SQLite connection (the
+    daemon's ``worker_conn`` is the canonical case). The shared lock
+    guarantees that the dispatcher thread + the delivery worker can't
+    race on ``BEGIN IMMEDIATE`` against the same connection.
+
+    When ``tx_lock`` is not supplied (unit tests that hold a private
+    connection), the writer creates its own lock — harmless single-
+    threaded overhead.
     """
 
     def __init__(
@@ -110,12 +117,16 @@ class QueueAuditWriter:
         events_jsonl_path: Path,
         *,
         max_pending: int = DEFAULT_DEGRADED_AUDIT_BUFFER_MAX_ROWS,
+        tx_lock: threading.Lock | None = None,
     ) -> None:
         self._conn = conn
         self._events_jsonl_path = events_jsonl_path
         self._max_pending = max_pending
         self._pending: deque[PendingJsonl] = deque(maxlen=max_pending)
         self._degraded_exc_class: str | None = None
+        # Shared with the FEAT-009 DAOs holding the same connection;
+        # see :class:`MessageQueueDao` docstring for the contract.
+        self._tx_lock = tx_lock if tx_lock is not None else threading.Lock()
 
     # ─── State for `agenttower status` ────────────────────────────────
 
@@ -179,7 +190,7 @@ class QueueAuditWriter:
         # Serialize with the DAO via the per-connection lock
         # (Slice 16 — multi-threaded daemon would otherwise race BEGIN
         # IMMEDIATE against the worker/dispatcher DAOs sharing this conn).
-        with _conn_tx_lock(self._conn):
+        with self._tx_lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 event_id = insert_audit_event(
@@ -230,7 +241,7 @@ class QueueAuditWriter:
             "operator": operator,
         }
         # Step 1: SQLite insert.
-        with _conn_tx_lock(self._conn):
+        with self._tx_lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 event_id = insert_audit_event(
@@ -266,23 +277,32 @@ class QueueAuditWriter:
         drained = 0
         while self._pending:
             head = self._pending[0]
+            # The JSONL write and the SQLite watermark update are
+            # two independent failure points. We track which step
+            # succeeded so a retry can skip the JSONL append if it
+            # already landed (otherwise an intermittent watermark
+            # failure would cause duplicate JSONL entries with the
+            # same ``event_id``).
+            if not head.jsonl_appended:
+                try:
+                    append_event(self._events_jsonl_path, head.payload)
+                except Exception as exc:
+                    self._degraded_exc_class = type(exc).__name__
+                    _log.warning(
+                        "drain_pending: JSONL append failed (%s); "
+                        "%d records still pending",
+                        type(exc).__name__, len(self._pending),
+                    )
+                    break
+                # Mark the head as having reached JSONL; if the
+                # watermark update fails below, the next drain pass
+                # will skip the append step for this record.
+                head.jsonl_appended = True
+            # JSONL succeeded (now or earlier); back-fill the
+            # watermark. Serialize with the rest of the FEAT-009 write
+            # paths on this shared connection.
             try:
-                append_event(self._events_jsonl_path, head.payload)
-            except Exception as exc:
-                self._degraded_exc_class = type(exc).__name__
-                _log.warning(
-                    "drain_pending: JSONL append failed (%s); %d records still pending",
-                    type(exc).__name__, len(self._pending),
-                )
-                break
-            # JSONL succeeded; back-fill the watermark and drop the head.
-            # Serialize with the rest of the FEAT-009 write paths on this
-            # shared connection (the dispatcher thread + worker thread
-            # both write through here — without the lock the same
-            # multi-thread BEGIN-within-transaction race we fixed in
-            # ``_append_jsonl_then_watermark`` would reappear here).
-            try:
-                with _conn_tx_lock(self._conn):
+                with self._tx_lock:
                     self._conn.execute("BEGIN IMMEDIATE")
                     try:
                         mark_jsonl_appended(
@@ -296,9 +316,12 @@ class QueueAuditWriter:
             except Exception as exc:
                 # Catastrophic — the SQLite write that owns the watermark
                 # failed during drain. Log + bail; next drain attempt
-                # will retry.
+                # will retry the watermark only (jsonl_appended=True
+                # prevents a duplicate JSONL line).
                 _log.error(
-                    "drain_pending: mark_jsonl_appended failed for event_id=%d: %s",
+                    "drain_pending: mark_jsonl_appended failed for "
+                    "event_id=%d: %s (jsonl already on disk; will retry "
+                    "watermark on next drain)",
                     head.event_id, exc,
                 )
                 break
@@ -344,7 +367,7 @@ class QueueAuditWriter:
             return
 
         # JSONL succeeded; back-fill the watermark.
-        with _conn_tx_lock(self._conn):
+        with self._tx_lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 mark_jsonl_appended(self._conn, event_id, watermark_ts)

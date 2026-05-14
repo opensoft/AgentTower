@@ -383,6 +383,31 @@ class QueueService:
         """Pass-through to the DAO; filters resolved per FR-031."""
         return self._dao.list_rows(filters)
 
+    # ─── Public helpers for the socket dispatch layer ────────────────
+    #
+    # The dispatcher used to reach into ``_agents`` / ``_dao`` directly.
+    # These methods give it a stable, narrowly-scoped surface so the
+    # service's internal layout can evolve without breaking callers.
+
+    def resolve_target_agent_id(self, target_input: str) -> str:
+        """Resolve a ``--target`` argument (agent_id OR label) to an
+        agent_id. Raises :class:`TargetResolveError` with
+        ``agent_not_found`` / ``target_label_ambiguous`` on miss /
+        ambiguous match — same closed-set semantics as
+        :meth:`send_input`."""
+        return resolve_target(target_input, self._agents).agent_id
+
+    def read_envelope_excerpt(self, message_id: str) -> str:
+        """Read the persisted body BLOB and return the FR-047b excerpt.
+        Returns an empty string if the row is missing or the body can't
+        be read — callers should treat the excerpt as best-effort.
+        """
+        try:
+            body = self._dao.read_envelope_bytes(message_id)
+        except Exception:
+            return ""
+        return render_excerpt(body)
+
     # ─── Worker notification hook ─────────────────────────────────────
 
     def notify_worker_transition(self, message_id: str, terminal: bool) -> None:
