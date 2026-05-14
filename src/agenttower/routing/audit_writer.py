@@ -95,12 +95,13 @@ class PendingJsonl:
 class QueueAuditWriter:
     """FR-046 dual-write audit writer (SQLite + JSONL).
 
-    Thread-safety: the delivery worker is the sole caller in MVP
-    (single-worker model per Clarifications session 2 Q5). If a future
-    feature spawns parallel workers, the SQLite connection must be the
-    serialization point — the writer is intentionally not lock-protected
-    internally because the underlying SQLite connection's
-    ``BEGIN IMMEDIATE`` already serializes.
+    Thread-safety: each mutating method acquires the per-connection
+    transaction-serializer lock (``_conn_tx_lock``) before issuing
+    ``BEGIN IMMEDIATE`` so the dispatcher thread and the delivery worker
+    — both sharing the daemon's ``worker_conn`` — cannot race on the
+    same connection. In MVP there is only one delivery worker
+    (Clarifications session 2 Q5); the lock is cheap and forward-safe
+    if parallel workers are introduced later.
     """
 
     def __init__(

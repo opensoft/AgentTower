@@ -132,6 +132,13 @@ def test_v3_to_current_preserves_feat001_through_feat004_tables(tmp_path: Path) 
         "idx_events_type_eventid",
         "idx_events_observedat_eventid",
         "idx_events_jsonl_pending",
+        # FEAT-009 artifacts (message_queue + daemon_state tables + 4 indexes)
+        "message_queue",
+        "daemon_state",
+        "idx_message_queue_state_enqueued",
+        "idx_message_queue_target_enqueued",
+        "idx_message_queue_sender_enqueued",
+        "idx_message_queue_in_flight",
     )
     name_filter = (
         "name NOT IN ("

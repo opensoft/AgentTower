@@ -184,29 +184,30 @@ def test_migration_v6_event_id_autoincrement(tmp_path: Path) -> None:
     assert all(b > a for a, b in zip(rows, rows[1:]))
 
 
-def test_apply_pending_migrations_v5_to_v6(tmp_path: Path) -> None:
+def test_apply_pending_migrations_v5_to_current(tmp_path: Path) -> None:
     """Full ``_apply_pending_migrations`` happy-path from v5 to current."""
     conn, _ = _open_v5_only(tmp_path)
     target = schema._apply_pending_migrations(conn, current=5)
-    assert target == schema.CURRENT_SCHEMA_VERSION == 6
+    assert target == schema.CURRENT_SCHEMA_VERSION == 7
     assert "events" in _table_names(conn)
+    assert "message_queue" in _table_names(conn)
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 6
+    assert version == 7
 
 
-def test_apply_pending_migrations_v6_already_current_is_noop(
+def test_apply_pending_migrations_v6_to_v7(
     tmp_path: Path,
 ) -> None:
+    """``_apply_pending_migrations`` from v6 applies the v7 migration."""
     conn, _ = _open_v5_only(tmp_path)
     schema._apply_migration_v6(conn)
     conn.execute("UPDATE schema_version SET version = 6")
     conn.commit()
 
-    before_indexes = _index_names(conn)
     target = schema._apply_pending_migrations(conn, current=6)
-    after_indexes = _index_names(conn)
-    assert target == 6
-    assert before_indexes == after_indexes
+    assert target == 7
+    assert "message_queue" in _table_names(conn)
+    assert "daemon_state" in _table_names(conn)
 
 
 def test_apply_pending_migrations_forward_version_refused(

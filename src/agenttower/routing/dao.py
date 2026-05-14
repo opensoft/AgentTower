@@ -190,6 +190,13 @@ def _conn_tx_lock(conn: sqlite3.Connection) -> threading.Lock:
     touches the same connection picks up the same lock. We resolve to
     a single lock via the connection's ``id()`` to avoid mutating the
     sqlite3 driver's slot table.
+
+    Lifecycle note: ``sqlite3.Connection`` does not support weak
+    references, so entries in ``_CONN_LOCKS`` cannot be automatically
+    purged when a connection is garbage-collected. In the daemon this is
+    safe because exactly one ``worker_conn`` exists for the daemon's
+    lifetime. Callers outside the daemon (e.g., tests) should be aware
+    that the dict grows by one entry per unique connection created.
     """
     return _CONN_LOCKS.setdefault(id(conn), threading.Lock())
 
