@@ -276,10 +276,23 @@ class QueueAuditWriter:
                 )
                 break
             # JSONL succeeded; back-fill the watermark and drop the head.
+            # Serialize with the rest of the FEAT-009 write paths on this
+            # shared connection (the dispatcher thread + worker thread
+            # both write through here — without the lock the same
+            # multi-thread BEGIN-within-transaction race we fixed in
+            # ``_append_jsonl_then_watermark`` would reappear here).
             try:
-                mark_jsonl_appended(
-                    self._conn, head.event_id, head.payload["observed_at"]
-                )
+                with _conn_tx_lock(self._conn):
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        mark_jsonl_appended(
+                            self._conn, head.event_id,
+                            head.payload["observed_at"],
+                        )
+                        self._conn.execute("COMMIT")
+                    except Exception:
+                        self._conn.execute("ROLLBACK")
+                        raise
             except Exception as exc:
                 # Catastrophic — the SQLite write that owns the watermark
                 # failed during drain. Log + bail; next drain attempt

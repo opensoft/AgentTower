@@ -196,12 +196,22 @@ class QueueService:
             role=resolved_target.role, capability=resolved_target.capability,
         )
         message_id = str(uuid.uuid4())
+        # Two distinct payloads (data-model.md §5):
+        # * ``envelope_body`` BLOB column = the BODY bytes only (what the
+        #   delivery worker pastes byte-for-byte into the target pane
+        #   per FR-005). Headers from FR-001 are NOT included in this
+        #   column.
+        # * ``envelope_size_bytes`` INTEGER column = the SERIALIZED
+        #   envelope size (headers + body) — used for FR-004 cap
+        #   accounting + observability via ``agenttower queue --json``.
+        # * ``envelope_body_sha256`` TEXT column = SHA-256 of the BODY
+        #   bytes (matches the BLOB column, not the rendered size).
         rendered = serialize_and_check_size(
             message_id, sender_identity, target_identity, body_bytes,
             max_bytes=self._envelope_max_bytes,
         )
-        envelope_size_bytes = len(rendered)
-        envelope_body_sha256 = _sha256_hex(body_bytes)
+        envelope_size_bytes = len(rendered)  # full envelope (FR-004 cap)
+        envelope_body_sha256 = _sha256_hex(body_bytes)  # body only
 
         # Step 3: permission gate (FR-019 / FR-020 six-step precedence).
         routing_enabled = self._routing_flag.is_enabled()
@@ -343,13 +353,18 @@ class QueueService:
 
     def cancel(self, message_id: str, *, operator: str) -> QueueRow:
         """Operator ``cancel``: ``queued | blocked → canceled`` (FR-035)."""
+        # Capture the pre-transition state for the audit row; once the
+        # DAO commits the transition the row's `state` becomes
+        # ``canceled`` and we lose the queued-vs-blocked distinction.
+        pre_row = self._dao.get_row_by_id(message_id)
+        pre_state = pre_row.state if pre_row is not None else None
         ts = now_iso_ms_utc(self._clock)
         self._dao.transition_to_canceled(message_id, operator=operator, ts=ts)
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
         self._audit.append_queue_transition(
             message_id=message_id,
-            from_state=row.state,  # actually now 'canceled'; just for audit shape
+            from_state=pre_state,
             to_state="canceled",
             reason=None,
             operator=operator,

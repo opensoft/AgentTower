@@ -147,7 +147,13 @@ def with_lock_retry(
             try:
                 return operation()
             except sqlite3.OperationalError as exc:
-                if "database is locked" not in str(exc).lower():
+                # SQLite surfaces lock contention as either "database is
+                # locked" (SQLITE_LOCKED) or "database is busy"
+                # (SQLITE_BUSY) depending on the contention path and
+                # platform / build options. Retry on both; let every
+                # other ``OperationalError`` propagate immediately.
+                msg = str(exc).lower()
+                if "database is locked" not in msg and "database is busy" not in msg:
                     raise
                 last_exc = exc
                 if attempt_index < len(delays):
@@ -374,7 +380,12 @@ class MessageQueueDao:
         (FR-031 ordering: ``enqueued_at`` ASC, ``message_id`` ASC
         tie-break), or ``None`` if no row is ready.
 
-        Read-only — no lock retry needed.
+        Read-only — but still acquires the per-connection transaction
+        lock because the same sqlite3.Connection is shared with the
+        socket dispatcher thread, and a concurrent ``BEGIN IMMEDIATE``
+        write must not race a read on the same connection
+        (``check_same_thread=False`` removes the safety net but the
+        connection itself isn't thread-safe).
 
         Half-stamped rows (``delivery_attempt_started_at IS NOT NULL``
         with the terminal stamps still unset) are EXCLUDED here. Those
@@ -386,13 +397,14 @@ class MessageQueueDao:
         rows to ``failed`` with ``failure_reason='attempt_interrupted'``
         on boot.
         """
-        cur = self._conn.execute(
-            f"SELECT {_QUEUE_COLUMNS} FROM message_queue "
-            "WHERE state = 'queued' "
-            "AND delivery_attempt_started_at IS NULL "
-            "ORDER BY enqueued_at ASC, message_id ASC LIMIT 1"
-        )
-        row = cur.fetchone()
+        with _conn_tx_lock(self._conn):
+            cur = self._conn.execute(
+                f"SELECT {_QUEUE_COLUMNS} FROM message_queue "
+                "WHERE state = 'queued' "
+                "AND delivery_attempt_started_at IS NULL "
+                "ORDER BY enqueued_at ASC, message_id ASC LIMIT 1"
+            )
+            row = cur.fetchone()
         return _row_to_queue_row(row) if row else None
 
     def stamp_delivery_attempt_started(self, message_id: str, ts: str) -> None:
@@ -716,12 +728,40 @@ class MessageQueueDao:
                     params.append(block_reason_new)
                 params.append(message_id)
                 params.append(from_state)
-                self._conn.execute(
+                cur = self._conn.execute(
                     "UPDATE message_queue SET "
                     + ", ".join(set_clauses)
                     + " WHERE message_id = ? AND state = ?",
                     params,
                 )
+                if cur.rowcount == 0:
+                    # The row's state changed between our SELECT and
+                    # the UPDATE (another writer raced us). Without
+                    # this check the COMMIT would silently land a
+                    # zero-row update and the service layer would
+                    # assume success. Surface the same closed-set
+                    # code the equivalent service-layer pre-check
+                    # would have raised.
+                    self._conn.execute("ROLLBACK")
+                    if operator_action == "approved":
+                        code = APPROVAL_NOT_APPLICABLE
+                        msg = (
+                            f"approve race-aborted: row state changed during "
+                            f"transition (expected {from_state!r})"
+                        )
+                    elif operator_action == "delayed":
+                        code = DELAY_NOT_APPLICABLE
+                        msg = (
+                            f"delay race-aborted: row state changed during "
+                            f"transition (expected {from_state!r})"
+                        )
+                    else:
+                        code = TERMINAL_STATE_CANNOT_CHANGE
+                        msg = (
+                            f"operator transition race-aborted: row state "
+                            f"changed during transition (expected {from_state!r})"
+                        )
+                    raise QueueServiceError(code, msg)
                 self._conn.execute("COMMIT")
             except QueueServiceError:
                 raise
@@ -767,7 +807,16 @@ class MessageQueueDao:
 
         return with_lock_retry(_op, conn=self._conn)
 
-    # ─── Reads (no lock retry needed) ─────────────────────────────────
+    # ─── Reads (serialized with writes on the shared connection) ─────
+    #
+    # Every read below acquires the per-connection transaction lock.
+    # The same sqlite3.Connection is shared across the worker thread +
+    # the socket dispatcher threads (ThreadingUnixStreamServer); the
+    # ``check_same_thread=False`` flag we pass at construction removes
+    # the safety check but does NOT make the underlying connection
+    # thread-safe. Serializing reads under the same lock as the
+    # ``BEGIN IMMEDIATE`` writes prevents concurrent cursor access
+    # corruption.
 
     def read_envelope_bytes(self, message_id: str) -> bytes:
         """Return the raw ``envelope_body`` BLOB for a row.
@@ -776,11 +825,12 @@ class MessageQueueDao:
         not transient memory). Raises :class:`QueueServiceError` with
         ``MESSAGE_ID_NOT_FOUND`` if the row doesn't exist.
         """
-        cur = self._conn.execute(
-            "SELECT envelope_body FROM message_queue WHERE message_id = ?",
-            (message_id,),
-        )
-        row = cur.fetchone()
+        with _conn_tx_lock(self._conn):
+            cur = self._conn.execute(
+                "SELECT envelope_body FROM message_queue WHERE message_id = ?",
+                (message_id,),
+            )
+            row = cur.fetchone()
         if row is None:
             raise QueueServiceError(
                 MESSAGE_ID_NOT_FOUND, f"unknown message_id {message_id!r}",
@@ -790,11 +840,12 @@ class MessageQueueDao:
         return bytes(body)
 
     def get_row_by_id(self, message_id: str) -> QueueRow | None:
-        cur = self._conn.execute(
-            f"SELECT {_QUEUE_COLUMNS} FROM message_queue WHERE message_id = ?",
-            (message_id,),
-        )
-        row = cur.fetchone()
+        with _conn_tx_lock(self._conn):
+            cur = self._conn.execute(
+                f"SELECT {_QUEUE_COLUMNS} FROM message_queue WHERE message_id = ?",
+                (message_id,),
+            )
+            row = cur.fetchone()
         return _row_to_queue_row(row) if row else None
 
     def list_rows(self, filters: QueueListFilter) -> list[QueueRow]:
@@ -822,13 +873,14 @@ class MessageQueueDao:
         limit = filters.limit if filters.limit is not None else 100
         limit = max(1, min(limit, 1000))
         params.append(limit)
-        cur = self._conn.execute(
-            f"SELECT {_QUEUE_COLUMNS} FROM message_queue "
-            f"WHERE {where} "
-            "ORDER BY enqueued_at ASC, message_id ASC LIMIT ?",
-            params,
-        )
-        return [_row_to_queue_row(r) for r in cur.fetchall()]
+        with _conn_tx_lock(self._conn):
+            cur = self._conn.execute(
+                f"SELECT {_QUEUE_COLUMNS} FROM message_queue "
+                f"WHERE {where} "
+                "ORDER BY enqueued_at ASC, message_id ASC LIMIT ?",
+                params,
+            )
+            return [_row_to_queue_row(r) for r in cur.fetchall()]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -859,13 +911,19 @@ class DaemonStateDao:
 
     def read_routing_flag(self) -> RoutingFlag:
         """Read the current routing flag row. Raises ``RuntimeError``
-        if the seed row is missing (the migration guarantees it exists)."""
-        cur = self._conn.execute(
-            "SELECT value, last_updated_at, last_updated_by "
-            "FROM daemon_state WHERE key = ?",
-            (self._ROUTING_KEY,),
-        )
-        row = cur.fetchone()
+        if the seed row is missing (the migration guarantees it exists).
+
+        Acquires the per-connection transaction lock for the same
+        reason :meth:`MessageQueueDao.get_row_by_id` does — the
+        connection is shared across threads.
+        """
+        with _conn_tx_lock(self._conn):
+            cur = self._conn.execute(
+                "SELECT value, last_updated_at, last_updated_by "
+                "FROM daemon_state WHERE key = ?",
+                (self._ROUTING_KEY,),
+            )
+            row = cur.fetchone()
         if row is None:
             raise RuntimeError(
                 "daemon_state routing_enabled seed row missing — "

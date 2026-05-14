@@ -1302,7 +1302,12 @@ def _queue_send_input(
         )
     except Exception as exc:
         return _queue_error_to_envelope(exc, method="queue.send_input")
-    payload = _queue_row_to_payload(result.row)
+    # Compute the FR-047b excerpt from the body we already have in
+    # memory — avoids a redundant SQLite BLOB read and ensures the
+    # `--json` shape carries the documented `excerpt` field.
+    from ..routing.excerpt import render_excerpt
+    excerpt = render_excerpt(body_bytes)
+    payload = _queue_row_to_payload(result.row, excerpt=excerpt)
     payload["waited_to_terminal"] = result.waited_to_terminal
     return errors.make_ok(payload)
 
@@ -1310,13 +1315,29 @@ def _queue_send_input(
 def _queue_list(
     ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
 ) -> dict[str, Any]:
-    """``queue.list`` — list rows with filters. No origin restriction."""
+    """``queue.list`` — list rows with filters. No origin restriction.
+
+    ``--target`` and ``--sender`` accept either an ``agt_<12-hex>``
+    agent_id OR a label (Research §R-001); we route both through
+    ``target_resolver.resolve_target`` so labels work and ambiguous
+    labels surface as ``target_label_ambiguous``. ``--since`` is
+    validated via ``parse_since`` (FR-012b); malformed values surface
+    as ``since_invalid_format``. The rendered rows include the FR-047b
+    excerpt by reading the persisted body BLOB once per row.
+    """
     queue_service, _routing, err = _routing_services_or_error(ctx)
     if err is not None:
         return err
     if not isinstance(params, dict):
         return errors.make_error(errors.BAD_REQUEST, "params must be an object")
     from ..routing.dao import QueueListFilter
+    from ..routing.excerpt import render_excerpt
+    from ..routing.target_resolver import resolve_target
+    from ..routing.errors import (
+        SINCE_INVALID_FORMAT,
+        TargetResolveError,
+    )
+    from ..routing.timestamps import parse_since
 
     state = params.get("state")
     target_in = params.get("target")
@@ -1327,20 +1348,73 @@ def _queue_list(
         return errors.make_error(
             errors.BAD_REQUEST, "params.limit must be an integer in [1, 1000]"
         )
+
+    # Resolve target/sender filters via the same resolver send_input
+    # uses, so labels work + ambiguous labels surface verbatim.
+    target_agent_id: str | None = None
+    sender_agent_id: str | None = None
+    agents_lookup = getattr(queue_service, "_agents", None)
+    if target_in is not None and isinstance(target_in, str) and target_in:
+        if agents_lookup is not None:
+            try:
+                target_agent_id = resolve_target(target_in, agents_lookup).agent_id
+            except TargetResolveError as exc:
+                return _queue_error_to_envelope(exc, method="queue.list")
+        else:
+            target_agent_id = target_in
+    if sender_in is not None and isinstance(sender_in, str) and sender_in:
+        if agents_lookup is not None:
+            try:
+                sender_agent_id = resolve_target(sender_in, agents_lookup).agent_id
+            except TargetResolveError as exc:
+                return _queue_error_to_envelope(exc, method="queue.list")
+        else:
+            sender_agent_id = sender_in
+
+    # Validate `since` format. ``parse_since`` accepts both the
+    # canonical ms-form and the seconds form per FR-012b.
+    since_value: str | None = None
+    if since is not None:
+        if not isinstance(since, str):
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.since must be a string"
+            )
+        try:
+            parse_since(since)
+        except (ValueError, TypeError) as exc:
+            return errors.make_error(
+                SINCE_INVALID_FORMAT,
+                f"params.since must parse as canonical ISO-8601 ms UTC: {exc}",
+            )
+        since_value = since
+
     filters = QueueListFilter(
         state=state if isinstance(state, str) else None,
-        target_agent_id=target_in if isinstance(target_in, str) else None,
-        sender_agent_id=sender_in if isinstance(sender_in, str) else None,
-        since=since if isinstance(since, str) else None,
+        target_agent_id=target_agent_id,
+        sender_agent_id=sender_agent_id,
+        since=since_value,
         limit=limit if isinstance(limit, int) else 100,
     )
     try:
         rows = queue_service.list_rows(filters)
     except Exception as exc:
         return _queue_error_to_envelope(exc, method="queue.list")
-    return errors.make_ok(
-        {"rows": [_queue_row_to_payload(r) for r in rows], "next_cursor": None}
-    )
+
+    # Render each row with its FR-047b excerpt. One BLOB read per row
+    # — acceptable for MVP list sizes (default limit 100, max 1000).
+    dao = getattr(queue_service, "_dao", None)
+    payloads: list[dict[str, Any]] = []
+    for r in rows:
+        excerpt = ""
+        if dao is not None:
+            try:
+                body = dao.read_envelope_bytes(r.message_id)
+                excerpt = render_excerpt(body)
+            except Exception:
+                # Best-effort excerpt: never fail listing on a stale row.
+                excerpt = ""
+        payloads.append(_queue_row_to_payload(r, excerpt=excerpt))
+    return errors.make_ok({"rows": payloads, "next_cursor": None})
 
 
 def _resolve_operator_identity(
@@ -1425,6 +1499,12 @@ def _routing_host_only_gate(
     """Enforce the routing-toggle host-only gate (R-005 / Q2): caller
     pane absent AND peer uid matches the daemon process uid.
 
+    Fail-closed: if ``peer_uid`` is the ``_NO_PEER_UID`` sentinel
+    (SO_PEERCRED unavailable or the call bypassed the socket boundary),
+    the gate REFUSES the toggle. A host-only security gate that allows
+    on "no credentials" is bypassable on non-Linux / failed-cred paths,
+    so we treat "no peer credentials" as the same as a non-host caller.
+
     Returns ``None`` on success or an error envelope on refusal.
     """
     caller_pane, err = _parse_caller_pane(params)
@@ -1435,9 +1515,15 @@ def _routing_host_only_gate(
             errors.ROUTING_TOGGLE_HOST_ONLY,
             "routing toggle is host-only; bench-container callers refused",
         )
+    if peer_uid == _NO_PEER_UID:
+        return errors.make_error(
+            errors.ROUTING_TOGGLE_HOST_ONLY,
+            "routing toggle requires verifiable peer credentials; "
+            "SO_PEERCRED returned no uid",
+        )
     import os
     daemon_uid = os.getuid()
-    if peer_uid != _NO_PEER_UID and peer_uid != daemon_uid:
+    if peer_uid != daemon_uid:
         return errors.make_error(
             errors.ROUTING_TOGGLE_HOST_ONLY,
             "routing toggle requires daemon-host uid",
