@@ -146,6 +146,13 @@ class _FakeQueueService:
         self.list_calls.append(filters)
         return [_make_row()]
 
+    def resolve_target_agent_id(self, target_input: str) -> str:
+        # Tests pass plain agent_ids; pass through verbatim.
+        return target_input
+
+    def read_envelope_excerpt(self, message_id: str) -> str:
+        return ""
+
     def approve(self, message_id: str, *, operator: str) -> QueueRow:
         self.approve_calls.append((message_id, operator))
         if self._approve_raises is not None:
@@ -338,7 +345,7 @@ def test_routing_enable_from_host_origin_invokes_service(tmp_path: Path) -> None
         routing_flag_service=routing,
     )
     import os
-    envelope = DISPATCH["routing.enable"](ctx, {}, peer_uid=os.getuid())
+    envelope = DISPATCH["routing.enable"](ctx, {}, peer_uid=os.geteuid())
     assert envelope["ok"] is True, envelope
     assert envelope["result"]["current_value"] == "enabled"
     assert len(routing.calls) == 1
@@ -363,15 +370,17 @@ def test_routing_disable_from_bench_caller_returns_routing_toggle_host_only(
 
 def test_routing_toggle_with_peer_uid_mismatch_refused(tmp_path: Path) -> None:
     """Even with no caller_pane, a peer_uid that doesn't match the
-    daemon's getuid() is refused as a defense-in-depth check against a
-    same-host attacker who forges a host-origin envelope."""
+    daemon's geteuid() is refused as a defense-in-depth check against
+    a same-host attacker who forges a host-origin envelope. The gate
+    uses ``geteuid()`` to match the FEAT-002 ``ControlServer`` peer-
+    credential check."""
     ctx = _make_ctx(
         tmp_path,
         queue_service=_FakeQueueService(),
         routing_flag_service=_FakeRoutingFlagService(),
     )
     import os
-    bogus_uid = os.getuid() + 1_000_000  # vanishingly unlikely to collide
+    bogus_uid = os.geteuid() + 1_000_000  # vanishingly unlikely to collide
     envelope = DISPATCH["routing.enable"](ctx, {}, peer_uid=bogus_uid)
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "routing_toggle_host_only"
