@@ -354,11 +354,14 @@ def test_body_from_message_file(
     assert base64.b64decode(submit[1]["body_bytes"]) == body_bytes
 
 
-def test_message_file_not_found_emits_body_invalid_chars(
+def test_message_file_not_found_emits_bad_request(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
+    """``--message-file`` I/O failures surface as ``bad_request``
+    (FEAT-002 argparse-style exit 64), NOT ``body_invalid_chars``
+    (which is reserved for FR-003 byte-level body validation)."""
     _install_cli_stubs(
         monkeypatch,
         send_input_response=_row(state="delivered"),
@@ -372,7 +375,7 @@ def test_message_file_not_found_emits_body_invalid_chars(
             "--json",
         ]
     )
-    assert rc == CLI_EXIT_CODE_MAP["body_invalid_chars"]
+    assert rc == 64
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["ok"] is False
-    assert payload["error"]["code"] == "body_invalid_chars"
+    assert payload["error"]["code"] == "bad_request"
