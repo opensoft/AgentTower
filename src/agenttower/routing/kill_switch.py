@@ -19,8 +19,10 @@ MUST be skipped (contracts/socket-routing.md "Success response").
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from dataclasses import dataclass
+from typing import Any, Callable
 
 from agenttower.routing.dao import DaemonStateDao
 
@@ -91,7 +93,13 @@ class RoutingFlagService:
 
     # ─── Toggles ──────────────────────────────────────────────────────
 
-    def enable(self, *, operator: str, ts: str) -> ToggleResult:
+    def enable(
+        self,
+        *,
+        operator: str,
+        ts: str,
+        audit_callback: Callable[[sqlite3.Connection, str], Any] | None = None,
+    ) -> ToggleResult:
         """Set the flag to ``enabled``. Idempotent if already enabled.
 
         Args:
@@ -99,14 +107,39 @@ class RoutingFlagService:
                 ``host-operator`` sentinel. The host-only boundary check
                 lives in the socket dispatch layer.
             ts: Canonical ISO 8601 ms UTC timestamp (FR-012b).
+            audit_callback: Runs inside the SQLite write transaction
+                ONLY when ``changed=True``. Receives ``(conn,
+                previous_value)`` — used to commit the FR-046
+                ``routing_toggled`` audit row atomically with the flag
+                update. Skipped on idempotent no-ops per
+                contracts/socket-routing.md. The callback captures its
+                result via closure side-effect (the return type stays
+                :class:`ToggleResult` to preserve the existing API).
         """
-        return self._set("enabled", operator=operator, ts=ts)
+        return self._set(
+            "enabled", operator=operator, ts=ts, audit_callback=audit_callback,
+        )
 
-    def disable(self, *, operator: str, ts: str) -> ToggleResult:
+    def disable(
+        self,
+        *,
+        operator: str,
+        ts: str,
+        audit_callback: Callable[[sqlite3.Connection, str], Any] | None = None,
+    ) -> ToggleResult:
         """Set the flag to ``disabled``. Idempotent if already disabled."""
-        return self._set("disabled", operator=operator, ts=ts)
+        return self._set(
+            "disabled", operator=operator, ts=ts, audit_callback=audit_callback,
+        )
 
-    def _set(self, value: str, *, operator: str, ts: str) -> ToggleResult:
+    def _set(
+        self,
+        value: str,
+        *,
+        operator: str,
+        ts: str,
+        audit_callback: Callable[[sqlite3.Connection, str], Any] | None = None,
+    ) -> ToggleResult:
         """Shared body for ``enable`` and ``disable``. Always reads the
         current SQLite value first (single PK lookup) to determine
         idempotency — the cache may be stale relative to another writer
@@ -116,11 +149,20 @@ class RoutingFlagService:
             previous = current_flag.value
             changed = previous != value
             if changed:
-                self._dao.write_routing_flag(value, ts=ts, updated_by=operator)
+                # Bind ``previous`` into the per-call callback so the
+                # DAO's audit_callback (which only receives ``conn``)
+                # can forward it to the audit writer's
+                # ``insert_routing_toggled_in_tx``. This avoids a
+                # second read of daemon_state from the dispatch layer.
+                dao_callback = None
+                if audit_callback is not None:
+                    def dao_callback(conn):  # type: ignore[no-redef]
+                        return audit_callback(conn, previous)
+                self._dao.write_routing_flag(
+                    value, ts=ts, updated_by=operator,
+                    audit_callback=dao_callback,
+                )
                 self._cached_value = value
-                # On the host-driven write-through path, the audit
-                # caller is responsible for emitting the
-                # ``routing_toggled`` event ONLY when changed=True.
                 return ToggleResult(
                     previous_value=previous,
                     current_value=value,
@@ -130,7 +172,11 @@ class RoutingFlagService:
                 )
             # No-op: don't touch SQLite, don't emit audit. Return the
             # CURRENT row's metadata (not the caller's ts / operator —
-            # those would misrepresent the last actual change).
+            # those would misrepresent the last actual change). The
+            # audit_callback is intentionally NOT invoked on the
+            # idempotent path — contracts/socket-routing.md "Success
+            # response" requires routing_toggled to be emitted only
+            # when ``changed=True``.
             self._cached_value = previous
             return ToggleResult(
                 previous_value=previous,

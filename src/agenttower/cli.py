@@ -2825,14 +2825,49 @@ def _routing_probe_caller_pane(
 ) -> dict[str, Any]:
     """Detect bench-container vs host context for routing toggles.
 
-    Returns ``{"caller_pane": {...}}`` if we're in a bench container
-    so the daemon refuses the toggle, ``{}`` if we're on the host or
-    the probe inconclusive. The daemon's gate is the canonical
-    enforcement point — this probe just hands the daemon the signal
-    it needs (FR-024 trusts the same-uid peer).
+    The probe walks the FEAT-005 ``resolve_pane_composite_key`` chain;
+    the failure code tells us where we stopped:
+
+    * ``host_context_unsupported`` — definitive host (no container
+      signals from ``runtime_detect``). Returns ``{}``; daemon's
+      host-only gate accepts on peer-uid match.
+    * ``container_unresolved`` — ambiguous: container signals were
+      seen (e.g. ``/.dockerenv`` exists on the host machine, or cgroup
+      v1 quirks) but the daemon's container registry didn't match.
+      We treat this as host-like and return ``{}``; the daemon's
+      peer-uid check is canonical and refuses non-daemon UIDs. (This
+      branch keeps the host path working on dev machines that have a
+      spurious ``/.dockerenv`` marker.)
+    * ``not_in_tmux`` / ``tmux_pane_malformed`` /
+      ``pane_unknown_to_daemon`` — we DID resolve a registered
+      ``container_id`` (we got past the container-match step), so we
+      know we're inside a bench container even though the pane
+      identity is missing. Returning ``{}`` here would let a
+      container-origin client slip through the host-only gate when
+      peer_uid matches the daemon's uid. Send a sentinel
+      ``caller_pane`` so the daemon refuses with
+      ``routing_toggle_host_only``.
+
+    The daemon's gate is the canonical enforcement point; this probe
+    just hands the daemon the signal it needs (FR-024 trusts the
+    same-uid peer).
     """
     from .agents.client_resolve import resolve_pane_composite_key
     from .agents.errors import RegistrationError
+
+    # Codes that prove we're inside a bench container known to the
+    # daemon (we passed the container-match step in client_resolve).
+    _DEFINITELY_BENCH_CONTAINER = {
+        "not_in_tmux",
+        "tmux_pane_malformed",
+        "pane_unknown_to_daemon",
+    }
+    # Sentinel for the bench-container-but-unresolved-pane case. The
+    # daemon's gate only checks ``caller_pane is not None``, so any
+    # non-empty dict suffices to trip the refuse path.
+    _BENCH_ORIGIN_UNRESOLVED: dict[str, Any] = {
+        "caller_pane": {"bench_origin_unresolved": True},
+    }
 
     try:
         target = resolve_pane_composite_key(
@@ -2842,14 +2877,16 @@ def _routing_probe_caller_pane(
             connect_timeout=1.0,
             read_timeout=5.0,
         )
-    except RegistrationError:
-        # host_context_unsupported, container_unresolved, not_in_tmux,
-        # tmux_pane_malformed, pane_unknown_to_daemon — any of these
-        # means we can't claim bench-container origin, so send empty
-        # params and let the daemon's host-only gate proceed (it'll
-        # only accept if peer_uid matches AND caller_pane is None).
+    except RegistrationError as exc:
+        if exc.code in _DEFINITELY_BENCH_CONTAINER:
+            return _BENCH_ORIGIN_UNRESOLVED
+        # host_context_unsupported, container_unresolved, or any
+        # other RegistrationError → host-like; rely on the daemon's
+        # peer-uid check to gate.
         return {}
     except Exception:  # noqa: BLE001
+        # Defensive — non-RegistrationError surprise. Fall back to
+        # empty params (peer_uid check remains canonical).
         return {}
     # Bench-container origin detected; include caller_pane so the
     # daemon refuses with routing_toggle_host_only.

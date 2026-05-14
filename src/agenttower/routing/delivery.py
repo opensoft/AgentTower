@@ -41,6 +41,7 @@ Failure handling per Group-A walk (2026-05-12):
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 from dataclasses import dataclass
 from typing import Final, Protocol
@@ -166,26 +167,39 @@ class DeliveryWorker:
         if not rows:
             return 0
 
-        count = self._dao.recover_in_flight_rows(ts)
-        # Emit one audit row per recovered row.
-        for r in rows:
-            self._audit.append_queue_transition(
-                event_type="queue_message_failed",
-                message_id=r[0],
-                from_state="queued",
-                to_state="failed",
-                reason="attempt_interrupted",
-                operator=None,
-                observed_at=ts,
-                sender={
-                    "agent_id": r[1], "label": r[2], "role": r[3],
-                    "capability": r[4],
-                },
-                target={
-                    "agent_id": r[5], "label": r[6], "role": r[7],
-                    "capability": r[8],
-                },
-                excerpt="",  # excerpt isn't meaningful for recovery
+        # Recover + audit atomically: the DAO's UPDATE and the per-row
+        # audit INSERTs commit together. After the tx commits we replay
+        # the JSONL writes (best-effort).
+        pending_jsonl: list[tuple[int, dict]] = []
+
+        def _audit_recovered(conn: sqlite3.Connection, _count: int) -> None:
+            for r in rows:
+                eid, payload = self._audit.insert_queue_transition_in_tx(
+                    conn,
+                    event_type="queue_message_failed",
+                    message_id=r[0],
+                    from_state="queued",
+                    to_state="failed",
+                    reason="attempt_interrupted",
+                    operator=None,
+                    observed_at=ts,
+                    sender={
+                        "agent_id": r[1], "label": r[2], "role": r[3],
+                        "capability": r[4],
+                    },
+                    target={
+                        "agent_id": r[5], "label": r[6], "role": r[7],
+                        "capability": r[8],
+                    },
+                    excerpt="",  # excerpt isn't meaningful for recovery
+                )
+                pending_jsonl.append((eid, payload))
+
+        count = self._dao.recover_in_flight_rows(ts, audit_callback=_audit_recovered)
+        # JSONL append after the atomic tx commits (best-effort).
+        for eid, payload in pending_jsonl:
+            self._audit.append_jsonl_for_queue_transition(
+                eid, payload, watermark_ts=ts,
             )
         return count
 
@@ -393,8 +407,29 @@ class DeliveryWorker:
 
         # ─── FR-042 commit delivered BEFORE picking next row ──────────
         ts_delivered = now_iso_ms_utc(self._clock)
+        excerpt_str = render_excerpt(body)
+        sender_dict = _row_sender_dict(row)
+        target_dict = _row_target_dict(row)
+
+        def _audit_delivered(conn: sqlite3.Connection) -> tuple[int, dict]:
+            return self._audit.insert_queue_transition_in_tx(
+                conn,
+                event_type="queue_message_delivered",
+                message_id=row.message_id,
+                from_state="queued",
+                to_state="delivered",
+                reason=None,
+                operator=None,
+                observed_at=ts_delivered,
+                sender=sender_dict,
+                target=target_dict,
+                excerpt=excerpt_str,
+            )
         try:
-            self._dao.transition_queued_to_delivered(row.message_id, ts_delivered)
+            audit_event_id, audit_payload = self._dao.transition_queued_to_delivered(
+                row.message_id, ts_delivered,
+                audit_callback=_audit_delivered,
+            )
         except SqliteLockConflict:
             # The paste already reached the slave pane, but the DB
             # commit for ``delivered`` lost every retry of the lock
@@ -415,18 +450,9 @@ class DeliveryWorker:
                 row, "sqlite_lock_conflict", now_iso_ms_utc(self._clock),
             )
             return
-        # Audit + notify waiters.
-        self._audit.append_queue_transition(
-            event_type="queue_message_delivered",
-            message_id=row.message_id,
-            from_state="queued",
-            to_state="delivered",
-            reason=None,
-            operator=None,
-            observed_at=ts_delivered,
-            sender=_row_sender_dict(row),
-            target=_row_target_dict(row),
-            excerpt=render_excerpt(body),
+        # JSONL append after atomic SQLite commit; notify waiters.
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts_delivered,
         )
         self._queue_service.notify_worker_transition(row.message_id, terminal=True)
 
@@ -435,9 +461,27 @@ class DeliveryWorker:
     def _transition_to_blocked_re_check(
         self, row: QueueRow, block_reason: str, ts: str,
     ) -> None:
+        sender_dict = _row_sender_dict(row)
+        target_dict = _row_target_dict(row)
+
+        def _audit_blocked(conn: sqlite3.Connection) -> tuple[int, dict]:
+            return self._audit.insert_queue_transition_in_tx(
+                conn,
+                event_type="queue_message_blocked",
+                message_id=row.message_id,
+                from_state="queued",
+                to_state="blocked",
+                reason=block_reason,
+                operator=None,
+                observed_at=ts,
+                sender=sender_dict,
+                target=target_dict,
+                excerpt="",
+            )
         try:
-            self._dao.transition_queued_to_blocked_re_check(
+            audit_event_id, audit_payload = self._dao.transition_queued_to_blocked_re_check(
                 row.message_id, block_reason, ts,
+                audit_callback=_audit_blocked,
             )
         except SqliteLockConflict:
             _log.error(
@@ -445,17 +489,8 @@ class DeliveryWorker:
                 "will retry on next cycle", row.message_id,
             )
             return
-        self._audit.append_queue_transition(
-            event_type="queue_message_blocked",
-            message_id=row.message_id,
-            from_state="queued",
-            to_state="blocked",
-            reason=block_reason,
-            operator=None,
-            observed_at=ts,
-            sender=_row_sender_dict(row),
-            target=_row_target_dict(row),
-            excerpt="",
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts,
         )
         # Wake any send-input waiter — ``blocked`` is end-of-wait per
         # cli-send-input.md so the waiter must return immediately with
@@ -465,8 +500,28 @@ class DeliveryWorker:
     def _transition_to_failed(
         self, row: QueueRow, failure_reason: str, ts: str,
     ) -> None:
+        sender_dict = _row_sender_dict(row)
+        target_dict = _row_target_dict(row)
+
+        def _audit_failed(conn: sqlite3.Connection) -> tuple[int, dict]:
+            return self._audit.insert_queue_transition_in_tx(
+                conn,
+                event_type="queue_message_failed",
+                message_id=row.message_id,
+                from_state="queued",
+                to_state="failed",
+                reason=failure_reason,
+                operator=None,
+                observed_at=ts,
+                sender=sender_dict,
+                target=target_dict,
+                excerpt="",
+            )
         try:
-            self._dao.transition_queued_to_failed(row.message_id, failure_reason, ts)
+            audit_event_id, audit_payload = self._dao.transition_queued_to_failed(
+                row.message_id, failure_reason, ts,
+                audit_callback=_audit_failed,
+            )
         except SqliteLockConflict:
             _log.error(
                 "DeliveryWorker: could not commit failed for %s "
@@ -474,17 +529,8 @@ class DeliveryWorker:
                 row.message_id, failure_reason,
             )
             return
-        self._audit.append_queue_transition(
-            event_type="queue_message_failed",
-            message_id=row.message_id,
-            from_state="queued",
-            to_state="failed",
-            reason=failure_reason,
-            operator=None,
-            observed_at=ts,
-            sender=_row_sender_dict(row),
-            target=_row_target_dict(row),
-            excerpt="",
+        self._audit.append_jsonl_for_queue_transition(
+            audit_event_id, audit_payload, watermark_ts=ts,
         )
         # Notify any send-input waiter — failed is terminal.
         self._queue_service.notify_worker_transition(row.message_id, terminal=True)
