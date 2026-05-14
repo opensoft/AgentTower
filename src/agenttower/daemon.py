@@ -316,10 +316,21 @@ def _build_feat009_services(
         check_same_thread=False,
     )
 
-    message_queue_dao = MessageQueueDao(worker_conn)
-    daemon_state_dao = DaemonStateDao(worker_conn)
+    # One shared lock for all writers/readers of worker_conn. The
+    # MessageQueueDao + DaemonStateDao + QueueAuditWriter all run
+    # transactions against this single connection across multiple
+    # threads (worker + dispatcher) and MUST serialize through the
+    # same lock — otherwise SQLite surfaces "cannot start a
+    # transaction within a transaction".
+    import threading as _threading
+    worker_tx_lock = _threading.Lock()
+
+    message_queue_dao = MessageQueueDao(worker_conn, tx_lock=worker_tx_lock)
+    daemon_state_dao = DaemonStateDao(worker_conn, tx_lock=worker_tx_lock)
     routing_flag = RoutingFlagService(daemon_state_dao)
-    audit_writer = QueueAuditWriter(worker_conn, paths.events_file)
+    audit_writer = QueueAuditWriter(
+        worker_conn, paths.events_file, tx_lock=worker_tx_lock,
+    )
 
     # Read-only adapters share a connection factory; each method opens
     # its own short-lived connection so reads don't block the worker

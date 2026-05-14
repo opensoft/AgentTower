@@ -569,10 +569,25 @@ def _apply_migration_v7(conn: sqlite3.Connection) -> None:
             agent_id           TEXT NOT NULL,
             attachment_id      TEXT,
             log_path           TEXT,
+            -- FEAT-009 audit rows insert NULL for all four range columns.
+            -- FEAT-008 classifier rows insert non-NULL pairs only. The
+            -- conditional ranges guard the FEAT-008 invariant
+            -- (end >= start) WHILE preserving the FEAT-009 NULL-pair
+            -- shape. The earlier form ``end >= start`` evaluated to
+            -- NULL when start was NULL and end wasn't, which SQLite
+            -- treats as CHECK-pass — letting through a malformed
+            -- classifier row. The ``start IS NOT NULL AND ...`` form
+            -- forces both columns to be set together.
             byte_range_start   INTEGER CHECK (byte_range_start IS NULL OR byte_range_start >= 0),
-            byte_range_end     INTEGER CHECK (byte_range_end IS NULL OR byte_range_end >= byte_range_start),
+            byte_range_end     INTEGER CHECK (
+                byte_range_end IS NULL
+                OR (byte_range_start IS NOT NULL AND byte_range_end >= byte_range_start)
+            ),
             line_offset_start  INTEGER CHECK (line_offset_start IS NULL OR line_offset_start >= 0),
-            line_offset_end    INTEGER CHECK (line_offset_end IS NULL OR line_offset_end >= line_offset_start),
+            line_offset_end    INTEGER CHECK (
+                line_offset_end IS NULL
+                OR (line_offset_start IS NOT NULL AND line_offset_end >= line_offset_start)
+            ),
             observed_at        TEXT NOT NULL,
             -- record_at remains MVP-locked to NULL (FEAT-008 invariant).
             record_at          TEXT CHECK (record_at IS NULL),

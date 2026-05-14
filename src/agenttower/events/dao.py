@@ -64,21 +64,28 @@ class EventRow:
 
     Mirrors ``data-model.md`` §2.2 column-for-column. Constructed by
     the reader before insert; returned by ``select_*`` for read paths.
+
+    FEAT-009 audit rows (event_type in the ``queue_message_*`` set or
+    ``routing_toggled``) store NULL for the FEAT-008-specific columns
+    (``attachment_id`` / ``log_path`` / ``byte_range_*`` /
+    ``line_offset_*`` / ``classifier_rule_id`` /
+    ``debounce_window_*``). Those fields are typed ``Optional`` here
+    so the decoder can return them faithfully.
     """
 
     event_id: int
     event_type: str
     agent_id: str
-    attachment_id: str
-    log_path: str
-    byte_range_start: int
-    byte_range_end: int
-    line_offset_start: int
-    line_offset_end: int
+    attachment_id: Optional[str]
+    log_path: Optional[str]
+    byte_range_start: Optional[int]
+    byte_range_end: Optional[int]
+    line_offset_start: Optional[int]
+    line_offset_end: Optional[int]
     observed_at: str
     record_at: Optional[str]
     excerpt: str
-    classifier_rule_id: str
+    classifier_rule_id: Optional[str]
     debounce_window_id: Optional[str]
     debounce_collapsed_count: int
     debounce_window_started_at: Optional[str]
@@ -428,16 +435,23 @@ _SELECT_FIELDS = (
 
 
 def _row_to_event(row: tuple) -> EventRow:
+    # FEAT-008 classifier rows populate every numeric column; FEAT-009
+    # audit rows leave the byte_range / line_offset columns NULL.
+    # ``int(None)`` raises TypeError, so cast only when the column has
+    # a value — the dataclass already declares these Optional[int].
+    def _opt_int(value: object) -> Optional[int]:
+        return int(value) if value is not None else None  # type: ignore[arg-type]
+
     return EventRow(
         event_id=int(row[0]),
         event_type=row[1],
         agent_id=row[2],
         attachment_id=row[3],
         log_path=row[4],
-        byte_range_start=int(row[5]),
-        byte_range_end=int(row[6]),
-        line_offset_start=int(row[7]),
-        line_offset_end=int(row[8]),
+        byte_range_start=_opt_int(row[5]),
+        byte_range_end=_opt_int(row[6]),
+        line_offset_start=_opt_int(row[7]),
+        line_offset_end=_opt_int(row[8]),
         observed_at=row[9],
         record_at=row[10],
         excerpt=row[11],

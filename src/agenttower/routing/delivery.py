@@ -395,10 +395,23 @@ class DeliveryWorker:
         try:
             self._dao.transition_queued_to_delivered(row.message_id, ts_delivered)
         except SqliteLockConflict:
+            # The paste already reached the slave pane, but the DB
+            # commit for ``delivered`` lost every retry of the lock
+            # contest. Don't leave the row half-stamped — the recovery
+            # pass would mis-classify it as ``failed/attempt_interrupted``
+            # at the next boot, hiding what really happened. Instead,
+            # mark the row failed with ``failure_reason='sqlite_lock_conflict'``
+            # per the module docstring (Group-A walk Q5/Q7). Operators
+            # see a terminal row with an actionable failure_reason and
+            # can investigate the underlying SQLite contention.
             _log.error(
                 "DeliveryWorker: could not commit delivered for %s; "
-                "deferred to next-boot recovery",
+                "transitioning to failed/sqlite_lock_conflict "
+                "(paste already reached pane)",
                 row.message_id,
+            )
+            self._transition_to_failed(
+                row, "sqlite_lock_conflict", now_iso_ms_utc(self._clock),
             )
             return
         # Audit + notify waiters.

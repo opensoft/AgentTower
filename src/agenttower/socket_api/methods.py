@@ -1331,8 +1331,6 @@ def _queue_list(
     if not isinstance(params, dict):
         return errors.make_error(errors.BAD_REQUEST, "params must be an object")
     from ..routing.dao import QueueListFilter
-    from ..routing.excerpt import render_excerpt
-    from ..routing.target_resolver import resolve_target
     from ..routing.errors import (
         SINCE_INVALID_FORMAT,
         TargetResolveError,
@@ -1353,23 +1351,19 @@ def _queue_list(
     # uses, so labels work + ambiguous labels surface verbatim.
     target_agent_id: str | None = None
     sender_agent_id: str | None = None
-    agents_lookup = getattr(queue_service, "_agents", None)
+    # Use the QueueService's public resolver helper instead of reaching
+    # into private fields. The helper raises TargetResolveError with
+    # the same closed-set codes (agent_not_found / target_label_ambiguous).
     if target_in is not None and isinstance(target_in, str) and target_in:
-        if agents_lookup is not None:
-            try:
-                target_agent_id = resolve_target(target_in, agents_lookup).agent_id
-            except TargetResolveError as exc:
-                return _queue_error_to_envelope(exc, method="queue.list")
-        else:
-            target_agent_id = target_in
+        try:
+            target_agent_id = queue_service.resolve_target_agent_id(target_in)
+        except TargetResolveError as exc:
+            return _queue_error_to_envelope(exc, method="queue.list")
     if sender_in is not None and isinstance(sender_in, str) and sender_in:
-        if agents_lookup is not None:
-            try:
-                sender_agent_id = resolve_target(sender_in, agents_lookup).agent_id
-            except TargetResolveError as exc:
-                return _queue_error_to_envelope(exc, method="queue.list")
-        else:
-            sender_agent_id = sender_in
+        try:
+            sender_agent_id = queue_service.resolve_target_agent_id(sender_in)
+        except TargetResolveError as exc:
+            return _queue_error_to_envelope(exc, method="queue.list")
 
     # Validate `since` format. ``parse_since`` accepts both the
     # canonical ms-form and the seconds form per FR-012b.
@@ -1384,7 +1378,9 @@ def _queue_list(
         except (ValueError, TypeError) as exc:
             return errors.make_error(
                 SINCE_INVALID_FORMAT,
-                f"params.since must parse as canonical ISO-8601 ms UTC: {exc}",
+                f"params.since must be ISO-8601 UTC of the form "
+                f"YYYY-MM-DDTHH:MM:SS[.sss]Z (FR-012b accepts both "
+                f"seconds and millisecond precision): {exc}",
             )
         since_value = since
 
@@ -1400,20 +1396,15 @@ def _queue_list(
     except Exception as exc:
         return _queue_error_to_envelope(exc, method="queue.list")
 
-    # Render each row with its FR-047b excerpt. One BLOB read per row
-    # — acceptable for MVP list sizes (default limit 100, max 1000).
-    dao = getattr(queue_service, "_dao", None)
-    payloads: list[dict[str, Any]] = []
-    for r in rows:
-        excerpt = ""
-        if dao is not None:
-            try:
-                body = dao.read_envelope_bytes(r.message_id)
-                excerpt = render_excerpt(body)
-            except Exception:
-                # Best-effort excerpt: never fail listing on a stale row.
-                excerpt = ""
-        payloads.append(_queue_row_to_payload(r, excerpt=excerpt))
+    # Render each row with its FR-047b excerpt via the service's
+    # public helper. One BLOB read per row — acceptable for MVP list
+    # sizes (default limit 100, max 1000).
+    payloads = [
+        _queue_row_to_payload(
+            r, excerpt=queue_service.read_envelope_excerpt(r.message_id),
+        )
+        for r in rows
+    ]
     return errors.make_ok({"rows": payloads, "next_cursor": None})
 
 
@@ -1522,7 +1513,13 @@ def _routing_host_only_gate(
             "SO_PEERCRED returned no uid",
         )
     import os
-    daemon_uid = os.getuid()
+    # Use ``geteuid()`` (effective uid) to match the FEAT-002
+    # ``ControlServer`` peer-credential check at the accept boundary
+    # (see ``socket_api/server.py``). If the daemon ever runs with
+    # real != effective uid (setuid binary, etc.) those two checks
+    # MUST report the same identity — otherwise the server would
+    # accept a connection that the gate refuses (or vice versa).
+    daemon_uid = os.geteuid()
     if peer_uid != daemon_uid:
         return errors.make_error(
             errors.ROUTING_TOGGLE_HOST_ONLY,
