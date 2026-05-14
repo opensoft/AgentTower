@@ -151,24 +151,37 @@ class QueueAuditWriter:
         # Shared with the FEAT-009 DAOs holding the same connection;
         # see :class:`MessageQueueDao` docstring for the contract.
         self._tx_lock = tx_lock if tx_lock is not None else threading.Lock()
+        # Dedicated lock guarding the degraded-buffer state
+        # (``_pending`` + ``_degraded_exc_class``). Separate from
+        # ``_tx_lock`` (which serializes SQLite transactions) because
+        # the JSONL-buffer mutations don't touch SQLite — and we want
+        # to avoid holding the SQLite tx lock while iterating /
+        # decoding payloads. Reads of ``len(_pending)`` are safe via
+        # CPython's GIL but compound operations (``self._pending[0]``
+        # after another thread ``popleft``-ed it) are not — guard
+        # those under this lock.
+        self._buffer_lock = threading.Lock()
 
     # ─── State for `agenttower status` ────────────────────────────────
 
     @property
     def degraded(self) -> bool:
         """True iff at least one pending JSONL row hasn't been drained."""
-        return len(self._pending) > 0
+        with self._buffer_lock:
+            return len(self._pending) > 0
 
     @property
     def pending_count(self) -> int:
-        return len(self._pending)
+        with self._buffer_lock:
+            return len(self._pending)
 
     @property
     def last_failure_exc_class(self) -> str | None:
         """Exception class name of the most-recent JSONL append failure.
         ``None`` if no failure has occurred (or after a successful drain
         clears the buffer)."""
-        return self._degraded_exc_class
+        with self._buffer_lock:
+            return self._degraded_exc_class
 
     # ─── Atomic (in-tx) append paths ──────────────────────────────────
 
@@ -418,10 +431,21 @@ class QueueAuditWriter:
         On success, back-fills ``jsonl_appended_at`` for each drained
         event_id and clears ``_degraded_exc_class`` if the deque
         becomes empty.
+
+        Concurrency: ``_pending`` and ``_degraded_exc_class`` are
+        mutated from the delivery worker (drain) and the socket
+        dispatcher (append-on-failure), so every read / mutation in
+        this method holds ``_buffer_lock``. The SQLite watermark
+        update is done OUTSIDE the buffer lock (it acquires the
+        ``_tx_lock`` for the BEGIN IMMEDIATE block); deadlock avoided
+        by never taking both locks in the opposite order.
         """
         drained = 0
-        while self._pending:
-            head = self._pending[0]
+        while True:
+            with self._buffer_lock:
+                if not self._pending:
+                    break
+                head = self._pending[0]
             # The JSONL write and the SQLite watermark update are
             # two independent failure points. We track which step
             # succeeded so a retry can skip the JSONL append if it
@@ -432,11 +456,13 @@ class QueueAuditWriter:
                 try:
                     append_event(self._events_jsonl_path, head.payload)
                 except Exception as exc:
-                    self._degraded_exc_class = type(exc).__name__
+                    with self._buffer_lock:
+                        self._degraded_exc_class = type(exc).__name__
+                        pending_now = len(self._pending)
                     _log.warning(
                         "drain_pending: JSONL append failed (%s); "
                         "%d records still pending",
-                        type(exc).__name__, len(self._pending),
+                        type(exc).__name__, pending_now,
                     )
                     break
                 # Mark the head as having reached JSONL; if the
@@ -470,10 +496,17 @@ class QueueAuditWriter:
                     head.event_id, exc,
                 )
                 break
-            self._pending.popleft()
+            with self._buffer_lock:
+                # Defensive: confirm the head is still the same record
+                # before popleft (another thread shouldn't be popping
+                # from this deque — drain is single-caller — but
+                # guarding makes the invariant explicit).
+                if self._pending and self._pending[0] is head:
+                    self._pending.popleft()
             drained += 1
-        if not self._pending:
-            self._degraded_exc_class = None
+        with self._buffer_lock:
+            if not self._pending:
+                self._degraded_exc_class = None
         return drained
 
     # ─── Internal: JSONL append-then-watermark with degraded fallback ─
@@ -491,23 +524,30 @@ class QueueAuditWriter:
             # Group-A walk Q6: catch ANY exception (not just OSError).
             # The SQLite row is already committed; we buffer the JSONL
             # record and surface the degraded state. State transition
-            # is NOT rolled back.
-            self._degraded_exc_class = type(exc).__name__
-            if len(self._pending) == self._max_pending:
-                # Dropping the OLDEST buffered record to make room.
-                dropped = self._pending[0]
+            # is NOT rolled back. The buffer mutation runs under
+            # ``_buffer_lock`` because :meth:`drain_pending` (running on
+            # the delivery worker thread) may be reading the same deque.
+            exc_name = type(exc).__name__
+            with self._buffer_lock:
+                self._degraded_exc_class = exc_name
+                dropped_event_id: int | None = None
+                if len(self._pending) == self._max_pending:
+                    # Dropping the OLDEST buffered record to make room.
+                    dropped_event_id = self._pending[0].event_id
+                self._pending.append(PendingJsonl(
+                    event_id=event_id,
+                    payload=payload,
+                    failure_exc_class=exc_name,
+                ))
+                pending_count = len(self._pending)
+            if dropped_event_id is not None:
                 _log.warning(
                     "audit buffer at cap (%d); dropping oldest event_id=%d",
-                    self._max_pending, dropped.event_id,
+                    self._max_pending, dropped_event_id,
                 )
-            self._pending.append(PendingJsonl(
-                event_id=event_id,
-                payload=payload,
-                failure_exc_class=type(exc).__name__,
-            ))
             _log.warning(
                 "audit JSONL append failed (%s) for event_id=%d; buffered (pending=%d)",
-                type(exc).__name__, event_id, len(self._pending),
+                exc_name, event_id, pending_count,
             )
             return
 

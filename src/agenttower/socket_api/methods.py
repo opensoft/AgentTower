@@ -1374,6 +1374,24 @@ def _queue_list(
     sender_in = params.get("sender")
     since = params.get("since")
     limit = params.get("limit", 100)
+    # ``state`` is optional — but if present, MUST be a string from the
+    # documented closed set (queued|blocked|delivered|canceled|failed).
+    # Silently treating a non-string as "no filter" widens the query
+    # and hides client bugs (R7-4); be strict like the other params.
+    _VALID_QUEUE_STATES = (
+        "queued", "blocked", "delivered", "canceled", "failed",
+    )
+    if state is not None:
+        if not isinstance(state, str):
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.state must be a string or absent"
+            )
+        if state not in _VALID_QUEUE_STATES:
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                f"params.state must be one of {list(_VALID_QUEUE_STATES)}; "
+                f"got {state!r}",
+            )
     if limit is not None and (not isinstance(limit, int) or limit < 1 or limit > 1000):
         return errors.make_error(
             errors.BAD_REQUEST, "params.limit must be an integer in [1, 1000]"
@@ -1417,7 +1435,9 @@ def _queue_list(
         since_value = since
 
     filters = QueueListFilter(
-        state=state if isinstance(state, str) else None,
+        # state has already been validated above (None or a valid
+        # closed-set member); no need for an isinstance guard.
+        state=state,
         target_agent_id=target_agent_id,
         sender_agent_id=sender_agent_id,
         since=since_value,

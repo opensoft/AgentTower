@@ -241,7 +241,20 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         *,
         container_id: str | None,
         socket_path: str | None,
+        failure_reason: str | None = None,
     ) -> "subprocess.CompletedProcess[str]":
+        """Run ``argv`` as a subprocess; surface timeouts / missing
+        binary as :class:`TmuxError`.
+
+        ``failure_reason`` lets FEAT-009 delivery callers override the
+        FR-018 failure_reason recorded on the raised TmuxError so a
+        tmux-step subprocess timeout (e.g. ``send_keys`` hung) is
+        classified correctly (``tmux_send_keys_failed``) rather than
+        falling through to the delivery worker's default
+        (``tmux_paste_failed``). The FEAT-002/003/004 list-sockets /
+        list-sessions / list-panes paths don't supply a value and the
+        raised TmuxError carries ``failure_reason=None`` as before.
+        """
         try:
             return subprocess.run(  # noqa: S603 — typed argv, shell=False
                 argv,
@@ -263,11 +276,13 @@ class SubprocessTmuxAdapter(TmuxAdapter):
                 ),
                 container_id=container_id,
                 tmux_socket_path=socket_path,
+                failure_reason=failure_reason,
             ) from exc
         except FileNotFoundError as exc:
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not found or not executable: {exc}"),
+                failure_reason=failure_reason,
             ) from exc
 
     # ─── FEAT-009 delivery surface ────────────────────────────────────
@@ -291,9 +306,18 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         container_id: str | None,
         socket_path: str | None,
         timeout_seconds: float,
+        failure_reason: str = "docker_exec_failed",
     ) -> "subprocess.CompletedProcess[bytes]":
         """Like :meth:`_run` but returns ``bytes`` outputs so ``input``
-        can be raw bytes (FEAT-009 ``load_buffer`` body)."""
+        can be raw bytes (FEAT-009 ``load_buffer`` body).
+
+        ``failure_reason`` is the FR-018 value attached to the
+        :class:`TmuxError` raised on TIMEOUT / FNF. ``load_buffer``
+        passes ``tmux_paste_failed`` so a hung ``docker exec tmux
+        load-buffer`` is classified as a tmux-step failure, not a
+        generic docker-exec failure (which is what the
+        original default conveyed for callers that don't override).
+        """
         try:
             return subprocess.run(  # noqa: S603 — typed argv, shell=False
                 argv,
@@ -313,13 +337,13 @@ class SubprocessTmuxAdapter(TmuxAdapter):
                 ),
                 container_id=container_id,
                 tmux_socket_path=socket_path,
-                failure_reason="docker_exec_failed",
+                failure_reason=failure_reason,
             ) from exc
         except FileNotFoundError as exc:
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not found or not executable: {exc}"),
-                failure_reason="docker_exec_failed",
+                failure_reason=failure_reason,
             ) from exc
 
     @classmethod
@@ -376,6 +400,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             container_id=container_id,
             socket_path=socket_path,
             timeout_seconds=_TIMEOUT_SECONDS,
+            failure_reason="tmux_paste_failed",
         )
         if completed.returncode != 0:
             failure_reason = self._classify_delivery_stderr(
@@ -408,7 +433,10 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             "tmux", "-S", socket_path,
             "paste-buffer", "-t", pane_id, "-b", buffer_name,
         )
-        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        completed = self._run(
+            argv, container_id=container_id, socket_path=socket_path,
+            failure_reason="tmux_paste_failed",
+        )
         if completed.returncode != 0:
             failure_reason = self._classify_delivery_stderr(
                 (completed.stderr or "").encode("utf-8"),
@@ -455,7 +483,10 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             "tmux", "-S", socket_path,
             "send-keys", "-t", pane_id, key,
         )
-        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        completed = self._run(
+            argv, container_id=container_id, socket_path=socket_path,
+            failure_reason="tmux_send_keys_failed",
+        )
         if completed.returncode != 0:
             failure_reason = self._classify_delivery_stderr(
                 (completed.stderr or "").encode("utf-8"),
@@ -487,7 +518,10 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             "tmux", "-S", socket_path,
             "delete-buffer", "-b", buffer_name,
         )
-        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        completed = self._run(
+            argv, container_id=container_id, socket_path=socket_path,
+            failure_reason="tmux_paste_failed",
+        )
         if completed.returncode != 0:
             # The caller (delivery worker) decides whether to surface or
             # suppress a delete_buffer failure (Group-A walk Q1/Q2).
