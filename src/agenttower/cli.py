@@ -2434,19 +2434,23 @@ def _send_input_read_body(
     try:
         return Path(path_str).read_bytes()
     except FileNotFoundError:
+        # File-IO failure is NOT body validation (FR-003 is for control
+        # bytes etc.); surface as the FEAT-002 argparse bad_request
+        # (exit 64) so operators aren't misled into looking for invalid
+        # bytes in the body.
         _emit_local_error(
-            "body_invalid_chars",
+            "bad_request",
             f"--message-file: file not found: {path_str}",
             json_mode,
         )
-        return CLI_EXIT_CODE_MAP.get("body_invalid_chars", 11)
+        return 64
     except OSError as exc:
         _emit_local_error(
-            "body_invalid_chars",
+            "bad_request",
             f"--message-file: cannot read {path_str}: {exc}",
             json_mode,
         )
-        return CLI_EXIT_CODE_MAP.get("body_invalid_chars", 11)
+        return 64
 
 
 def _send_input_lookup_self_agent_id(
@@ -2521,6 +2525,22 @@ def _send_input_render(
     waited_to_terminal = bool(row.get("waited_to_terminal", False))
 
     # Determine the closed-set string code for exit mapping.
+    #
+    # State precedence (deliberate):
+    #
+    # 1. ``delivered`` → success.
+    # 2. ``blocked`` → the row was refused with a closed-set
+    #    ``block_reason``. That reason — NOT ``delivery_wait_timeout``
+    #    — is what the operator needs to act on. This holds whether
+    #    the row was blocked at enqueue (e.g. ``kill_switch_off``,
+    #    ``target_role_not_permitted``) OR an operator delayed it
+    #    mid-wait — in both cases the actionable signal is the
+    #    ``block_reason``, not "the wait elapsed".
+    # 3. ``failed`` / ``canceled`` → terminal, use the matching code.
+    # 4. ``queued`` after ``wait=true`` returns non-terminal → the
+    #    wait budget elapsed without the worker reaching terminal;
+    #    map to ``delivery_wait_timeout`` per FR-009.
+    # 5. ``queued`` after ``--no-wait`` → success at enqueue.
     if state == "delivered":
         exit_code = 0
         exit_label = "delivered"
@@ -2537,7 +2557,7 @@ def _send_input_render(
     elif state == "canceled":
         exit_label = "canceled"
         exit_code = 13
-    elif state in ("queued", "blocked") and not waited_to_terminal and not no_wait:
+    elif state == "queued" and not waited_to_terminal and not no_wait:
         # wait budget elapsed before terminal — FR-009.
         exit_label = "delivery_wait_timeout"
         exit_code = CLI_EXIT_CODE_MAP.get("delivery_wait_timeout", 1)

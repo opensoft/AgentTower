@@ -284,10 +284,12 @@ def _build_feat009_services(
     open their own short-lived connections to avoid blocking the
     worker's transactions.
 
-    Runs :meth:`DeliveryWorker.run_recovery_pass` synchronously here
-    BEFORE returning the worker (research §R-012); the caller is
-    expected to invoke :meth:`DeliveryWorker.start` immediately after
-    receiving the tuple.
+    Lifecycle handled internally — both ``run_recovery_pass()`` and
+    ``start()`` run BEFORE returning. The synchronous recovery pass
+    fires first (research §R-012) so the worker thread never observes
+    a half-stamped row at boot. The caller receives an
+    already-running worker and only owns ``stop()`` + connection
+    close on shutdown.
     """
     # Local imports keep the daemon module's import graph independent
     # of the FEAT-009 module tree during FEAT-001..008-only test runs.
