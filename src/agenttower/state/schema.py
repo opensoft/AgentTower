@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -362,12 +362,273 @@ def _apply_migration_v6(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_v7_now_iso_ms_utc() -> str:
+    """Local helper for the v7 seed row.
+
+    Returns the canonical FEAT-009 timestamp form (FR-012b):
+    ``YYYY-MM-DDTHH:MM:SS.sssZ`` in UTC with millisecond resolution.
+    Implemented locally to avoid an import-order dependency on the
+    ``routing.timestamps`` module during schema setup.
+    """
+    from datetime import datetime, UTC
+
+    dt = datetime.now(UTC)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def _apply_migration_v7(conn: sqlite3.Connection) -> None:
+    """FEAT-009 — three-part migration v6 → v7.
+
+    Part 1: add the ``message_queue`` and ``daemon_state`` tables plus
+    four supporting indexes (data-model.md §2). Seed the ``daemon_state``
+    routing flag row with ``INSERT OR IGNORE`` so re-running on a v7 DB
+    is a no-op.
+
+    Part 2: rebuild the FEAT-008 ``events`` table to (a) widen its
+    ``event_type`` CHECK to accept the 8 FEAT-009 audit types, and
+    (b) make the FEAT-008-specific NOT NULL columns nullable so the
+    FR-046 dual-write path can insert queue audit rows that omit them.
+    Uses the standard SQLite ``CREATE TABLE …_new`` → ``INSERT INTO
+    …_new SELECT * FROM events`` → ``DROP TABLE events`` → ``ALTER
+    TABLE …_new RENAME TO events`` rebuild pattern. Existing FEAT-008
+    rows survive byte-for-byte (asserted by test_schema_migration_v7).
+
+    Part 3: recreate the four FEAT-008 indexes that ``DROP TABLE``
+    dropped.
+
+    The whole migration runs under the existing ``BEGIN IMMEDIATE``
+    transaction in ``_apply_pending_migrations``; partial application
+    is impossible.
+    """
+    # ─────────────────────────────────────────────────────────────────
+    # Part 1: message_queue + daemon_state + four indexes + seed row
+    # ─────────────────────────────────────────────────────────────────
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS message_queue (
+            message_id                   TEXT PRIMARY KEY,
+            state                        TEXT NOT NULL CHECK (state IN (
+                'queued', 'blocked', 'delivered', 'canceled', 'failed'
+            )),
+            block_reason                 TEXT CHECK (
+                block_reason IS NULL OR block_reason IN (
+                    'sender_role_not_permitted',
+                    'target_role_not_permitted',
+                    'target_not_active',
+                    'target_pane_missing',
+                    'target_container_inactive',
+                    'kill_switch_off',
+                    'operator_delayed'
+                )
+            ),
+            failure_reason               TEXT CHECK (
+                failure_reason IS NULL OR failure_reason IN (
+                    'attempt_interrupted',
+                    'tmux_paste_failed',
+                    'docker_exec_failed',
+                    'tmux_send_keys_failed',
+                    'pane_disappeared_mid_attempt',
+                    'sqlite_lock_conflict'
+                )
+            ),
+            sender_agent_id              TEXT NOT NULL,
+            sender_label                 TEXT NOT NULL,
+            sender_role                  TEXT NOT NULL,
+            sender_capability            TEXT,
+            target_agent_id              TEXT NOT NULL,
+            target_label                 TEXT NOT NULL,
+            target_role                  TEXT NOT NULL,
+            target_capability            TEXT,
+            target_container_id          TEXT NOT NULL,
+            target_pane_id               TEXT NOT NULL,
+            envelope_body                BLOB NOT NULL,
+            envelope_body_sha256         TEXT NOT NULL,
+            envelope_size_bytes          INTEGER NOT NULL CHECK (envelope_size_bytes > 0),
+            enqueued_at                  TEXT NOT NULL,
+            delivery_attempt_started_at  TEXT,
+            delivered_at                 TEXT,
+            failed_at                    TEXT,
+            canceled_at                  TEXT,
+            last_updated_at              TEXT NOT NULL,
+            operator_action              TEXT CHECK (operator_action IS NULL OR operator_action IN (
+                'approved', 'delayed', 'canceled'
+            )),
+            operator_action_at           TEXT,
+            operator_action_by           TEXT,
+            CHECK (block_reason IS NULL OR state = 'blocked'),
+            CHECK (failure_reason IS NULL OR state = 'failed'),
+            CHECK (
+                (operator_action IS NULL AND operator_action_at IS NULL AND operator_action_by IS NULL)
+                OR
+                (operator_action IS NOT NULL AND operator_action_at IS NOT NULL AND operator_action_by IS NOT NULL)
+            ),
+            CHECK (state != 'delivered' OR delivered_at IS NOT NULL),
+            CHECK (state != 'failed'    OR failed_at    IS NOT NULL),
+            CHECK (state != 'canceled'  OR canceled_at  IS NOT NULL)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_message_queue_state_enqueued
+            ON message_queue (state, enqueued_at, message_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_message_queue_target_enqueued
+            ON message_queue (target_agent_id, enqueued_at, message_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_message_queue_sender_enqueued
+            ON message_queue (sender_agent_id, enqueued_at, message_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_message_queue_in_flight
+            ON message_queue (target_agent_id)
+            WHERE delivery_attempt_started_at IS NOT NULL
+              AND delivered_at IS NULL
+              AND failed_at   IS NULL
+              AND canceled_at IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daemon_state (
+            key             TEXT PRIMARY KEY CHECK (key IN ('routing_enabled')),
+            value           TEXT NOT NULL,
+            last_updated_at TEXT NOT NULL,
+            last_updated_by TEXT NOT NULL,
+            CHECK (
+                (key = 'routing_enabled' AND value IN ('enabled', 'disabled'))
+            )
+        )
+        """
+    )
+    # Seed routing flag (idempotent on re-migration via INSERT OR IGNORE).
+    # `last_updated_by='(daemon-init)'` distinguishes the migration-created
+    # default from real operator toggles (which write 'host-operator' for
+    # host-side toggles or an `agt_<12-hex>` agent_id for in-container
+    # callers — though `routing.enable`/`disable` are host-only in MVP).
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO daemon_state (key, value, last_updated_at, last_updated_by)
+        VALUES ('routing_enabled', 'enabled', ?, '(daemon-init)')
+        """,
+        (_migration_v7_now_iso_ms_utc(),),
+    )
+
+    # ─────────────────────────────────────────────────────────────────
+    # Part 2: rebuild FEAT-008 events table (idempotent — skip if already
+    # in v7 shape)
+    # ─────────────────────────────────────────────────────────────────
+    # The v6 schema (see _apply_migration_v6 above) declared the
+    # FEAT-008-specific columns as NOT NULL and pinned event_type to
+    # the FEAT-008 closed set. FEAT-009's FR-046 dual-write requires:
+    #   - event_type CHECK widened to include 8 FEAT-009 audit types
+    #   - attachment_id, log_path, byte_range_*, line_offset_*,
+    #     classifier_rule_id → NULLABLE (FEAT-009 rows omit them)
+    # SQLite cannot ALTER CHECK or NULLABLE in place; rebuild required.
+    #
+    # Idempotency: the fresh-DB seed path in `_ensure_current_schema`
+    # re-runs every migration on every boot of an at-current-version
+    # DB. We must not rebuild a table that is already in v7 shape.
+    # Use PRAGMA table_info to detect: in v6 shape `attachment_id`
+    # has notnull=1; in v7 shape it has notnull=0.
+    pragma = conn.execute("PRAGMA table_info(events)").fetchall()
+    if not pragma:
+        # Defensive: events table does not exist yet (v6 migration
+        # ran in this same transaction immediately before, but a
+        # caller could in theory invoke v7 in isolation). Skip the
+        # rebuild — Part 2/3 require an existing table.
+        return
+    column_notnull = {row[1]: row[3] for row in pragma}
+    if column_notnull.get("attachment_id", 0) == 0:
+        # Already nullable → already in v7 shape (or beyond). Skip.
+        return
+
+    conn.execute(
+        """
+        CREATE TABLE events_new (
+            event_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type         TEXT NOT NULL CHECK (event_type IN (
+                -- FEAT-008 durable classifier types (10)
+                'activity', 'waiting_for_input', 'completed', 'error',
+                'test_failed', 'test_passed', 'manual_review_needed',
+                'long_running', 'pane_exited', 'swarm_member_reported',
+                -- FEAT-009 audit types (8)
+                'queue_message_enqueued', 'queue_message_delivered',
+                'queue_message_blocked', 'queue_message_failed',
+                'queue_message_canceled', 'queue_message_approved',
+                'queue_message_delayed', 'routing_toggled'
+            )),
+            agent_id           TEXT NOT NULL,
+            attachment_id      TEXT,
+            log_path           TEXT,
+            byte_range_start   INTEGER CHECK (byte_range_start IS NULL OR byte_range_start >= 0),
+            byte_range_end     INTEGER CHECK (byte_range_end IS NULL OR byte_range_end >= byte_range_start),
+            line_offset_start  INTEGER CHECK (line_offset_start IS NULL OR line_offset_start >= 0),
+            line_offset_end    INTEGER CHECK (line_offset_end IS NULL OR line_offset_end >= line_offset_start),
+            observed_at        TEXT NOT NULL,
+            -- record_at remains MVP-locked to NULL (FEAT-008 invariant).
+            record_at          TEXT CHECK (record_at IS NULL),
+            excerpt            TEXT NOT NULL,
+            classifier_rule_id TEXT,
+            debounce_window_id          TEXT,
+            debounce_collapsed_count    INTEGER NOT NULL DEFAULT 1
+                                        CHECK (debounce_collapsed_count >= 1),
+            debounce_window_started_at  TEXT,
+            debounce_window_ended_at    TEXT,
+            schema_version     INTEGER NOT NULL DEFAULT 1
+                               CHECK (schema_version >= 1),
+            jsonl_appended_at  TEXT
+        )
+        """
+    )
+    conn.execute("INSERT INTO events_new SELECT * FROM events")
+    conn.execute("DROP TABLE events")
+    conn.execute("ALTER TABLE events_new RENAME TO events")
+
+    # ─────────────────────────────────────────────────────────────────
+    # Part 3: recreate the four FEAT-008 indexes (DROP TABLE removed them).
+    # ─────────────────────────────────────────────────────────────────
+    conn.execute(
+        """
+        CREATE INDEX idx_events_agent_eventid
+            ON events (agent_id, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_events_type_eventid
+            ON events (event_type, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_events_observedat_eventid
+            ON events (observed_at, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_events_jsonl_pending
+            ON events (event_id) WHERE jsonl_appended_at IS NULL
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
     3: _apply_migration_v3,
     4: _apply_migration_v4,
     5: _apply_migration_v5,
     6: _apply_migration_v6,
+    7: _apply_migration_v7,
 }
 
 
@@ -453,6 +714,7 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
     _apply_migration_v4(conn)
     _apply_migration_v5(conn)
     _apply_migration_v6(conn)
+    _apply_migration_v7(conn)
 
 
 def _chmod_new_companions(

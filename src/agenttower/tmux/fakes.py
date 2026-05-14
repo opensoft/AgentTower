@@ -55,6 +55,21 @@ class FakeTmuxAdapter:
     ) -> None:
         self._script: dict[str, Any] = dict(script) if script is not None else {}
         self._path = path
+        # FEAT-009 delivery-call recorder + programmable-failure queues.
+        # Each `delivery_calls` entry is a tuple
+        # `(method_name, kwargs_dict)`. Tests assert byte-exact deliveries
+        # by inspecting this list. Each `*_failures` list is a FIFO of
+        # TmuxError instances to raise on the next call; an empty list
+        # means the call succeeds.
+        self.delivery_calls: list[tuple[str, dict[str, Any]]] = []
+        self.load_buffer_failures: list["TmuxError"] = []
+        self.paste_buffer_failures: list["TmuxError"] = []
+        self.send_keys_failures: list["TmuxError"] = []
+        self.delete_buffer_failures: list["TmuxError"] = []
+        # In-memory buffer map (buffer_name → body bytes), so a programmed
+        # `paste_buffer` can be asserted to have received the right body
+        # via the prior `load_buffer`.
+        self.buffers: dict[str, bytes] = {}
 
     @classmethod
     def from_path(cls, path: str | Path) -> "FakeTmuxAdapter":
@@ -180,6 +195,119 @@ class FakeTmuxAdapter:
                 )
             )
         return out
+
+
+    # ─── FEAT-009 delivery surface (call-recording + programmable failures) ──
+
+    def load_buffer(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        buffer_name: str,
+        body: bytes,
+    ) -> None:
+        if not isinstance(body, (bytes, bytearray)):
+            # Match SubprocessTmuxAdapter's programmer-error path so
+            # tests catch type bugs early.
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=f"load_buffer body must be bytes, got {type(body).__name__}",
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason="tmux_paste_failed",
+            )
+        self.delivery_calls.append((
+            "load_buffer",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "buffer_name": buffer_name,
+                "body": bytes(body),
+            },
+        ))
+        if self.load_buffer_failures:
+            raise self.load_buffer_failures.pop(0)
+        # Success — remember the body for a later paste_buffer assertion.
+        self.buffers[buffer_name] = bytes(body)
+
+    def paste_buffer(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        buffer_name: str,
+    ) -> None:
+        self.delivery_calls.append((
+            "paste_buffer",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "pane_id": pane_id,
+                "buffer_name": buffer_name,
+            },
+        ))
+        if self.paste_buffer_failures:
+            raise self.paste_buffer_failures.pop(0)
+
+    def send_keys(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        key: str,
+    ) -> None:
+        # Closed-set check mirrors SubprocessTmuxAdapter — tests should
+        # observe the same rejection.
+        if key not in {"Enter"}:
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=f"send_keys key {key!r} not in MVP allowed set",
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason="tmux_send_keys_failed",
+            )
+        self.delivery_calls.append((
+            "send_keys",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "pane_id": pane_id,
+                "key": key,
+            },
+        ))
+        if self.send_keys_failures:
+            raise self.send_keys_failures.pop(0)
+
+    def delete_buffer(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        buffer_name: str,
+    ) -> None:
+        self.delivery_calls.append((
+            "delete_buffer",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "buffer_name": buffer_name,
+            },
+        ))
+        if self.delete_buffer_failures:
+            raise self.delete_buffer_failures.pop(0)
+        # Success — drop the buffer from memory.
+        self.buffers.pop(buffer_name, None)
 
 
 def _normalize_failure(

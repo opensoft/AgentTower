@@ -269,3 +269,235 @@ class SubprocessTmuxAdapter(TmuxAdapter):
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not executable: {exc}"),
             ) from exc
+
+    # ─── FEAT-009 delivery surface ────────────────────────────────────
+
+    # MVP closed set for `send_keys` key argument (research §"Submit
+    # keystroke" + Assumptions).
+    _ALLOWED_SUBMIT_KEYS = frozenset({"Enter"})
+
+    # Pane-disappeared signatures emitted by tmux. The exact text varies
+    # across tmux versions; we use a substring match.
+    _PANE_DISAPPEARED_PATTERNS = (
+        "can't find pane",
+        "no such pane",
+    )
+
+    def _run_bytes(
+        self,
+        argv: list[str],
+        *,
+        input_bytes: bytes | None,
+        container_id: str | None,
+        socket_path: str | None,
+        timeout_seconds: float,
+    ) -> "subprocess.CompletedProcess[bytes]":
+        """Like :meth:`_run` but returns ``bytes`` outputs so ``input``
+        can be raw bytes (FEAT-009 ``load_buffer`` body)."""
+        try:
+            return subprocess.run(  # noqa: S603 — typed argv, shell=False
+                argv,
+                input=input_bytes,
+                capture_output=True,
+                text=False,  # bytes-mode
+                timeout=timeout_seconds,
+                check=False,
+                shell=False,
+                env=self._env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_TIMEOUT,
+                message=_bound(
+                    f"docker exec exceeded {timeout_seconds:.1f}s budget"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason="docker_exec_failed",
+            ) from exc
+        except FileNotFoundError as exc:
+            raise TmuxError(
+                code=_errors.DOCKER_UNAVAILABLE,
+                message=_bound(f"docker binary not executable: {exc}"),
+                failure_reason="docker_exec_failed",
+            ) from exc
+
+    @classmethod
+    def _classify_delivery_stderr(
+        cls,
+        stderr_bytes: bytes,
+        *,
+        default_failure_reason: str,
+    ) -> str:
+        """Pick the FR-018 ``failure_reason`` value for a delivery-time
+        tmux stderr. Returns ``default_failure_reason`` unless the
+        stderr matches a known "pane disappeared" pattern, in which
+        case returns ``pane_disappeared_mid_attempt``."""
+        try:
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace").lower()
+        except Exception:
+            return default_failure_reason
+        for pattern in cls._PANE_DISAPPEARED_PATTERNS:
+            if pattern in stderr_text:
+                return "pane_disappeared_mid_attempt"
+        return default_failure_reason
+
+    def load_buffer(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        buffer_name: str,
+        body: bytes,
+    ) -> None:
+        if not isinstance(body, (bytes, bytearray)):
+            # Programmer error — body MUST be bytes (FR-038, research §R-007).
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(
+                    f"load_buffer body must be bytes, got {type(body).__name__}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason="tmux_paste_failed",
+            )
+        argv = self._argv(
+            "exec",
+            *self._exec_env_args(),
+            "-i",  # keep stdin open for the body pipe
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path,
+            "load-buffer", "-b", buffer_name, "-",
+        )
+        completed = self._run_bytes(
+            argv,
+            input_bytes=bytes(body),
+            container_id=container_id,
+            socket_path=socket_path,
+            timeout_seconds=_TIMEOUT_SECONDS,
+        )
+        if completed.returncode != 0:
+            failure_reason = self._classify_delivery_stderr(
+                completed.stderr, default_failure_reason="tmux_paste_failed",
+            )
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(
+                    f"tmux load-buffer exited {completed.returncode}: "
+                    f"{completed.stderr.decode('utf-8', errors='replace').strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason=failure_reason,
+            )
+
+    def paste_buffer(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        buffer_name: str,
+    ) -> None:
+        argv = self._argv(
+            "exec",
+            *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path,
+            "paste-buffer", "-t", pane_id, "-b", buffer_name,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode != 0:
+            failure_reason = self._classify_delivery_stderr(
+                (completed.stderr or "").encode("utf-8"),
+                default_failure_reason="tmux_paste_failed",
+            )
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(
+                    f"tmux paste-buffer exited {completed.returncode}: "
+                    f"{completed.stderr.strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason=failure_reason,
+            )
+
+    def send_keys(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        key: str,
+    ) -> None:
+        if key not in self._ALLOWED_SUBMIT_KEYS:
+            # Closed-set check — Assumptions §"Submit keystroke" + research.
+            # A future config-file override that opened the set could allow
+            # arbitrary keystroke injection; we reject anything outside MVP.
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(
+                    f"send_keys key {key!r} is not in the MVP allowed set "
+                    f"{sorted(self._ALLOWED_SUBMIT_KEYS)}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason="tmux_send_keys_failed",
+            )
+        argv = self._argv(
+            "exec",
+            *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path,
+            "send-keys", "-t", pane_id, key,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode != 0:
+            failure_reason = self._classify_delivery_stderr(
+                (completed.stderr or "").encode("utf-8"),
+                default_failure_reason="tmux_send_keys_failed",
+            )
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(
+                    f"tmux send-keys exited {completed.returncode}: "
+                    f"{completed.stderr.strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason=failure_reason,
+            )
+
+    def delete_buffer(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        buffer_name: str,
+    ) -> None:
+        argv = self._argv(
+            "exec",
+            *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path,
+            "delete-buffer", "-b", buffer_name,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode != 0:
+            # The caller (delivery worker) decides whether to surface or
+            # suppress a delete_buffer failure (Group-A walk Q1/Q2).
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(
+                    f"tmux delete-buffer exited {completed.returncode}: "
+                    f"{completed.stderr.strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+                failure_reason="tmux_paste_failed",
+            )

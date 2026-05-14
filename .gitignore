@@ -19,3 +19,6 @@ build/
 *.egg-info/
 
 .claude/scheduled_tasks.lock
+
+# E2E + smoke test scratch dirs
+.tmp/
