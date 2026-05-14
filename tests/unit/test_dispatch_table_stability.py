@@ -58,5 +58,5 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_twentynine_entries() -> None:
+def test_dispatch_table_is_exactly_29_entries() -> None:
     assert len(DISPATCH) == 29
