@@ -150,9 +150,13 @@ def test_approve_emits_queue_message_approved_with_host_operator(
     audit = approved[0]
     assert audit["operator"] == _HOST_OPERATOR
     # FR-033: the audit carries the original block_reason for the
-    # operator's audit trail.
+    # operator's audit trail. The transition verb is encoded in
+    # ``event_type`` (queue_message_approved); ``to_state`` is the
+    # resulting queue state, which is ``queued`` because the row is
+    # now eligible for the worker again (see audit_writer docstring).
     assert audit["from_state"] == "blocked"
-    assert audit["to_state"] == "approved"
+    assert audit["to_state"] == "queued"
+    assert audit["reason"] == "target_not_active"
 
 
 def test_approve_emits_audit_with_bench_caller_agent_id(tmp_path: Path) -> None:
@@ -189,7 +193,10 @@ def test_delay_emits_queue_message_delayed_with_operator_delayed_reason(
     assert delayed[0]["operator"] == _HOST_OPERATOR
     assert delayed[0]["reason"] == "operator_delayed"
     assert delayed[0]["from_state"] == "queued"
-    assert delayed[0]["to_state"] == "delayed"
+    # The transition verb is encoded in ``event_type``
+    # (queue_message_delayed); the resulting queue state is
+    # ``blocked`` (the row is no longer eligible for the worker).
+    assert delayed[0]["to_state"] == "blocked"
 
 
 # ──────────────────────────────────────────────────────────────────────

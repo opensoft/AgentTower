@@ -242,11 +242,15 @@ class QueueService:
                 envelope_size_bytes=envelope_size_bytes,
                 enqueued_at=ts,
             )
-            # Audit queue_message_enqueued (from_state=None → to_state=queued).
+            # Audit queue_message_enqueued — event_type is the
+            # transition verb; to_state is the resulting queue state
+            # (``queued``, since the permission gate passed and we
+            # inserted via ``insert_queued``).
             self._audit.append_queue_transition(
+                event_type="queue_message_enqueued",
                 message_id=message_id,
                 from_state=None,
-                to_state="enqueued",
+                to_state="queued",
                 reason=None,
                 operator=None,
                 observed_at=ts,
@@ -266,7 +270,14 @@ class QueueService:
                 enqueued_at=ts,
                 block_reason=decision.block_reason,
             )
+            # Per the audit schema, an at-enqueue blocked landing is
+            # still a queue_message_enqueued event (it's the first
+            # event for this message_id). The ``to_state='blocked'``
+            # + ``reason=<block_reason>`` distinguishes it from a
+            # ``queue_message_blocked`` mid-flight transition (which
+            # the worker emits when the pre-paste re-check fails).
             self._audit.append_queue_transition(
+                event_type="queue_message_enqueued",
                 message_id=message_id,
                 from_state=None,
                 to_state="blocked",
@@ -315,13 +326,23 @@ class QueueService:
         self._dao.transition_blocked_to_queued_approve(
             message_id, operator=operator, ts=ts,
         )
+        # Capture the resolved block_reason BEFORE the transition so
+        # the audit row can carry it. After ``transition_blocked_to_queued_approve``
+        # commits, ``block_reason`` is cleared on the row (FR-033),
+        # so we must read it pre-transition.
+        prior_block_reason = row.block_reason
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
+        # event_type is the action verb; to_state is the RESULTING
+        # queue state (queued, since approve takes blocked → queued).
+        # reason carries the resolved block_reason per the audit
+        # contract (e.g. operator_delayed / target_not_active).
         self._audit.append_queue_transition(
+            event_type="queue_message_approved",
             message_id=message_id,
             from_state="blocked",
-            to_state="approved",
-            reason=None,
+            to_state="queued",
+            reason=prior_block_reason,
             operator=operator,
             observed_at=ts,
             sender=_row_sender_dict(row),
@@ -338,10 +359,13 @@ class QueueService:
         )
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
+        # event_type is the action verb; to_state is the RESULTING
+        # queue state (blocked, since delay takes queued → blocked).
         self._audit.append_queue_transition(
+            event_type="queue_message_delayed",
             message_id=message_id,
             from_state="queued",
-            to_state="delayed",
+            to_state="blocked",
             reason="operator_delayed",
             operator=operator,
             observed_at=ts,
@@ -363,6 +387,7 @@ class QueueService:
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
         self._audit.append_queue_transition(
+            event_type="queue_message_canceled",
             message_id=message_id,
             from_state=pre_state,
             to_state="canceled",
@@ -452,20 +477,35 @@ class QueueService:
 
     def _wait_for_terminal(self, message_id: str, timeout: float) -> bool:
         """Block up to ``timeout`` seconds for the row to reach a
-        terminal state. Returns ``True`` if a terminal notification
-        arrived, ``False`` on timeout."""
+        terminal state. Returns ``True`` if the row was observed
+        terminal, ``False`` on timeout.
+
+        ``threading.Condition.wait`` can return ``True`` on spurious
+        wakeups without an actual notification, so we re-check the
+        SQLite row's state after every wakeup and only return ``True``
+        once the row is genuinely terminal. The loop budget is the
+        original ``timeout``; subsequent waits use the remaining slack
+        so spurious wakeups don't compound.
+        """
+        import time
         observer = _WaitObserver()
         with self._wait_lock:
             self._wait_observers[message_id] = observer
         try:
+            deadline = time.monotonic() + timeout
             with observer.condition:
-                # Re-check first to avoid sleeping past an already-terminal
-                # row (the worker might have transitioned it between the
-                # service-level read and the wait registration).
-                row = self._dao.get_row_by_id(message_id)
-                if row is not None and row.state in _TERMINAL_STATES:
-                    return True
-                return observer.condition.wait(timeout=timeout)
+                while True:
+                    # Re-check the DB before each sleep so a terminal
+                    # transition that landed between our service-level
+                    # read and the wait registration (OR between two
+                    # wakeups) is observed immediately.
+                    row = self._dao.get_row_by_id(message_id)
+                    if row is not None and row.state in _TERMINAL_STATES:
+                        return True
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    observer.condition.wait(timeout=remaining)
         finally:
             with self._wait_lock:
                 self._wait_observers.pop(message_id, None)

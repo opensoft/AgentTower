@@ -78,8 +78,15 @@ _TARGET = {
 
 
 def _append_one(writer: QueueAuditWriter, **overrides) -> int:
-    """Convenience: append one queue_message_delivered transition."""
+    """Convenience: append one queue_message_delivered transition.
+
+    ``event_type`` and ``to_state`` are decoupled in the writer API
+    (see audit_writer.append_queue_transition docstring): the default
+    here is a delivered transition, but tests can override either or
+    both independently.
+    """
     kwargs = dict(
+        event_type="queue_message_delivered",
         message_id="12345678-1234-4234-8234-123456789012",
         from_state="queued",
         to_state="delivered",
@@ -153,13 +160,24 @@ def test_dual_write_uses_target_agent_id_in_sqlite_row(tmp_path: Path) -> None:
     assert row[1] != _SENDER["agent_id"]
 
 
-def test_event_type_maps_from_to_state(tmp_path: Path) -> None:
+def test_event_type_stored_in_sqlite_row(tmp_path: Path) -> None:
+    """Each of the seven closed-set ``queue_message_*`` event types is
+    accepted and stored verbatim in ``events.event_type``. ``event_type``
+    and ``to_state`` are decoupled (see audit_writer.append_queue_transition
+    docstring); this test passes both, but only event_type lands in the
+    SQLite events row."""
     writer = _make_writer(tmp_path)
-    for to_state in ("delivered", "blocked", "failed", "canceled",
-                     "approved", "delayed", "enqueued"):
-        eid = _append_one(writer, to_state=to_state, observed_at=f"2026-05-12T00:00:01.{ord(to_state[0]):03}Z")
+    for verb in ("delivered", "blocked", "failed", "canceled",
+                 "approved", "delayed", "enqueued"):
+        eid = _append_one(
+            writer,
+            event_type=f"queue_message_{verb}",
+            to_state=verb if verb in ("delivered", "blocked", "canceled", "failed")
+                     else ("queued" if verb in ("approved", "enqueued") else "blocked"),
+            observed_at=f"2026-05-12T00:00:01.{ord(verb[0]):03}Z",
+        )
         row = _read_events_row(writer._conn, eid)
-        assert row[0] == f"queue_message_{to_state}"
+        assert row[0] == f"queue_message_{verb}"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -169,10 +187,13 @@ def test_event_type_maps_from_to_state(tmp_path: Path) -> None:
 
 def test_sqlite_failure_propagates_no_jsonl_write(tmp_path: Path) -> None:
     """If the SQLite INSERT raises (e.g., CHECK violation on event_type),
-    the exception propagates and no JSONL row is written."""
+    the exception propagates and no JSONL row is written. We trip the
+    constraint by passing an event_type that satisfies the
+    ``queue_message_`` prefix gate in the writer but is not in the
+    events table's closed CHECK set."""
     writer = _make_writer(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):
-        _append_one(writer, to_state="not_a_real_state")
+        _append_one(writer, event_type="queue_message_not_a_real_state")
     # No JSONL row.
     assert _read_jsonl_lines(writer._events_jsonl_path) == []
     # No SQLite row.
