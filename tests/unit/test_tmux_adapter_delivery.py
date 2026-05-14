@@ -128,7 +128,11 @@ def test_load_buffer_pane_disappeared_stderr_maps_to_pane_disappeared() -> None:
     assert info.value.failure_reason == "pane_disappeared_mid_attempt"
 
 
-def test_load_buffer_timeout_maps_to_docker_exec_failed() -> None:
+def test_load_buffer_timeout_maps_to_tmux_paste_failed() -> None:
+    """A hung ``docker exec tmux load-buffer`` is classified as a
+    tmux-step failure (``tmux_paste_failed``), not a generic docker
+    exec failure — the FEAT-009 caller-specified ``failure_reason``
+    override on ``_run_bytes`` propagates through."""
     adapter = SubprocessTmuxAdapter(env={"PATH": "/usr/bin:/bin"})
     with patch("agenttower.tmux.subprocess_adapter.subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=5.0)
@@ -138,11 +142,13 @@ def test_load_buffer_timeout_maps_to_docker_exec_failed() -> None:
                     container_id="c", bench_user="u",
                     socket_path="/s", buffer_name="b", body=b"x",
                 )
-    assert info.value.failure_reason == "docker_exec_failed"
+    assert info.value.failure_reason == "tmux_paste_failed"
 
 
-def test_load_buffer_file_not_found_maps_to_docker_exec_failed() -> None:
-    """FileNotFoundError = docker binary missing."""
+def test_load_buffer_file_not_found_maps_to_tmux_paste_failed() -> None:
+    """FileNotFoundError on ``load_buffer`` → ``tmux_paste_failed``
+    (the FR-018 reason chosen by the caller, threaded through
+    ``_run_bytes``)."""
     adapter = SubprocessTmuxAdapter(env={"PATH": "/usr/bin:/bin"})
     with patch("agenttower.tmux.subprocess_adapter.subprocess.run") as mock_run:
         mock_run.side_effect = FileNotFoundError("docker not found")
@@ -152,7 +158,7 @@ def test_load_buffer_file_not_found_maps_to_docker_exec_failed() -> None:
                     container_id="c", bench_user="u",
                     socket_path="/s", buffer_name="b", body=b"x",
                 )
-    assert info.value.failure_reason == "docker_exec_failed"
+    assert info.value.failure_reason == "tmux_paste_failed"
 
 
 def test_load_buffer_rejects_non_bytes_body() -> None:
