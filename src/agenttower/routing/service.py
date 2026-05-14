@@ -294,8 +294,14 @@ class QueueService:
         row = self._dao.get_row_by_id(message_id)
         assert row is not None, "row vanished after insert — invariant broken"
 
-        # Step 6: wait if requested AND the row is non-terminal.
-        if not wait or row.state in _TERMINAL_STATES:
+        # Step 6: wait if requested AND the row is non-end-of-wait.
+        # ``blocked`` is an end-of-wait state for send-input — a
+        # blocked-at-enqueue outcome (e.g. kill_switch_off,
+        # target_not_active) returns immediately with the block_reason
+        # rather than sleeping until the wait timeout elapses
+        # (cli-send-input.md). ``waited_to_terminal`` still tracks only
+        # the strictly-terminal states.
+        if not wait or row.state in _END_OF_WAIT_STATES:
             return SendInputResult(row=row, waited_to_terminal=row.state in _TERMINAL_STATES)
         timeout = wait_timeout if wait_timeout is not None else self._default_wait_seconds
         terminal = self._wait_for_terminal(message_id, timeout)
@@ -439,10 +445,17 @@ class QueueService:
         """Called by the delivery worker after every state transition.
 
         If ``terminal=True``, wakes up any ``send-input`` caller waiting
-        on this message_id. No-op otherwise — pre-terminal transitions
-        (the worker's stamp + re-check paths) don't need to wake the
-        waiter; only terminal states do (per FR-009 semantics: the
-        wait returns when the row reaches terminal).
+        on this message_id so its wait loop can re-check the DB state.
+        No-op otherwise — pre-terminal transitions (the worker's stamp
+        path) don't need to wake the waiter.
+
+        Note: the parameter name predates the addition of ``blocked``
+        to ``_END_OF_WAIT_STATES``. The worker passes ``terminal=True``
+        for the queued→blocked re-check transition too, because that
+        transition is end-of-wait for send-input (CLI contract: a
+        re-check blocked outcome returns immediately with
+        ``block_reason``). The wait loop itself re-reads the row state
+        and decides whether to exit, so this remains correct.
         """
         if terminal:
             self._notify_terminal(message_id)
@@ -476,33 +489,41 @@ class QueueService:
         )
 
     def _wait_for_terminal(self, message_id: str, timeout: float) -> bool:
-        """Block up to ``timeout`` seconds for the row to reach a
-        terminal state. Returns ``True`` if the row was observed
-        terminal, ``False`` on timeout.
+        """Block up to ``timeout`` seconds for the row to settle.
+
+        ``settle`` means either a strictly-terminal state
+        (``_TERMINAL_STATES``) or ``blocked`` — see ``_END_OF_WAIT_STATES``
+        above for why ``send-input`` returns immediately on a blocked
+        outcome. The boolean return value still reflects only the
+        strictly-terminal cases: ``True`` iff the row reached
+        ``delivered`` / ``failed`` / ``canceled``; ``False`` on timeout
+        OR on a settle-via-blocked exit.
 
         ``threading.Condition.wait`` can return ``True`` on spurious
         wakeups without an actual notification, so we re-check the
-        SQLite row's state after every wakeup and only return ``True``
-        once the row is genuinely terminal. The loop budget is the
+        SQLite row's state after every wakeup. The loop budget is the
         original ``timeout``; subsequent waits use the remaining slack
         so spurious wakeups don't compound.
+
+        Time accounting goes through ``self._clock.monotonic`` (not
+        :mod:`time` directly) so :class:`FakeClock` can drive the
+        deadline deterministically in tests.
         """
-        import time
         observer = _WaitObserver()
         with self._wait_lock:
             self._wait_observers[message_id] = observer
         try:
-            deadline = time.monotonic() + timeout
+            deadline = self._clock.monotonic() + timeout
             with observer.condition:
                 while True:
-                    # Re-check the DB before each sleep so a terminal
+                    # Re-check the DB before each sleep so a settle
                     # transition that landed between our service-level
                     # read and the wait registration (OR between two
                     # wakeups) is observed immediately.
                     row = self._dao.get_row_by_id(message_id)
-                    if row is not None and row.state in _TERMINAL_STATES:
-                        return True
-                    remaining = deadline - time.monotonic()
+                    if row is not None and row.state in _END_OF_WAIT_STATES:
+                        return row.state in _TERMINAL_STATES
+                    remaining = deadline - self._clock.monotonic()
                     if remaining <= 0:
                         return False
                     observer.condition.wait(timeout=remaining)
@@ -522,6 +543,15 @@ class QueueService:
 _TERMINAL_STATES: Final[frozenset[str]] = frozenset(
     {"delivered", "failed", "canceled"}
 )
+
+# End-of-wait states for ``send-input`` waiters: terminal states plus
+# ``blocked``. The CLI contract (FR-010, cli-send-input.md) says a
+# blocked-at-enqueue or worker-re-check blocked outcome MUST return
+# the row + ``block_reason`` immediately rather than sleeping until
+# the wait timeout elapses. ``waited_to_terminal`` in
+# :class:`SendInputResult` still reflects only ``_TERMINAL_STATES``;
+# a ``blocked`` exit is reported as ``waited_to_terminal=False``.
+_END_OF_WAIT_STATES: Final[frozenset[str]] = _TERMINAL_STATES | {"blocked"}
 
 
 @dataclass

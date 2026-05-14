@@ -457,6 +457,10 @@ class DeliveryWorker:
             target=_row_target_dict(row),
             excerpt="",
         )
+        # Wake any send-input waiter — ``blocked`` is end-of-wait per
+        # cli-send-input.md so the waiter must return immediately with
+        # the block_reason rather than sleeping until timeout.
+        self._queue_service.notify_worker_transition(row.message_id, terminal=True)
 
     def _transition_to_failed(
         self, row: QueueRow, failure_reason: str, ts: str,
