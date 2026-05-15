@@ -1401,15 +1401,26 @@ def _queue_list(
     # uses, so labels work + ambiguous labels surface verbatim.
     target_agent_id: str | None = None
     sender_agent_id: str | None = None
-    # Use the QueueService's public resolver helper instead of reaching
-    # into private fields. The helper raises TargetResolveError with
-    # the same closed-set codes (agent_not_found / target_label_ambiguous).
-    if target_in is not None and isinstance(target_in, str) and target_in:
+    # ``target`` / ``sender`` are optional — but if present, MUST be
+    # non-empty strings. Match the strict typing used for ``state``
+    # and ``since`` (silently widening to "no filter" hides client
+    # bugs). The QueueService's public resolver helper raises
+    # TargetResolveError with closed-set codes
+    # (agent_not_found / target_label_ambiguous).
+    for _field_name, _field_value in (("target", target_in), ("sender", sender_in)):
+        if _field_value is not None and (
+            not isinstance(_field_value, str) or not _field_value
+        ):
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                f"params.{_field_name} must be a non-empty string or absent",
+            )
+    if target_in is not None:
         try:
             target_agent_id = queue_service.resolve_target_agent_id(target_in)
         except TargetResolveError as exc:
             return _queue_error_to_envelope(exc, method="queue.list")
-    if sender_in is not None and isinstance(sender_in, str) and sender_in:
+    if sender_in is not None:
         try:
             sender_agent_id = queue_service.resolve_target_agent_id(sender_in)
         except TargetResolveError as exc:

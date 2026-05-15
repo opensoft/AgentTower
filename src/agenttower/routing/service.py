@@ -426,6 +426,13 @@ class QueueService:
         self._audit.append_jsonl_for_queue_transition(
             audit_event_id, audit_payload, watermark_ts=ts,
         )
+        # Wake any send-input waiter — ``blocked`` is end-of-wait per
+        # ``_END_OF_WAIT_STATES`` / cli-send-input.md, so an operator
+        # delay must return the sender immediately with the row's new
+        # block_reason rather than letting it sleep until timeout.
+        # (Same pattern as ``cancel()`` and the delivery worker's
+        # queued→blocked re-check transition.)
+        self._notify_terminal(message_id)
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
         return row
