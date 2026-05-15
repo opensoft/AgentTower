@@ -296,18 +296,20 @@ class DeliveryWorker:
         pane_resolvable = self._container_panes.is_pane_resolvable(
             row.target_container_id, row.target_pane_id,
         )
-        try:
-            decision = recheck_target_only(
-                target,
-                routing_enabled=self._routing_flag.is_enabled(),
-                target_container_active=container_active,
-                target_pane_resolvable=pane_resolvable,
-            )
-        except SqliteLockConflict:
-            self._transition_to_failed(
-                row, "sqlite_lock_conflict", ts_before_recheck,
-            )
-            return
+        # ``recheck_target_only`` is a pure function over the snapshot
+        # values we already loaded — no SQLite calls, so it cannot
+        # raise SqliteLockConflict. Earlier revisions wrapped this in
+        # a try/except for that error, but it was dead code; the
+        # actual lock-conflict surfaces come from the DAO transitions
+        # that follow this re-check (each handled at their own call
+        # site via ``_transition_to_blocked_re_check`` /
+        # ``_transition_to_failed``).
+        decision = recheck_target_only(
+            target,
+            routing_enabled=self._routing_flag.is_enabled(),
+            target_container_active=container_active,
+            target_pane_resolvable=pane_resolvable,
+        )
         if not decision.ok:
             assert decision.block_reason is not None
             self._transition_to_blocked_re_check(
