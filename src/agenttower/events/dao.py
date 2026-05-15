@@ -126,6 +126,7 @@ class CursorError(ValueError):
 # precision) is 2^53 - 1. A cursor with a higher value is treated
 # as malformed rather than risk silent truncation.
 _MAX_SAFE_CURSOR_EVENT_ID = (1 << 53) - 1
+_NULL_BYTE_RANGE_CURSOR_SENTINEL = -1
 
 
 def encode_cursor(
@@ -161,9 +162,11 @@ def encode_cursor(
         if (
             not isinstance(byte_range_start, int)
             or isinstance(byte_range_start, bool)
-            or byte_range_start < 0
+            or byte_range_start < _NULL_BYTE_RANGE_CURSOR_SENTINEL
         ):
-            raise CursorError("byte_range_start must be a non-negative integer")
+            raise CursorError(
+                "byte_range_start must be >= -1 (-1 is the audit-row sentinel)"
+            )
         payload_obj["o"] = observed_at
         payload_obj["b"] = byte_range_start
     payload = json.dumps(payload_obj, separators=(",", ":")).encode("utf-8")
@@ -219,9 +222,9 @@ def _decode_cursor_details(token: str) -> tuple[int, bool, str | None, int | Non
     if (
         not isinstance(byte_range_start, int)
         or isinstance(byte_range_start, bool)
-        or byte_range_start < 0
+        or byte_range_start < _NULL_BYTE_RANGE_CURSOR_SENTINEL
     ):
-        raise CursorError("cursor 'b' must be a non-negative integer")
+        raise CursorError("cursor 'b' must be >= -1 (-1 is the audit-row sentinel)")
     return event_id, reverse, observed_at, byte_range_start
 
 
@@ -564,14 +567,14 @@ def select_events(
             if reverse:
                 where.append(
                     "((observed_at < ?) OR "
-                    "(observed_at = ? AND byte_range_start < ?) OR "
-                    "(observed_at = ? AND byte_range_start = ? AND event_id < ?))"
+                    "(observed_at = ? AND COALESCE(byte_range_start, -1) < ?) OR "
+                    "(observed_at = ? AND COALESCE(byte_range_start, -1) = ? AND event_id < ?))"
                 )
             else:
                 where.append(
                     "((observed_at > ?) OR "
-                    "(observed_at = ? AND byte_range_start > ?) OR "
-                    "(observed_at = ? AND byte_range_start = ? AND event_id > ?))"
+                    "(observed_at = ? AND COALESCE(byte_range_start, -1) > ?) OR "
+                    "(observed_at = ? AND COALESCE(byte_range_start, -1) = ? AND event_id > ?))"
                 )
             params.extend(
                 [
@@ -595,7 +598,7 @@ def select_events(
     sql = (
         f"SELECT {_SELECT_FIELDS} FROM events"
         f"{where_clause}"
-        f" ORDER BY observed_at {order}, byte_range_start {order}, event_id {order}"
+        f" ORDER BY observed_at {order}, COALESCE(byte_range_start, -1) {order}, event_id {order}"
         " LIMIT ?"
     )
     # Fetch one extra row to detect "more pages exist".
@@ -610,7 +613,11 @@ def select_events(
             page[-1].event_id,
             reverse=reverse,
             observed_at=page[-1].observed_at,
-            byte_range_start=page[-1].byte_range_start,
+            byte_range_start=(
+                page[-1].byte_range_start
+                if page[-1].byte_range_start is not None
+                else _NULL_BYTE_RANGE_CURSOR_SENTINEL
+            ),
         )
     return EventPage(rows=page, next_cursor=next_cursor)
 

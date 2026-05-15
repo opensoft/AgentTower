@@ -16,6 +16,7 @@ import pytest
 from agenttower.events.dao import (
     EventFilter,
     EventRow,
+    insert_audit_event,
     insert_event,
     mark_jsonl_appended,
     select_event_by_id,
@@ -334,6 +335,45 @@ def test_reverse_inverts_order(tmp_path: Path) -> None:
     assert [r.event_id for r in forward_rows] == list(
         reversed([r.event_id for r in reverse_rows])
     )
+
+
+def test_pagination_cursor_handles_audit_rows_with_null_byte_ranges(tmp_path: Path) -> None:
+    conn, _ = schema.open_registry(tmp_path / "state.sqlite3")
+    insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T12:00:00.000000+00:00",
+            byte_range_start=0,
+            byte_range_end=10,
+        ),
+    )
+    insert_audit_event(
+        conn,
+        event_type="queue_message_enqueued",
+        agent_id="agt_aaaaaaaaaaaa",
+        observed_at="2026-05-10T12:00:01.000000+00:00",
+        excerpt="audit row",
+    )
+    insert_event(
+        conn,
+        _make_row(
+            observed_at="2026-05-10T12:00:02.000000+00:00",
+            byte_range_start=10,
+            byte_range_end=20,
+        ),
+    )
+    conn.commit()
+
+    page1, cursor = select_events(
+        conn, filter=EventFilter(), cursor=None, limit=2, reverse=False
+    )
+    assert len(page1) == 2
+    assert cursor is not None
+    page2, cursor2 = select_events(
+        conn, filter=EventFilter(), cursor=cursor, limit=2, reverse=False
+    )
+    assert len(page2) == 1
+    assert cursor2 is None
 
 
 def test_cursor_direction_mismatch_raises(tmp_path: Path) -> None:

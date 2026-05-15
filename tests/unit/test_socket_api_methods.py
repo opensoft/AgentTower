@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import sqlite3
 import time
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agenttower.agents.permissions import serialize_effective_permissions
+from agenttower.events.dao import EventRow, insert_audit_event, insert_event
 from agenttower.events.session_registry import FollowSessionRegistry
+from agenttower.socket_api import methods as methods_mod
 from agenttower.socket_api.methods import (
     DISPATCH,
     DaemonContext,
+    _clear_request_peer_context,
     _events_validate_filter,
+    _set_request_peer_context,
 )
+from agenttower.state import schema
+from agenttower.state.agents import insert_agent
 
 
 def _ctx(tmp_path: Path) -> DaemonContext:
@@ -380,6 +388,241 @@ def test_events_list_rejects_non_boolean_reverse(tmp_path: Path) -> None:
     envelope = DISPATCH["events.list"](_ctx(tmp_path), {"reverse": "false"})
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "events_filter_invalid"
+
+
+def test_events_list_excludes_feat009_audit_rows_by_default(tmp_path: Path) -> None:
+    conn, _ = schema.open_registry(tmp_path / "agenttower.sqlite3")
+    try:
+        insert_event(
+            conn,
+            EventRow(
+                event_id=0,
+                event_type="activity",
+                agent_id="agt_aaaaaaaaaaaa",
+                attachment_id="atc_aabbccddeeff",
+                log_path="/tmp/agent.log",
+                byte_range_start=0,
+                byte_range_end=10,
+                line_offset_start=0,
+                line_offset_end=1,
+                observed_at="2026-05-15T12:00:00.000Z",
+                record_at=None,
+                excerpt="activity",
+                classifier_rule_id="activity.fallback.v1",
+                debounce_window_id=None,
+                debounce_collapsed_count=1,
+                debounce_window_started_at=None,
+                debounce_window_ended_at=None,
+                schema_version=1,
+                jsonl_appended_at=None,
+            ),
+        )
+        insert_audit_event(
+            conn,
+            event_type="queue_message_enqueued",
+            agent_id="agt_aaaaaaaaaaaa",
+            observed_at="2026-05-15T12:00:01.000Z",
+            excerpt="audit row",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    ctx = _ctx(tmp_path)
+    envelope = DISPATCH["events.list"](ctx, {})
+    assert envelope["ok"] is True
+    events = envelope["result"]["events"]
+    assert [event["event_type"] for event in events] == ["activity"]
+
+
+class _QueueListService:
+    def resolve_target_agent_id(self, target_input: str) -> str:
+        if target_input == "ambiguous":
+            from agenttower.routing.errors import TargetResolveError
+
+            raise TargetResolveError("target_label_ambiguous", "ambiguous")
+        return "agt_aaaaaaaaaaaa"
+
+    def list_rows(self, filters):  # noqa: ANN001
+        return []
+
+    def read_envelope_excerpt(self, message_id: str) -> str:
+        return f"excerpt:{message_id}"
+
+    def approve(self, message_id: str, *, operator: str):  # noqa: ANN001
+        return self._row(message_id)
+
+    def delay(self, message_id: str, *, operator: str):  # noqa: ANN001
+        return self._row(message_id, state="blocked", block_reason="operator_delayed")
+
+    def cancel(self, message_id: str, *, operator: str):  # noqa: ANN001
+        return self._row(message_id, state="canceled")
+
+    @staticmethod
+    def _row(message_id: str, *, state: str = "queued", block_reason: str | None = None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            message_id=message_id,
+            state=state,
+            block_reason=block_reason,
+            failure_reason=None,
+            sender_agent_id="agt_aaaaaaaaaaaa",
+            sender_label="master-a",
+            sender_role="master",
+            sender_capability="codex",
+            target_agent_id="agt_bbbbbbbbbbbb",
+            target_label="slave-1",
+            target_role="slave",
+            target_capability="codex",
+            target_container_id="c" * 64,
+            target_pane_id="%2",
+            envelope_body_sha256="00" * 32,
+            envelope_size_bytes=5,
+            enqueued_at="2026-05-15T12:00:00.000Z",
+            delivery_attempt_started_at=None,
+            delivered_at=None,
+            failed_at=None,
+            canceled_at=None,
+            last_updated_at="2026-05-15T12:00:01.000Z",
+            operator_action=None,
+            operator_action_at=None,
+            operator_action_by=None,
+        )
+
+
+class _QueueSendInputService:
+    def __init__(self) -> None:
+        self.sender_agent_id: str | None = None
+
+    def send_input(  # noqa: ANN001
+        self,
+        *,
+        sender,
+        target_input: str,
+        body_bytes: bytes,
+        wait: bool,
+        wait_timeout: float | None,
+    ):
+        from types import SimpleNamespace
+
+        self.sender_agent_id = sender.agent_id
+        row = _QueueListService._row("msg-1")
+        return SimpleNamespace(row=row, waited_to_terminal=False)
+
+
+def _insert_active_agent_for_ctx(tmp_path: Path) -> None:
+    conn, _ = schema.open_registry(tmp_path / "agenttower.sqlite3")
+    try:
+        insert_agent(
+            conn,
+            agent_id="agt_aaaaaaaaaaaa",
+            pane_key=("c" * 64, "/tmp/tmux.sock", "s", 0, 0, "%1"),
+            role="master",
+            capability="codex",
+            label="master-a",
+            project_path="/workspace",
+            parent_agent_id=None,
+            effective_permissions_json=serialize_effective_permissions("master"),
+            created_at="2026-05-15T12:00:00.000Z",
+            last_registered_at="2026-05-15T12:00:00.000Z",
+            active=True,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_queue_list_rejects_non_string_target_filter(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.queue_service = _QueueListService()
+    ctx.routing_flag_service = object()
+    envelope = DISPATCH["queue.list"](ctx, {"target": 123})
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "bad_request"
+
+
+def test_queue_send_input_resolves_sender_from_pane_key(tmp_path: Path) -> None:
+    _insert_active_agent_for_ctx(tmp_path)
+    ctx = _ctx(tmp_path)
+    ctx.queue_service = _QueueSendInputService()
+    ctx.routing_flag_service = object()
+    envelope = DISPATCH["queue.send_input"](
+        ctx,
+        {
+            "target": "slave-1",
+            "body_bytes": "aGVsbG8=",
+            "caller_pane": {
+                "agent_id": "agt_aaaaaaaaaaaa",
+                "pane_composite_key": {
+                    "container_id": "c" * 64,
+                    "tmux_socket_path": "/tmp/tmux.sock",
+                    "tmux_session_name": "s",
+                    "tmux_window_index": 0,
+                    "tmux_pane_index": 0,
+                    "tmux_pane_id": "%1",
+                },
+            },
+        },
+    )
+    assert envelope["ok"] is True
+    assert ctx.queue_service.sender_agent_id == "agt_aaaaaaaaaaaa"
+
+
+def test_queue_send_input_rejects_agent_only_caller_identity(tmp_path: Path) -> None:
+    _insert_active_agent_for_ctx(tmp_path)
+    ctx = _ctx(tmp_path)
+    ctx.queue_service = _QueueSendInputService()
+    ctx.routing_flag_service = object()
+    envelope = DISPATCH["queue.send_input"](
+        ctx,
+        {
+            "target": "slave-1",
+            "body_bytes": "aGVsbG8=",
+            "caller_pane": {"agent_id": "agt_aaaaaaaaaaaa"},
+        },
+    )
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "bad_request"
+
+
+def test_queue_list_rejects_empty_sender_filter(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.queue_service = _QueueListService()
+    ctx.routing_flag_service = object()
+    envelope = DISPATCH["queue.list"](ctx, {"sender": ""})
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "bad_request"
+
+
+def test_queue_operator_actions_return_excerpt(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.queue_service = _QueueListService()
+    ctx.routing_flag_service = object()
+    _set_request_peer_context(peer_pid=os.getpid())
+    try:
+        for method in ("queue.approve", "queue.delay", "queue.cancel"):
+            envelope = DISPATCH[method](ctx, {"message_id": "msg-1"})
+            assert envelope["ok"] is True
+            assert envelope["result"]["excerpt"] == "excerpt:msg-1"
+    finally:
+        _clear_request_peer_context()
+
+
+def test_queue_operator_action_without_caller_pane_is_not_host_by_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.queue_service = _QueueListService()
+    ctx.routing_flag_service = object()
+    _set_request_peer_context(peer_pid=os.getpid())
+    monkeypatch.setattr(methods_mod, "_peer_is_host_process", lambda pid: False)
+    try:
+        envelope = DISPATCH["queue.approve"](ctx, {"message_id": "msg-1"})
+    finally:
+        _clear_request_peer_context()
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "bad_request"
 
 
 def test_events_filter_compares_since_until_chronologically() -> None:

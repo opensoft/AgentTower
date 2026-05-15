@@ -32,6 +32,8 @@ Handler = Callable[..., dict[str, Any]]
 # Sentinel used when no peer-credential information is available
 # (e.g. unit tests calling DISPATCH directly without a real socket).
 _NO_PEER_UID = -1
+_NO_PEER_PID = -1
+_REQUEST_PEER = threading.local()
 
 
 @dataclass
@@ -69,6 +71,20 @@ class DaemonContext:
     queue_audit_writer: Any = None
     message_queue_dao: Any = None
     daemon_state_dao: Any = None
+
+
+def _set_request_peer_context(*, peer_pid: int) -> None:
+    _REQUEST_PEER.peer_pid = int(peer_pid)
+
+
+def _clear_request_peer_context() -> None:
+    if hasattr(_REQUEST_PEER, "peer_pid"):
+        delattr(_REQUEST_PEER, "peer_pid")
+
+
+def _request_peer_pid() -> int:
+    value = getattr(_REQUEST_PEER, "peer_pid", _NO_PEER_PID)
+    return int(value) if isinstance(value, int) else _NO_PEER_PID
 
 
 def _ping(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
@@ -570,6 +586,7 @@ _EVENTS_VALID_TYPES = frozenset(
         "long_running", "pane_exited", "swarm_member_reported",
     }
 )
+_EVENTS_DEFAULT_TYPES = tuple(sorted(_EVENTS_VALID_TYPES))
 
 
 def _events_config_value(ctx: DaemonContext, name: str, fallback: Any) -> Any:
@@ -759,7 +776,7 @@ def _events_list(
         limit = max_page_size
     cursor = params.get("cursor")
     reverse = params.get("reverse", False)
-    types = tuple(params.get("types") or [])
+    types = tuple(params.get("types") or _EVENTS_DEFAULT_TYPES)
     filter = EventFilter(
         target_agent_id=target,
         types=types,
@@ -844,7 +861,7 @@ def _events_follow_open(
     if err is not None:
         return err
 
-    types = tuple(params.get("types") or [])
+    types = tuple(params.get("types") or _EVENTS_DEFAULT_TYPES)
     since = params.get("since")
 
     # Compute live_starting_event_id = current max event_id at session-open
@@ -996,7 +1013,7 @@ def _events_follow_next(
                 conn,
                 filter=EventFilter(
                     target_agent_id=session.target_agent_id,
-                    types=tuple(session.type_filter),
+                    types=tuple(session.type_filter or _EVENTS_DEFAULT_TYPES),
                 ),
                 cursor=cursor_token,
                 limit=default_page_size,
@@ -1129,24 +1146,99 @@ def _parse_caller_pane(params: dict[str, Any]) -> tuple[dict[str, Any] | None, d
     return raw, None
 
 
+def _peer_is_host_process(peer_pid: int) -> bool:
+    """Best-effort host-vs-container discriminator for the AF_UNIX peer.
+
+    Fail closed: any missing peer pid, unreadable `/proc/<pid>`, container
+    marker file, or matching cgroup prefix is treated as "not proven host".
+    """
+    if peer_pid == _NO_PEER_PID or peer_pid <= 0:
+        return False
+
+    from ..config_doctor.runtime_detect import CGROUP_PREFIXES
+
+    proc_dir = Path("/proc") / str(peer_pid)
+    root_dir = proc_dir / "root"
+    try:
+        if (root_dir / ".dockerenv").exists():
+            return False
+        if (root_dir / "run" / ".containerenv").exists():
+            return False
+    except OSError:
+        return False
+
+    cgroup_path = proc_dir / "cgroup"
+    try:
+        with cgroup_path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if any(prefix in line for prefix in CGROUP_PREFIXES):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def _coerce_caller_pane_key(
+    caller_pane: dict[str, Any],
+) -> tuple[tuple[str, str, str, int, int, str] | None, dict[str, Any] | None]:
+    raw = caller_pane.get("pane_composite_key")
+    if raw is None:
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.pane_composite_key is required",
+        )
+    if not isinstance(raw, dict):
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.pane_composite_key must be an object",
+        )
+    required = (
+        "container_id",
+        "tmux_socket_path",
+        "tmux_session_name",
+        "tmux_window_index",
+        "tmux_pane_index",
+        "tmux_pane_id",
+    )
+    for key in required:
+        value = raw.get(key)
+        if value is None or (isinstance(value, str) and not value):
+            return None, errors.make_error(
+                errors.BAD_REQUEST,
+                f"params.caller_pane.pane_composite_key.{key} is required",
+            )
+    try:
+        pane_key = (
+            str(raw["container_id"]),
+            str(raw["tmux_socket_path"]),
+            str(raw["tmux_session_name"]),
+            int(raw["tmux_window_index"]),
+            int(raw["tmux_pane_index"]),
+            str(raw["tmux_pane_id"]),
+        )
+    except (TypeError, ValueError):
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.pane_composite_key has invalid field types",
+        )
+    return pane_key, None
+
+
 def _resolve_caller_agent(
     ctx: DaemonContext, caller_pane: dict[str, Any] | None,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Resolve the caller's ``AgentRecord`` from the ``caller_pane``.
 
-    For bench-container callers the wire carries ``caller_pane.agent_id``;
-    we trust it (same-uid peer, FR-024) and verify the row exists +
-    ``active=true``. Returns the record on success, an error envelope
-    on miss / inactive.
+    FEAT-009 caller context is keyed by the pane composite key, not a
+    caller-supplied agent_id. That keeps the daemon's sender/operator
+    attribution anchored to the registered pane binding instead of a
+    spoofable string on the wire.
     """
     if caller_pane is None:
         return None, None
-    agent_id = caller_pane.get("agent_id")
-    if not isinstance(agent_id, str) or not agent_id:
-        return None, errors.make_error(
-            errors.BAD_REQUEST,
-            "params.caller_pane.agent_id must be a non-empty string",
-        )
+    pane_key, err = _coerce_caller_pane_key(caller_pane)
+    if err is not None:
+        return None, err
 
     # Resolve the agents row via a per-request SQLite connection so
     # the dispatcher thread doesn't race the worker / DAOs on the
@@ -1163,7 +1255,7 @@ def _resolve_caller_agent(
     # concern doesn't apply.
     # Lazy import keeps the FEAT-009 dispatch module independent of
     # the state package's import graph for FEAT-001..004 boot paths.
-    from ..state.agents import select_agent_by_id
+    from ..state.agents import select_agent_by_pane_key
 
     state_dir = getattr(ctx, "state_path", None)
     state_db = (state_dir / "agenttower.sqlite3") if state_dir is not None else None
@@ -1177,7 +1269,7 @@ def _resolve_caller_agent(
                 _internal_error_message(str(exc), prefix="agent registry"),
             )
         try:
-            record = select_agent_by_id(conn, agent_id=agent_id)
+            record = select_agent_by_pane_key(conn, pane_key=pane_key)
         finally:
             conn.close()
     else:
@@ -1188,7 +1280,17 @@ def _resolve_caller_agent(
             return None, errors.make_error(
                 errors.INTERNAL_ERROR, "agent registry unavailable"
             )
-        record = select_agent_by_id(fallback_conn, agent_id=agent_id)
+        record = select_agent_by_pane_key(fallback_conn, pane_key=pane_key)
+    claimed_agent_id = caller_pane.get("agent_id")
+    if claimed_agent_id is not None and (
+        not isinstance(claimed_agent_id, str)
+        or record is None
+        or record.agent_id != claimed_agent_id
+    ):
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.agent_id does not match pane_composite_key",
+        )
     if record is None or not record.active:
         return None, errors.make_error(
             errors.OPERATOR_PANE_INACTIVE,
@@ -1401,26 +1503,23 @@ def _queue_list(
     # uses, so labels work + ambiguous labels surface verbatim.
     target_agent_id: str | None = None
     sender_agent_id: str | None = None
-    # ``target`` / ``sender`` are optional — but if present, MUST be
-    # non-empty strings. Match the strict typing used for ``state``
-    # and ``since`` (silently widening to "no filter" hides client
-    # bugs). The QueueService's public resolver helper raises
-    # TargetResolveError with closed-set codes
-    # (agent_not_found / target_label_ambiguous).
-    for _field_name, _field_value in (("target", target_in), ("sender", sender_in)):
-        if _field_value is not None and (
-            not isinstance(_field_value, str) or not _field_value
-        ):
-            return errors.make_error(
-                errors.BAD_REQUEST,
-                f"params.{_field_name} must be a non-empty string or absent",
-            )
+    # Use the QueueService's public resolver helper instead of reaching
+    # into private fields. The helper raises TargetResolveError with
+    # the same closed-set codes (agent_not_found / target_label_ambiguous).
     if target_in is not None:
+        if not isinstance(target_in, str) or not target_in:
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.target must be a non-empty string"
+            )
         try:
             target_agent_id = queue_service.resolve_target_agent_id(target_in)
         except TargetResolveError as exc:
             return _queue_error_to_envelope(exc, method="queue.list")
     if sender_in is not None:
+        if not isinstance(sender_in, str) or not sender_in:
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.sender must be a non-empty string"
+            )
         try:
             sender_agent_id = queue_service.resolve_target_agent_id(sender_in)
         except TargetResolveError as exc:
@@ -1490,6 +1589,11 @@ def _resolve_operator_identity(
     if err is not None:
         return None, err
     if caller_pane is None:
+        if not _peer_is_host_process(_request_peer_pid()):
+            return None, errors.make_error(
+                errors.BAD_REQUEST,
+                "bench-container callers must supply caller_pane for queue operator actions",
+            )
         # Lazy import to keep dispatch module independent of agents pkg.
         from ..agents.identifiers import HOST_OPERATOR_SENTINEL
         return HOST_OPERATOR_SENTINEL, None
@@ -1525,7 +1629,11 @@ def _queue_operator_action(
         row = method_fn(message_id, operator=operator)
     except Exception as exc:
         return _queue_error_to_envelope(exc, method=method)
-    return errors.make_ok(_queue_row_to_payload(row))
+    return errors.make_ok(
+        _queue_row_to_payload(
+            row, excerpt=queue_service.read_envelope_excerpt(row.message_id),
+        )
+    )
 
 
 def _queue_approve(
@@ -1592,6 +1700,11 @@ def _routing_host_only_gate(
         return errors.make_error(
             errors.ROUTING_TOGGLE_HOST_ONLY,
             "routing toggle requires daemon-host uid",
+        )
+    if not _peer_is_host_process(_request_peer_pid()):
+        return errors.make_error(
+            errors.ROUTING_TOGGLE_HOST_ONLY,
+            "routing toggle requires a host-origin peer process",
         )
     return None
 

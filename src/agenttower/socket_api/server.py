@@ -20,33 +20,50 @@ from pathlib import Path
 from typing import Any
 
 from . import errors
-from .methods import DISPATCH, DaemonContext
+from .methods import (
+    DISPATCH,
+    DaemonContext,
+    _clear_request_peer_context,
+    _set_request_peer_context,
+)
 
 MAX_REQUEST_BYTES = 65536  # 64 KiB; FR-029 / R-006.
 
 # Linux ucred is "{ pid_t pid; uid_t uid; gid_t gid; }" — three 32-bit ints.
 _UCRED_STRUCT = struct.Struct("iII")
 _NO_PEER_UID = -1
+_NO_PEER_PID = -1
 
 
-def _peer_uid_from_socket(conn: _socket.socket) -> int:
-    """Return the peer's uid from ``SO_PEERCRED`` or ``-1`` on failure.
+def _peer_cred_from_socket(conn: _socket.socket) -> tuple[int, int]:
+    """Return ``(peer_pid, peer_uid)`` from ``SO_PEERCRED`` or sentinels.
 
     The uid is injected out-of-band into method dispatch so a request
     body cannot spoof it. Failures (non-Linux kernel, connection torn
-    down before getsockopt, etc.) degrade to the sentinel ``-1`` —
-    audit rows then record ``-1`` rather than dropping the request.
+    down before getsockopt, etc.) degrade to the sentinel ``-1`` pair.
     """
     try:
         raw = conn.getsockopt(
             _socket.SOL_SOCKET, _socket.SO_PEERCRED, _UCRED_STRUCT.size
         )
     except (OSError, AttributeError):
-        return _NO_PEER_UID
+        return _NO_PEER_PID, _NO_PEER_UID
     if len(raw) < _UCRED_STRUCT.size:
-        return _NO_PEER_UID
-    _pid, uid, _gid = _UCRED_STRUCT.unpack(raw)
-    return int(uid)
+        return _NO_PEER_PID, _NO_PEER_UID
+    pid, uid, _gid = _UCRED_STRUCT.unpack(raw)
+    return int(pid), int(uid)
+
+
+def _peer_uid_from_socket(conn: _socket.socket) -> int:
+    """Back-compat shim for tests and older call sites that only need uid."""
+    _pid, uid = _peer_cred_from_socket(conn)
+    return uid
+
+
+def _peer_pid_from_socket(conn: _socket.socket) -> int:
+    """Internal helper for methods that need the peer pid."""
+    pid, _uid = _peer_cred_from_socket(conn)
+    return pid
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +85,9 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         # boundary in that case.
         connection = getattr(self, "connection", None)
         observed_uid = (
-            _peer_uid_from_socket(connection) if connection is not None else _NO_PEER_UID
+            _peer_uid_from_socket(connection)
+            if connection is not None
+            else _NO_PEER_UID
         )
         if observed_uid != _NO_PEER_UID:
             try:
@@ -161,13 +180,23 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         # that synthesize a handler via ``__new__`` skip setup, so fall back
         # to the sentinel rather than crashing dispatch on a missing attr.
         connection = getattr(self, "connection", None)
+        peer_pid = (
+            _peer_pid_from_socket(connection)
+            if connection is not None
+            else _NO_PEER_PID
+        )
         peer_uid = (
-            _peer_uid_from_socket(connection) if connection is not None else _NO_PEER_UID
+            _peer_uid_from_socket(connection)
+            if connection is not None
+            else _NO_PEER_UID
         )
         try:
+            _set_request_peer_context(peer_pid=peer_pid)
             return handler(self.server.context, params, peer_uid)
         except Exception as exc:  # noqa: BLE001 — never crash the daemon (FR-021).
             return errors.make_error(errors.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
+        finally:
+            _clear_request_peer_context()
 
     def _write_response(self, envelope: dict[str, Any]) -> None:
         try:

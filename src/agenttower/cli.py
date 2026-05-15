@@ -2406,7 +2406,10 @@ def _send_input_command(args: argparse.Namespace) -> int:
     params: dict[str, Any] = {
         "target": args.target,
         "body_bytes": body_b64,
-        "caller_pane": {"agent_id": self_agent_id},
+        "caller_pane": {
+            "agent_id": self_agent_id,
+            "pane_composite_key": _pane_key_to_wire(target.pane_key),
+        },
         "wait": not args.no_wait,
     }
     if not args.no_wait:
@@ -2675,7 +2678,10 @@ def _queue_resolve_caller_pane(
     )
     if isinstance(self_agent_id, int):
         return None, self_agent_id
-    return {"agent_id": self_agent_id}, None
+    return {
+        "agent_id": self_agent_id,
+        "pane_composite_key": _pane_key_to_wire(target.pane_key),
+    }, None
 
 
 def _queue_list_command(args: argparse.Namespace) -> int:
@@ -2758,6 +2764,17 @@ def _queue_label_and_prefix(identity: dict[str, Any]) -> str:
         prefix = agent_id[:8] if agent_id.startswith("agt_") else agent_id[:8]
         return f"{label}({prefix})"
     return agent_id
+
+
+def _pane_key_to_wire(pane_key: tuple[str, str, str, int, int, str]) -> dict[str, Any]:
+    return {
+        "container_id": pane_key[0],
+        "tmux_socket_path": pane_key[1],
+        "tmux_session_name": pane_key[2],
+        "tmux_window_index": pane_key[3],
+        "tmux_pane_index": pane_key[4],
+        "tmux_pane_id": pane_key[5],
+    }
 
 
 def _queue_operator_command_factory(op_name: str):
@@ -2933,7 +2950,10 @@ def _routing_probe_caller_pane(
             "tmux_pane_index": target.pane_key[4],
             "tmux_pane_id": target.pane_key[5],
         }}}
-    return {"caller_pane": {"agent_id": self_agent_id}}
+    return {"caller_pane": {
+        "agent_id": self_agent_id,
+        "pane_composite_key": _pane_key_to_wire(target.pane_key),
+    }}
 
 
 def _routing_emit_daemon_error(

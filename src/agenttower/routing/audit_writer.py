@@ -552,11 +552,40 @@ class QueueAuditWriter:
             return
 
         # JSONL succeeded; back-fill the watermark.
-        with self._tx_lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                mark_jsonl_appended(self._conn, event_id, watermark_ts)
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
+        try:
+            with self._tx_lock:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    mark_jsonl_appended(self._conn, event_id, watermark_ts)
+                    self._conn.execute("COMMIT")
+                except Exception:
+                    self._conn.execute("ROLLBACK")
+                    raise
+        except Exception as exc:
+            exc_name = type(exc).__name__
+            with self._buffer_lock:
+                self._degraded_exc_class = exc_name
+                dropped_event_id: int | None = None
+                if len(self._pending) == self._max_pending:
+                    dropped_event_id = self._pending[0].event_id
+                self._pending.append(
+                    PendingJsonl(
+                        event_id=event_id,
+                        payload=payload,
+                        failure_exc_class=exc_name,
+                        jsonl_appended=True,
+                    )
+                )
+                pending_count = len(self._pending)
+            if dropped_event_id is not None:
+                _log.warning(
+                    "audit buffer at cap (%d); dropping oldest event_id=%d",
+                    self._max_pending,
+                    dropped_event_id,
+                )
+            _log.warning(
+                "audit watermark update failed (%s) for event_id=%d; buffered watermark retry (pending=%d)",
+                exc_name,
+                event_id,
+                pending_count,
+            )
