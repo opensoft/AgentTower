@@ -2344,8 +2344,14 @@ def _send_input_command(args: argparse.Namespace) -> int:
     _, resolved = _resolve_socket_with_paths()
     socket_path = resolved.path
 
-    # Step 1: resolve caller's pane composite key (host-side caller
-    # surfaces host_context_unsupported here).
+    # Step 1: resolve caller's pane composite key. Per
+    # ``specs/009-safe-prompt-queue/contracts/cli-send-input.md``,
+    # host-side ``send-input`` MUST surface ``sender_not_in_pane``
+    # (exit 3) rather than the raw ``host_context_unsupported``
+    # (exit 1) from the FEAT-006 resolver — send-input is the FEAT-009
+    # surface, not register-self, and its closed-set error catalogue
+    # uses ``sender_not_in_pane`` for the "you're not running inside a
+    # bench pane" condition.
     try:
         target = resolve_pane_composite_key(
             socket_path=socket_path,
@@ -2355,9 +2361,23 @@ def _send_input_command(args: argparse.Namespace) -> int:
             read_timeout=5.0,
         )
     except RegistrationError as exc:
-        # host_context_unsupported maps to exit 1 via _exit_code_for;
-        # the operator sees the FEAT-006 prefix message verbatim.
-        return _emit_register_error(exc, json_mode)
+        from .routing.errors import CLI_EXIT_CODE_MAP, SENDER_NOT_IN_PANE
+        # Map every host-context / pane-resolution failure to the
+        # FEAT-009 ``sender_not_in_pane`` closed-set code per the
+        # CLI contract. Preserve the resolver's diagnostic message
+        # so the operator sees the underlying reason verbatim.
+        message = (
+            f"send-input: {SENDER_NOT_IN_PANE} — {exc.code}: {exc}"
+        )
+        if json_mode:
+            import json as _json
+            print(_json.dumps({
+                "ok": False,
+                "error": {"code": SENDER_NOT_IN_PANE, "message": message},
+            }))
+        else:
+            print(message, file=sys.stderr)
+        return CLI_EXIT_CODE_MAP.get(SENDER_NOT_IN_PANE, 3)
     except DaemonUnavailable:
         # The main send-input RPC path returns CLI_EXIT_CODE_MAP[
         # 'daemon_unavailable'] (12). Use the same code here so
@@ -2836,45 +2856,38 @@ def _routing_probe_caller_pane(
     """Detect bench-container vs host context for routing toggles.
 
     The probe walks the FEAT-005 ``resolve_pane_composite_key`` chain;
-    the failure code tells us where we stopped:
+    the failure code tells us where we stopped. Per
+    ``resolve_pane_composite_key`` semantics, ONLY
+    ``host_context_unsupported`` is raised at step 1 when
+    ``runtime_detect`` concludes "no container signals at all" — every
+    other code is raised AFTER runtime detection already classified
+    us as non-host (``ContainerContext`` / ``MaybeContainerContext``),
+    so they all mean "we're in a bench-container-like environment
+    even if the specific pane couldn't be identified".
 
-    * ``host_context_unsupported`` — definitive host (no container
-      signals from ``runtime_detect``). Returns ``{}``; daemon's
-      host-only gate accepts on peer-uid match.
-    * ``container_unresolved`` — ambiguous: container signals were
-      seen (e.g. ``/.dockerenv`` exists on the host machine, or cgroup
-      v1 quirks) but the daemon's container registry didn't match.
-      We treat this as host-like and return ``{}``; the daemon's
-      peer-uid check is canonical and refuses non-daemon UIDs. (This
-      branch keeps the host path working on dev machines that have a
-      spurious ``/.dockerenv`` marker.)
-    * ``not_in_tmux`` / ``tmux_pane_malformed`` /
-      ``pane_unknown_to_daemon`` — we DID resolve a registered
-      ``container_id`` (we got past the container-match step), so we
-      know we're inside a bench container even though the pane
-      identity is missing. Returning ``{}`` here would let a
-      container-origin client slip through the host-only gate when
-      peer_uid matches the daemon's uid. Send a sentinel
+    * ``host_context_unsupported`` — definitive host. Return ``{}``;
+      the daemon's host-only gate accepts on peer-uid match.
+    * ``container_unresolved`` / ``not_in_tmux`` /
+      ``tmux_pane_malformed`` / ``pane_unknown_to_daemon`` / any
+      other RegistrationError — fail closed: send a sentinel
       ``caller_pane`` so the daemon refuses with
-      ``routing_toggle_host_only``.
+      ``routing_toggle_host_only``. A misclassification here on a
+      dev machine that has a spurious ``/.dockerenv`` is acceptable
+      collateral; the secure default is to refuse when in doubt
+      (operator can remove the marker or run from a known-host
+      shell). The daemon's gate is the canonical enforcement point.
 
-    The daemon's gate is the canonical enforcement point; this probe
-    just hands the daemon the signal it needs (FR-024 trusts the
-    same-uid peer).
+    The daemon's peer-uid check is canonical for the
+    ``host_context_unsupported`` case (FR-024 trusts the same-uid
+    peer); for every other code we explicitly tell the daemon to
+    refuse.
     """
     from .agents.client_resolve import resolve_pane_composite_key
     from .agents.errors import RegistrationError
 
-    # Codes that prove we're inside a bench container known to the
-    # daemon (we passed the container-match step in client_resolve).
-    _DEFINITELY_BENCH_CONTAINER = {
-        "not_in_tmux",
-        "tmux_pane_malformed",
-        "pane_unknown_to_daemon",
-    }
-    # Sentinel for the bench-container-but-unresolved-pane case. The
-    # daemon's gate only checks ``caller_pane is not None``, so any
-    # non-empty dict suffices to trip the refuse path.
+    # Sentinel for the not-definitively-host case. The daemon's gate
+    # only checks ``caller_pane is not None``, so any non-empty dict
+    # suffices to trip the refuse path.
     _BENCH_ORIGIN_UNRESOLVED: dict[str, Any] = {
         "caller_pane": {"bench_origin_unresolved": True},
     }
@@ -2888,16 +2901,14 @@ def _routing_probe_caller_pane(
             read_timeout=5.0,
         )
     except RegistrationError as exc:
-        if exc.code in _DEFINITELY_BENCH_CONTAINER:
-            return _BENCH_ORIGIN_UNRESOLVED
-        # host_context_unsupported, container_unresolved, or any
-        # other RegistrationError → host-like; rely on the daemon's
-        # peer-uid check to gate.
-        return {}
+        if exc.code == "host_context_unsupported":
+            return {}
+        # Any other RegistrationError code: runtime_detect already
+        # classified us as not-host, so fail closed.
+        return _BENCH_ORIGIN_UNRESOLVED
     except Exception:  # noqa: BLE001
-        # Defensive — non-RegistrationError surprise. Fall back to
-        # empty params (peer_uid check remains canonical).
-        return {}
+        # Defensive — non-RegistrationError surprise. Fail closed.
+        return _BENCH_ORIGIN_UNRESOLVED
     # Bench-container origin detected; include caller_pane so the
     # daemon refuses with routing_toggle_host_only.
     self_agent_id = _send_input_lookup_self_agent_id(

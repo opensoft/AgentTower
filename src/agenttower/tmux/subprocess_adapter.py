@@ -287,6 +287,8 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not found or not executable: {exc}"),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
                 failure_reason="docker_exec_failed",
             ) from exc
 
@@ -352,6 +354,8 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not found or not executable: {exc}"),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
                 failure_reason="docker_exec_failed",
             ) from exc
 
