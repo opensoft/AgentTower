@@ -59,6 +59,22 @@ def _format_iso_ms_utc(dt: datetime) -> str:
     return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{millis:03d}Z"
 
 
+def format_iso_ms_utc(dt: datetime) -> str:
+    """Public canonical-form formatter (``YYYY-MM-DDTHH:MM:SS.sssZ``).
+
+    Used by callers that need to render a parsed timestamp back to the
+    canonical millisecond form before SQL comparisons — e.g. the
+    ``queue.list`` dispatcher normalizes the operator's ``--since``
+    argument here so a seconds-precision input
+    (``2026-05-12T00:00:04Z``) compares correctly against ms-precision
+    ``enqueued_at`` values (``2026-05-12T00:00:04.123Z``) under the
+    DAO's lexicographic ``>=`` test (string order has
+    ``...04.123Z < ...04Z``, so the raw seconds form would
+    incorrectly exclude rows in the same second).
+    """
+    return _format_iso_ms_utc(dt)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Clock Protocol + production / fake implementations
 # ──────────────────────────────────────────────────────────────────────
