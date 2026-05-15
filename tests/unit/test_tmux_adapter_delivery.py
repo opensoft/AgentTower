@@ -145,10 +145,14 @@ def test_load_buffer_timeout_maps_to_tmux_paste_failed() -> None:
     assert info.value.failure_reason == "tmux_paste_failed"
 
 
-def test_load_buffer_file_not_found_maps_to_tmux_paste_failed() -> None:
-    """FileNotFoundError on ``load_buffer`` → ``tmux_paste_failed``
-    (the FR-018 reason chosen by the caller, threaded through
-    ``_run_bytes``)."""
+def test_load_buffer_file_not_found_maps_to_docker_exec_failed() -> None:
+    """``FileNotFoundError`` from ``subprocess.run`` always means the
+    docker binary is missing/non-executable — a docker-level setup
+    problem, NOT a tmux step failure. ``_run_bytes`` force-classifies
+    it as ``docker_exec_failed`` regardless of which tmux-step caller
+    supplied the ``failure_reason`` override. (Timeout still honors
+    the caller's override; see
+    :func:`test_load_buffer_timeout_maps_to_tmux_paste_failed`.)"""
     adapter = SubprocessTmuxAdapter(env={"PATH": "/usr/bin:/bin"})
     with patch("agenttower.tmux.subprocess_adapter.subprocess.run") as mock_run:
         mock_run.side_effect = FileNotFoundError("docker not found")
@@ -158,7 +162,7 @@ def test_load_buffer_file_not_found_maps_to_tmux_paste_failed() -> None:
                     container_id="c", bench_user="u",
                     socket_path="/s", buffer_name="b", body=b"x",
                 )
-    assert info.value.failure_reason == "tmux_paste_failed"
+    assert info.value.failure_reason == "docker_exec_failed"
 
 
 def test_load_buffer_rejects_non_bytes_body() -> None:

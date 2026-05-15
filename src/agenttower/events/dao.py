@@ -587,15 +587,27 @@ def select_pending_jsonl(conn: sqlite3.Connection, *, limit: int) -> list[EventR
     """Return rows with ``jsonl_appended_at IS NULL`` for the FR-029 retry queue.
 
     Ordered by ``event_id ASC`` (oldest pending first).
+
+    Excludes FEAT-009 audit rows (``queue_message_*`` /
+    ``routing_toggled``). Those rows live in the shared ``events``
+    table but use a different JSONL schema; their watermark is owned
+    by :class:`agenttower.routing.audit_writer.QueueAuditWriter` via
+    :meth:`drain_pending`. If the FEAT-008 EventsReader retry loop
+    picked them up here, it would re-emit them with the durable-event
+    JSONL shape (with many NULL fields) instead of the FEAT-009
+    queue/routing audit shape, violating the
+    contracts/queue-audit-schema.md contract.
     """
     if limit <= 0:
         raise ValueError(f"limit must be > 0; got {limit}")
+    placeholders = ", ".join(["?"] * len(_EVENT_TYPES))
     sql = (
         f"SELECT {_SELECT_FIELDS} FROM events "
         "WHERE jsonl_appended_at IS NULL "
+        f"AND event_type IN ({placeholders}) "
         "ORDER BY event_id ASC LIMIT ?"
     )
-    cur = conn.execute(sql, (limit,))
+    cur = conn.execute(sql, (*_EVENT_TYPES, limit))
     return [_row_to_event(r) for r in cur.fetchall()]
 
 
