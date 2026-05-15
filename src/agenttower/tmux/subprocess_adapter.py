@@ -247,13 +247,18 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         binary as :class:`TmuxError`.
 
         ``failure_reason`` lets FEAT-009 delivery callers override the
-        FR-018 failure_reason recorded on the raised TmuxError so a
-        tmux-step subprocess timeout (e.g. ``send_keys`` hung) is
-        classified correctly (``tmux_send_keys_failed``) rather than
-        falling through to the delivery worker's default
-        (``tmux_paste_failed``). The FEAT-002/003/004 list-sockets /
-        list-sessions / list-panes paths don't supply a value and the
-        raised TmuxError carries ``failure_reason=None`` as before.
+        FR-018 failure_reason recorded on the raised TmuxError for
+        ``TimeoutExpired`` only, so a tmux-step subprocess timeout
+        (e.g. ``send_keys`` hung) is classified correctly
+        (``tmux_send_keys_failed``) rather than falling through to the
+        delivery worker's default (``tmux_paste_failed``).
+
+        ``FileNotFoundError`` is treated differently: it always means
+        the docker binary is missing or non-executable, which is a
+        docker-level setup problem regardless of which tmux step
+        invoked us. We force ``failure_reason='docker_exec_failed'``
+        so ``message_queue.failure_reason`` doesn't misleadingly
+        attribute a docker setup problem to a tmux step.
         """
         try:
             return subprocess.run(  # noqa: S603 — typed argv, shell=False
@@ -282,7 +287,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not found or not executable: {exc}"),
-                failure_reason=failure_reason,
+                failure_reason="docker_exec_failed",
             ) from exc
 
     # ─── FEAT-009 delivery surface ────────────────────────────────────
@@ -312,11 +317,15 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         can be raw bytes (FEAT-009 ``load_buffer`` body).
 
         ``failure_reason`` is the FR-018 value attached to the
-        :class:`TmuxError` raised on TIMEOUT / FNF. ``load_buffer``
+        :class:`TmuxError` raised on TIMEOUT only. ``load_buffer``
         passes ``tmux_paste_failed`` so a hung ``docker exec tmux
         load-buffer`` is classified as a tmux-step failure, not a
-        generic docker-exec failure (which is what the
-        original default conveyed for callers that don't override).
+        generic docker-exec failure.
+
+        ``FileNotFoundError`` always means the docker binary is
+        missing — see :meth:`_run` — and is force-classified as
+        ``docker_exec_failed`` regardless of which tmux step invoked
+        us.
         """
         try:
             return subprocess.run(  # noqa: S603 — typed argv, shell=False
@@ -343,7 +352,7 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             raise TmuxError(
                 code=_errors.DOCKER_UNAVAILABLE,
                 message=_bound(f"docker binary not found or not executable: {exc}"),
-                failure_reason=failure_reason,
+                failure_reason="docker_exec_failed",
             ) from exc
 
     @classmethod
