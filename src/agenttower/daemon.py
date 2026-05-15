@@ -40,6 +40,7 @@ from .socket_api.server import ControlServer
 LOCK_FILENAME = "agenttowerd.lock"
 PID_FILENAME = "agenttowerd.pid"
 LOG_FILENAME = "agenttowerd.log"
+_SQLITE_NO_WAIT_TIMEOUT_SECONDS = 0.0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -145,7 +146,10 @@ def _resolve_docker_adapter():  # noqa: ANN202 — adapter is a Protocol
 
 def _read_schema_version(paths: Paths) -> int | None:
     try:
-        conn = sqlite3.connect(str(paths.state_db))
+        conn = sqlite3.connect(
+            str(paths.state_db),
+            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        )
         try:
             row = conn.execute("SELECT version FROM schema_version").fetchone()
         finally:
@@ -162,13 +166,19 @@ def _build_discovery_service(
     if adapter is None:
         return None, None
     conn = sqlite3.connect(
-        str(paths.state_db), isolation_level=None, check_same_thread=False
+        str(paths.state_db),
+        isolation_level=None,
+        check_same_thread=False,
+        timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
     )
     service = DiscoveryService(
         connection=conn,
         adapter=adapter,
         rule_provider=lambda: load_containers_block(paths.config_file),
-        list_connection_factory=lambda: sqlite3.connect(str(paths.state_db)),
+        list_connection_factory=lambda: sqlite3.connect(
+            str(paths.state_db),
+            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        ),
         events_file=paths.events_file,
         lifecycle_logger=logger,
     )
@@ -195,12 +205,18 @@ def _build_pane_service(
     if adapter is None:
         return None, None
     conn = sqlite3.connect(
-        str(paths.state_db), isolation_level=None, check_same_thread=False
+        str(paths.state_db),
+        isolation_level=None,
+        check_same_thread=False,
+        timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
     )
     service = PaneDiscoveryService(
         connection=conn,
         adapter=adapter,
-        list_connection_factory=lambda: sqlite3.connect(str(paths.state_db)),
+        list_connection_factory=lambda: sqlite3.connect(
+            str(paths.state_db),
+            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        ),
         events_file=paths.events_file,
         lifecycle_logger=logger,
     )
@@ -221,7 +237,9 @@ def _build_log_service(
     daemon_home = os.path.expanduser("~")
     return LogService(
         connection_factory=lambda: sqlite3.connect(
-            str(paths.state_db), isolation_level=None
+            str(paths.state_db),
+            isolation_level=None,
+            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
         ),
         agent_locks=agent_locks,
         log_path_locks=LogPathLockMap(),
@@ -250,7 +268,9 @@ def _build_agent_service(paths: Paths, logger: LifecycleLogger) -> AgentService:
     schema_version = _read_schema_version(paths) or 0
     return AgentService(
         connection_factory=lambda: sqlite3.connect(
-            str(paths.state_db), isolation_level=None
+            str(paths.state_db),
+            isolation_level=None,
+            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
         ),
         register_locks=RegisterLockMap(),
         agent_locks=AgentLockMap(),
@@ -314,6 +334,7 @@ def _build_feat009_services(
         str(paths.state_db),
         isolation_level=None,
         check_same_thread=False,
+        timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
     )
 
     # One shared lock for all writers/readers of worker_conn. The
@@ -336,7 +357,10 @@ def _build_feat009_services(
     # its own short-lived connection so reads don't block the worker
     # thread's BEGIN IMMEDIATE.
     def _read_conn_factory() -> sqlite3.Connection:
-        return sqlite3.connect(str(paths.state_db))
+        return sqlite3.connect(
+            str(paths.state_db),
+            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        )
 
     agents_lookup = RegistryAgentsLookup(_read_conn_factory)
     if discovery_service is None or pane_service is None:
@@ -639,7 +663,9 @@ def _run(args: argparse.Namespace) -> int:
         try:
             detect_orphans(
                 connection_factory=lambda: sqlite3.connect(
-                    str(paths.state_db), isolation_level=None
+                    str(paths.state_db),
+                    isolation_level=None,
+                    timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
                 ),
                 docker_exec_runner=log_service.docker_exec_runner,
                 daemon_home=Path(os.path.expanduser("~")),
