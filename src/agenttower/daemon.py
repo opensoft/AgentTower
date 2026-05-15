@@ -685,26 +685,37 @@ def _run(args: argparse.Namespace) -> int:
         # path rather than the live notify.
         events_reader.start()
 
-        # FEAT-009 T048 — instantiate the queue/routing/delivery services,
-        # run the FR-040 recovery pass synchronously, then start the
-        # delivery worker thread. Order matters: recovery_pass MUST
-        # commit BEFORE the worker thread starts (research §R-012) so
-        # the worker never picks up a row still in
-        # ``delivery_attempt_started_at`` limbo from a prior crash.
-        (
-            worker_conn,
-            queue_service,
-            routing_flag,
-            audit_writer,
-            delivery_worker,
-            message_queue_dao,
-            daemon_state_dao,
-        ) = _build_feat009_services(
-            paths=paths,
-            discovery_service=discovery_service,
-            pane_service=pane_service,
-        )
+        # We enter the cleanup-shield IMMEDIATELY after starting the
+        # events reader so its background thread is always stopped on
+        # any subsequent startup failure — even one raised by
+        # ``_build_feat009_services`` (which previously sat outside
+        # this try, leaking the reader thread if FEAT-009 wiring
+        # raised). The FEAT-009 services are constructed inside this
+        # try; the inner ``try/finally`` below only guards resources
+        # created AFTER _build_feat009_services returns.
+        worker_conn = None
+        delivery_worker = None
         try:
+            # FEAT-009 T048 — instantiate the queue/routing/delivery
+            # services, run the FR-040 recovery pass synchronously,
+            # then start the delivery worker thread. Order matters:
+            # recovery_pass MUST commit BEFORE the worker thread
+            # starts (research §R-012) so the worker never picks up a
+            # row still in ``delivery_attempt_started_at`` limbo from
+            # a prior crash.
+            (
+                worker_conn,
+                queue_service,
+                routing_flag,
+                audit_writer,
+                delivery_worker,
+                message_queue_dao,
+                daemon_state_dao,
+            ) = _build_feat009_services(
+                paths=paths,
+                discovery_service=discovery_service,
+                pane_service=pane_service,
+            )
             ctx = _build_context(
                 paths=paths,
                 state_dir=state_dir,
@@ -739,18 +750,24 @@ def _run(args: argparse.Namespace) -> int:
             # final audit writes don't race the reader's cycle. Group-A
             # walk Q4: abort-not-drain shutdown — the next boot's
             # recovery pass cleans up any in-flight row.
-            try:
-                delivery_worker.stop()
-            except Exception:  # pragma: no cover — defensive
-                pass
-            try:
-                worker_conn.close()
-            except Exception:  # pragma: no cover — defensive
-                pass
+            #
+            # ``delivery_worker`` / ``worker_conn`` may still be None
+            # if ``_build_feat009_services`` raised before assigning
+            # them; skip in that case.
+            if delivery_worker is not None:
+                try:
+                    delivery_worker.stop()
+                except Exception:  # pragma: no cover — defensive
+                    pass
+            if worker_conn is not None:
+                try:
+                    worker_conn.close()
+                except Exception:  # pragma: no cover — defensive
+                    pass
             # Always stop the reader thread, regardless of which phase of
-            # startup raised — bind/build_context/write_pid_file/emit all
-            # run after ``events_reader.start()``, so any of them raising
-            # would otherwise leak the thread.
+            # startup raised — including a failure inside
+            # ``_build_feat009_services`` — so the reader thread is
+            # never leaked on a partial startup.
             events_reader.stop()
     finally:
         _cleanup_run(

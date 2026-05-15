@@ -2359,8 +2359,13 @@ def _send_input_command(args: argparse.Namespace) -> int:
         # the operator sees the FEAT-006 prefix message verbatim.
         return _emit_register_error(exc, json_mode)
     except DaemonUnavailable:
+        # The main send-input RPC path returns CLI_EXIT_CODE_MAP[
+        # 'daemon_unavailable'] (12). Use the same code here so
+        # send-input's exit code is consistent across both the
+        # caller-pane resolution step and the queue.send-input call.
+        from .routing.errors import CLI_EXIT_CODE_MAP
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
-        return 2
+        return CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
     except DaemonError as exc:
         return _emit_daemon_error(exc, json_mode)
 
@@ -2627,8 +2632,13 @@ def _queue_resolve_caller_pane(
             return None, None  # host caller — let daemon use the sentinel
         return None, _emit_register_error(exc, json_mode)
     except DaemonUnavailable:
+        # The queue operator-action RPC paths (approve/delay/cancel)
+        # map daemon_unavailable to CLI_EXIT_CODE_MAP['daemon_unavailable']
+        # (12). Match here so the exit code is consistent across both
+        # the caller-pane resolution step and the queue.* call.
+        from .routing.errors import CLI_EXIT_CODE_MAP
         print(DAEMON_UNAVAILABLE_MESSAGE, file=sys.stderr)
-        return None, 2
+        return None, CLI_EXIT_CODE_MAP.get("daemon_unavailable", 12)
     except DaemonError as exc:
         return None, _emit_daemon_error(exc, json_mode)
 

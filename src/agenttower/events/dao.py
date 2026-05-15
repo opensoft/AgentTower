@@ -266,16 +266,48 @@ INSERT INTO events (
 
 
 def insert_event(conn: sqlite3.Connection, row: EventRow) -> int:
-    """Insert a single event row; return the new ``event_id``.
+    """Insert a single event row for FEAT-008 classifier output;
+    return the new ``event_id``.
 
     The caller MUST be inside an explicit transaction (the reader's
     FR-006 atomic SQLite + offset commit). ``row.event_id`` is ignored
     on insert — the SQLite ``INTEGER PRIMARY KEY AUTOINCREMENT`` value
     is what's authoritative.
+
+    Audit rows (``queue_message_*`` / ``routing_toggled``) MUST be
+    written via :func:`insert_audit_event` instead — those rows leave
+    the FEAT-008-specific columns (``attachment_id`` / ``log_path`` /
+    ``byte_range_*`` / ``line_offset_*`` / ``classifier_rule_id`` /
+    ``debounce_window_*``) NULL, which this function explicitly
+    forbids. The :class:`EventRow` dataclass types those fields as
+    ``Optional`` so the read-side decoder can return them faithfully,
+    but on the write side we still require non-NULL values for the
+    classifier-row case.
     """
     if row.event_type not in _EVENT_TYPES:
         raise ValueError(
             f"event_type must be one of {_EVENT_TYPES}, got {row.event_type!r}"
+        )
+    # Validate non-NULL FEAT-008-specific fields BEFORE the numeric
+    # comparisons (which would raise TypeError on None and obscure the
+    # actual programmer error — calling insert_event() with an audit-
+    # shaped row instead of routing the audit row through
+    # ``insert_audit_event``).
+    _required = {
+        "attachment_id": row.attachment_id,
+        "log_path": row.log_path,
+        "classifier_rule_id": row.classifier_rule_id,
+        "byte_range_start": row.byte_range_start,
+        "byte_range_end": row.byte_range_end,
+        "line_offset_start": row.line_offset_start,
+        "line_offset_end": row.line_offset_end,
+    }
+    _missing = [name for name, value in _required.items() if value is None]
+    if _missing:
+        raise ValueError(
+            "insert_event requires FEAT-008 classifier-row columns to "
+            f"be non-NULL; missing: {sorted(_missing)}. Audit rows must "
+            "go through insert_audit_event()."
         )
     if row.byte_range_start < 0 or row.byte_range_end < row.byte_range_start:
         raise ValueError(

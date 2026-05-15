@@ -1367,7 +1367,7 @@ def _queue_list(
         SINCE_INVALID_FORMAT,
         TargetResolveError,
     )
-    from ..routing.timestamps import parse_since
+    from ..routing.timestamps import format_iso_ms_utc, parse_since
 
     state = params.get("state")
     target_in = params.get("target")
@@ -1416,7 +1416,12 @@ def _queue_list(
             return _queue_error_to_envelope(exc, method="queue.list")
 
     # Validate `since` format. ``parse_since`` accepts both the
-    # canonical ms-form and the seconds form per FR-012b.
+    # canonical ms-form and the seconds form per FR-012b. Normalize
+    # to canonical ms form before passing to the DAO — the DAO's
+    # ``enqueued_at >= ?`` test is a lexicographic SQLite string
+    # compare, so the seconds form (``...:04Z``) would incorrectly
+    # exclude rows within that second (string-order has
+    # ``...:04.123Z < ...:04Z``).
     since_value: str | None = None
     if since is not None:
         if not isinstance(since, str):
@@ -1424,7 +1429,7 @@ def _queue_list(
                 errors.BAD_REQUEST, "params.since must be a string"
             )
         try:
-            parse_since(since)
+            since_dt = parse_since(since)
         except (ValueError, TypeError) as exc:
             return errors.make_error(
                 SINCE_INVALID_FORMAT,
@@ -1432,7 +1437,7 @@ def _queue_list(
                 f"YYYY-MM-DDTHH:MM:SS[.sss]Z (FR-012b accepts both "
                 f"seconds and millisecond precision): {exc}",
             )
-        since_value = since
+        since_value = format_iso_ms_utc(since_dt)
 
     filters = QueueListFilter(
         # state has already been validated above (None or a valid
