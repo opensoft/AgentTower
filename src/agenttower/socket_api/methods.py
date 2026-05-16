@@ -7,6 +7,7 @@ unknown methods always return :data:`errors.UNKNOWN_METHOD`.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -1151,9 +1152,21 @@ def _peer_is_host_process(peer_pid: int) -> bool:
 
     Fail closed: any missing peer pid, unreadable `/proc/<pid>`, container
     marker file, or matching cgroup prefix is treated as "not proven host".
+
+    Test seam: when ``AGENTTOWER_TEST_FORCE_HOST_PEER=1`` is set in the
+    daemon's environment, this function returns ``True`` for any valid
+    pid. Integration tests + CI environments often run inside container-
+    shaped sandboxes (e.g. WSL2 with ``/.dockerenv``, Docker-in-Docker
+    runners) where the `/proc` markers false-positive even though the
+    daemon and the test client share the same uid + namespace. This
+    env var is intentionally NOT a documented production flag — it is
+    only set by the integration-test ``_daemon_helpers`` boot path.
     """
     if peer_pid == _NO_PEER_PID or peer_pid <= 0:
         return False
+
+    if os.environ.get("AGENTTOWER_TEST_FORCE_HOST_PEER") == "1":
+        return True
 
     from ..config_doctor.runtime_detect import CGROUP_PREFIXES
 
