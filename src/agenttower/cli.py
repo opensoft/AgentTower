@@ -2757,11 +2757,23 @@ def _queue_list_command(args: argparse.Namespace) -> int:
 
 def _queue_label_and_prefix(identity: dict[str, Any]) -> str:
     """Render a sender/target identity as ``label(agt_<8 hex>)`` or fall
-    back to the bare agent_id when no label is set."""
+    back to the bare agent_id when no label is set.
+
+    ``agt_``-prefixed ids show the prefix + the first 8 hex chars
+    (12 chars total — e.g. ``agt_aaaaaaaa``). Non-prefixed ids show
+    the first 8 chars of whatever string was supplied. The earlier
+    revision returned ``agent_id[:8]`` in both branches by accident
+    (SonarQube python:S3923) — same output for either branch — which
+    is wrong for the ``agt_``-prefixed case (gave ``agt_aaaa`` — the
+    prefix + 4 hex chars).
+    """
     label = identity.get("label") or ""
     agent_id = identity.get("agent_id") or ""
     if label and agent_id:
-        prefix = agent_id[:8] if agent_id.startswith("agt_") else agent_id[:8]
+        if agent_id.startswith("agt_"):
+            prefix = agent_id[:12]
+        else:
+            prefix = agent_id[:8]
         return f"{label}({prefix})"
     return agent_id
 

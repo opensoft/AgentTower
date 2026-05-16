@@ -134,10 +134,14 @@ def test_human_listing_renders_label_and_agent_id_prefix(
     rc = main(["queue"])
     assert rc == 0
     out = capsys.readouterr().out
-    # Sender/target should render as ``label(agt_<8 hex>)`` — 8 chars
-    # including the ``agt_`` prefix (so 4 hex chars after the prefix).
-    assert "queen(agt_aaaa)" in out
-    assert "worker-1(agt_bbbb)" in out
+    # Sender/target render as ``label(agt_<8 hex>)`` — the ``agt_``
+    # prefix plus the first 8 hex chars of the agent_id (12 chars
+    # total). The earlier revision returned 8 chars total (prefix +
+    # only 4 hex), which was a python:S3923 bug (both branches of
+    # the conditional returned the same value); see
+    # ``cli._queue_label_and_prefix``.
+    assert "queen(agt_aaaa1111)" in out
+    assert "worker-1(agt_bbbb2222)" in out
 
 
 def test_human_listing_falls_back_to_bare_agent_id_when_label_empty(
