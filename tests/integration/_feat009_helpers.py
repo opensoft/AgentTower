@@ -55,6 +55,99 @@ DEFAULT_TMUX_SOCKET_PATH = "/tmp/tmux-1000/default"
 DEFAULT_TMUX_SESSION = "swarm"
 
 
+def caller_pane_from_db(state_db: Path, agent_id: str) -> dict[str, Any]:
+    """Look up the ``pane_composite_key`` for ``agent_id`` from the
+    daemon's agents table and return a wire-format ``caller_pane`` dict.
+
+    Use this in integration tests where the sender's pane is whatever
+    the test seeded (master, slave, other master, swarm child, etc.) —
+    the lookup keeps the test from having to know the pane shape.
+
+    Unregistered-agent behavior: tests that intentionally send from an
+    unknown agent_id (e.g. ``test_us2_as1_unknown_sender_refused_no_row``)
+    can still call this helper. We return a synthetic
+    ``pane_composite_key`` (no matching agent row) and OMIT the
+    ``agent_id`` field — so ``_resolve_caller_agent`` returns
+    ``operator_pane_inactive`` which ``send-input`` remaps to the
+    contract-correct ``sender_role_not_permitted`` (FR-021/023).
+    Including ``agent_id`` here would trip the agent_id-vs-pane-key
+    mismatch check first and surface ``bad_request`` instead.
+    """
+    conn = sqlite3.connect(state_db)
+    try:
+        cur = conn.execute(
+            "SELECT container_id, tmux_socket_path, tmux_session_name, "
+            "tmux_window_index, tmux_pane_index, tmux_pane_id "
+            "FROM agents WHERE agent_id = ?",
+            (agent_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        # Synthetic key that won't match any seeded agent. Note the
+        # tmux_pane_id is namespaced so the (slim) chance of a real
+        # collision is essentially zero.
+        return {
+            "pane_composite_key": {
+                "container_id": DEFAULT_CONTAINER_ID,
+                "tmux_socket_path": DEFAULT_TMUX_SOCKET_PATH,
+                "tmux_session_name": DEFAULT_TMUX_SESSION,
+                "tmux_window_index": 0,
+                "tmux_pane_index": 0,
+                "tmux_pane_id": f"%unregistered-{agent_id}",
+            },
+        }
+    return {
+        "agent_id": agent_id,
+        "pane_composite_key": {
+            "container_id": row[0],
+            "tmux_socket_path": row[1],
+            "tmux_session_name": row[2],
+            "tmux_window_index": int(row[3]),
+            "tmux_pane_index": int(row[4]),
+            "tmux_pane_id": row[5],
+        },
+    }
+
+
+def caller_pane_for(
+    agent_id: str,
+    *,
+    tmux_pane_id: str = "%master",
+    tmux_window_index: int = 0,
+    tmux_pane_index: int = 0,
+    container_id: str = DEFAULT_CONTAINER_ID,
+    tmux_socket_path: str = DEFAULT_TMUX_SOCKET_PATH,
+    tmux_session_name: str = DEFAULT_TMUX_SESSION,
+) -> dict[str, Any]:
+    """Build a ``caller_pane`` wire dict matching an agent seeded via
+    :func:`seed_agent` / :func:`seed_master_and_slave`.
+
+    Post-hardening (commit c50a527 on the src branch), the daemon's
+    ``_coerce_caller_pane_key`` rejects ``caller_pane`` payloads that
+    omit the full ``pane_composite_key``. Integration tests that
+    previously sent ``{"caller_pane": {"agent_id": ...}}`` must now
+    send the full pane composite key — this helper keeps that wiring
+    in one place.
+
+    Defaults match :func:`seed_master_and_slave`'s master agent
+    (``%master`` pane at window 0 / pane 0). Pass overrides for slave
+    or custom-seeded agents.
+    """
+    return {
+        "agent_id": agent_id,
+        "pane_composite_key": {
+            "container_id": container_id,
+            "tmux_socket_path": tmux_socket_path,
+            "tmux_session_name": tmux_session_name,
+            "tmux_window_index": tmux_window_index,
+            "tmux_pane_index": tmux_pane_index,
+            "tmux_pane_id": tmux_pane_id,
+        },
+    }
+
+
 def seed_container(
     state_db: Path,
     *,

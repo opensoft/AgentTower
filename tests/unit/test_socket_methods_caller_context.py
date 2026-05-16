@@ -38,10 +38,43 @@ from agenttower.routing.errors import (
     OperatorPaneInactive,
     QueueServiceError,
 )
-from agenttower.socket_api.methods import DISPATCH, DaemonContext
+from agenttower.socket_api import methods as methods_mod
+from agenttower.socket_api.methods import (
+    DISPATCH,
+    DaemonContext,
+    _clear_request_peer_context,
+    _set_request_peer_context,
+)
 
 
 HOST_OPERATOR = "host-operator"
+
+
+# The pane composite key seeded by ``_make_state_conn``; tests that
+# need to send a ``caller_pane`` must match this for the
+# pane-key-keyed lookup (post-hardening: caller_pane.agent_id alone
+# is rejected as spoofable).
+_SEEDED_PANE_COMPOSITE_KEY = {
+    "container_id": "cont_xyz",
+    "tmux_socket_path": "/tmp/tmux.sock",
+    "tmux_session_name": "swarm",
+    "tmux_window_index": 0,
+    "tmux_pane_index": 0,
+    "tmux_pane_id": "%1",
+}
+
+
+def _caller_pane(agent_id: str) -> dict[str, Any]:
+    """Build a caller_pane dict whose pane_composite_key matches the
+    agent row seeded by ``_make_state_conn``. Post-hardening (see
+    c50a527), ``caller_pane`` MUST carry ``pane_composite_key`` —
+    dispatcher resolves the agent via ``select_agent_by_pane_key`` and
+    cross-checks the optional ``agent_id`` against the resolved row.
+    """
+    return {
+        "agent_id": agent_id,
+        "pane_composite_key": dict(_SEEDED_PANE_COMPOSITE_KEY),
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -282,7 +315,7 @@ def test_send_input_with_inactive_caller_pane_returns_sender_role_not_permitted(
         {
             "target": "agt_000000000002",
             "body_bytes": "aGk=",
-            "caller_pane": {"agent_id": "agt_000000000001"},
+            "caller_pane": _caller_pane("agt_000000000001"),
         },
     )
     assert envelope["ok"] is False
@@ -303,7 +336,7 @@ def test_send_input_with_active_caller_pane_invokes_service(tmp_path: Path) -> N
         {
             "target": "agt_000000000002",
             "body_bytes": "aGk=",
-            "caller_pane": {"agent_id": "agt_000000000001"},
+            "caller_pane": _caller_pane("agt_000000000001"),
             "wait": False,
         },
     )
@@ -330,14 +363,16 @@ def test_routing_enable_from_bench_caller_returns_routing_toggle_host_only(
         routing_flag_service=routing,
     )
     envelope = DISPATCH["routing.enable"](
-        ctx, {"caller_pane": {"agent_id": "agt_000000000001"}},
+        ctx, {"caller_pane": _caller_pane("agt_000000000001")},
     )
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "routing_toggle_host_only"
     assert routing.calls == []  # service never invoked
 
 
-def test_routing_enable_from_host_origin_invokes_service(tmp_path: Path) -> None:
+def test_routing_enable_from_host_origin_invokes_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     routing = _FakeRoutingFlagService()
     ctx = _make_ctx(
         tmp_path,
@@ -345,7 +380,17 @@ def test_routing_enable_from_host_origin_invokes_service(tmp_path: Path) -> None
         routing_flag_service=routing,
     )
     import os
-    envelope = DISPATCH["routing.enable"](ctx, {}, peer_uid=os.geteuid())
+    # Post-hardening (c50a527): the routing host-only gate also
+    # consults ``_peer_is_host_process(_request_peer_pid())`` which
+    # reads ``/proc/<pid>`` for container markers. Force-true for the
+    # in-process test path; the gate's peer_uid check remains
+    # canonical (still verified by the matched-uid call below).
+    monkeypatch.setattr(methods_mod, "_peer_is_host_process", lambda pid: True)
+    _set_request_peer_context(peer_pid=os.getpid())
+    try:
+        envelope = DISPATCH["routing.enable"](ctx, {}, peer_uid=os.geteuid())
+    finally:
+        _clear_request_peer_context()
     assert envelope["ok"] is True, envelope
     assert envelope["result"]["current_value"] == "enabled"
     assert len(routing.calls) == 1
@@ -362,7 +407,7 @@ def test_routing_disable_from_bench_caller_returns_routing_toggle_host_only(
         routing_flag_service=_FakeRoutingFlagService(),
     )
     envelope = DISPATCH["routing.disable"](
-        ctx, {"caller_pane": {"agent_id": "agt_000000000001"}},
+        ctx, {"caller_pane": _caller_pane("agt_000000000001")},
     )
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "routing_toggle_host_only"
@@ -409,7 +454,7 @@ def test_routing_status_accepts_bench_caller(tmp_path: Path) -> None:
         routing_flag_service=_FakeRoutingFlagService(),
     )
     envelope = DISPATCH["routing.status"](
-        ctx, {"caller_pane": {"agent_id": "agt_000000000001"}},
+        ctx, {"caller_pane": _caller_pane("agt_000000000001")},
     )
     assert envelope["ok"] is True
 
@@ -435,7 +480,7 @@ def test_queue_list_accepts_bench_caller(tmp_path: Path) -> None:
         routing_flag_service=_FakeRoutingFlagService(),
     )
     envelope = DISPATCH["queue.list"](
-        ctx, {"caller_pane": {"agent_id": "agt_000000000001"}},
+        ctx, {"caller_pane": _caller_pane("agt_000000000001")},
     )
     assert envelope["ok"] is True
 
@@ -461,7 +506,7 @@ def test_operator_action_inactive_caller_returns_operator_pane_inactive(
         ctx,
         {
             "message_id": "11111111-2222-3333-4444-555555555555",
-            "caller_pane": {"agent_id": "agt_000000000001"},
+            "caller_pane": _caller_pane("agt_000000000001"),
         },
     )
     assert envelope["ok"] is False
@@ -495,7 +540,7 @@ def test_operator_action_active_caller_writes_agent_id(
         ctx,
         {
             "message_id": "11111111-2222-3333-4444-555555555555",
-            "caller_pane": {"agent_id": "agt_000000000001"},
+            "caller_pane": _caller_pane("agt_000000000001"),
         },
     )
     assert envelope["ok"] is True, envelope
@@ -514,7 +559,7 @@ def test_operator_action_active_caller_writes_agent_id(
     ],
 )
 def test_operator_action_host_origin_writes_host_operator_sentinel(
-    tmp_path: Path, method: str, attr: str,
+    tmp_path: Path, method: str, attr: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeQueueService()
     ctx = _make_ctx(
@@ -522,9 +567,18 @@ def test_operator_action_host_origin_writes_host_operator_sentinel(
         queue_service=fake,
         routing_flag_service=_FakeRoutingFlagService(),
     )
-    envelope = DISPATCH[method](
-        ctx, {"message_id": "11111111-2222-3333-4444-555555555555"},
-    )
+    # Post-hardening (c50a527): host-origin operator actions are
+    # only accepted when ``_peer_is_host_process`` confirms the peer
+    # pid is on the host. Force-true for the in-process test path.
+    import os
+    monkeypatch.setattr(methods_mod, "_peer_is_host_process", lambda pid: True)
+    _set_request_peer_context(peer_pid=os.getpid())
+    try:
+        envelope = DISPATCH[method](
+            ctx, {"message_id": "11111111-2222-3333-4444-555555555555"},
+        )
+    finally:
+        _clear_request_peer_context()
     assert envelope["ok"] is True, envelope
     calls = getattr(fake, attr)
     assert len(calls) == 1

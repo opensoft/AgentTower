@@ -595,10 +595,17 @@ def test_queue_list_rejects_empty_sender_filter(tmp_path: Path) -> None:
     assert envelope["error"]["code"] == "bad_request"
 
 
-def test_queue_operator_actions_return_excerpt(tmp_path: Path) -> None:
+def test_queue_operator_actions_return_excerpt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ctx = _ctx(tmp_path)
     ctx.queue_service = _QueueListService()
     ctx.routing_flag_service = object()
+    # Host-context detection via ``/proc/<pid>`` may flip false on
+    # dev machines that carry container markers (e.g. ``/.dockerenv``
+    # on WSL2 Docker-in-Docker setups). Force-true so this test
+    # exercises the excerpt-rendering path regardless of the host env.
+    monkeypatch.setattr(methods_mod, "_peer_is_host_process", lambda pid: True)
     _set_request_peer_context(peer_pid=os.getpid())
     try:
         for method in ("queue.approve", "queue.delay", "queue.cancel"):

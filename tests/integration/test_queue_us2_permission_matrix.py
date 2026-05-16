@@ -62,7 +62,7 @@ def _send(
         {
             "target": target,
             "body_bytes": body_b64,
-            "caller_pane": {"agent_id": sender_agent_id},
+            "caller_pane": f9.caller_pane_from_db(paths["state_db"], sender_agent_id),
             "wait": False,  # no need to wait; we check the enqueue outcome
         },
         connect_timeout=2.0, read_timeout=10.0,

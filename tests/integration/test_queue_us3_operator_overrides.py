@@ -49,7 +49,7 @@ def _send(
         {
             "target": target,
             "body_bytes": base64.b64encode(body).decode("ascii"),
-            "caller_pane": {"agent_id": sender},
+            "caller_pane": f9.caller_pane_from_db(paths["state_db"], sender),
             "wait": wait,
         },
         connect_timeout=2.0, read_timeout=10.0,

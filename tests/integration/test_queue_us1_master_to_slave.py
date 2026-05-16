@@ -123,7 +123,7 @@ def _send_input(
         {
             "target": target,
             "body_bytes": body_b64,
-            "caller_pane": {"agent_id": sender_agent_id},
+            "caller_pane": f9.caller_pane_from_db(paths["state_db"], sender_agent_id),
             "wait": wait,
             "wait_timeout_seconds": wait_timeout_seconds,
         },

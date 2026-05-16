@@ -77,7 +77,7 @@ def _send(
         {
             "target": _SLAVE_ID,
             "body_bytes": base64.b64encode(body).decode("ascii"),
-            "caller_pane": {"agent_id": _MASTER_ID},
+            "caller_pane": f9.caller_pane_from_db(paths["state_db"], _MASTER_ID),
             "wait": wait,
             "wait_timeout_seconds": wait_timeout_seconds,
         },

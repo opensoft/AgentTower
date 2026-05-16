@@ -23,11 +23,32 @@ import pytest
 from agenttower.routing.audit_writer import QueueAuditWriter
 from agenttower.routing.dao import DaemonStateDao
 from agenttower.routing.kill_switch import RoutingFlagService
-from agenttower.socket_api.methods import DISPATCH, DaemonContext
+from agenttower.socket_api import methods as methods_mod
+from agenttower.socket_api.methods import (
+    DISPATCH,
+    DaemonContext,
+    _clear_request_peer_context,
+    _set_request_peer_context,
+)
 from agenttower.state import schema
 
 
 _HOST_OPERATOR = "host-operator"
+
+
+@pytest.fixture(autouse=True)
+def _force_host_peer(monkeypatch: pytest.MonkeyPatch):
+    """Post-hardening (c50a527), routing host-only gate consults
+    ``_peer_is_host_process(_request_peer_pid())``. In-process tests
+    don't carry a real socket peer; force-true here so every test in
+    this file exercises the audit-emission paths."""
+    import os
+    monkeypatch.setattr(methods_mod, "_peer_is_host_process", lambda pid: True)
+    _set_request_peer_context(peer_pid=os.getpid())
+    try:
+        yield
+    finally:
+        _clear_request_peer_context()
 
 
 def _open_v7(tmp_path: Path) -> sqlite3.Connection:

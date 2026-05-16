@@ -37,7 +37,25 @@ from . import _feat009_helpers as f9
 
 _MASTER_ID = "agt_aaaaaaaaaaaa"
 _SLAVE_ID = "agt_bbbbbbbbbbbb"
-_BENCH_CALLER_PANE = {"agent_id": _MASTER_ID}
+# Matches the master pane seeded by ``seed_master_and_slave`` (pane
+# ``%master``, window 0, pane 0). Post-hardening (c50a527),
+# ``caller_pane`` payloads MUST carry the full ``pane_composite_key``
+# — the daemon's ``_coerce_caller_pane_key`` rejects ``agent_id``-only
+# payloads as spoofable. For routing-toggle tests the presence of any
+# ``caller_pane`` is enough to trip ``routing_toggle_host_only``; the
+# composite key is also needed so the send-input test that uses the
+# same constant can pass dispatch + resolve a real registered agent.
+_BENCH_CALLER_PANE = {
+    "agent_id": _MASTER_ID,
+    "pane_composite_key": {
+        "container_id": f9.DEFAULT_CONTAINER_ID,
+        "tmux_socket_path": f9.DEFAULT_TMUX_SOCKET_PATH,
+        "tmux_session_name": f9.DEFAULT_TMUX_SESSION,
+        "tmux_window_index": 0,
+        "tmux_pane_index": 0,
+        "tmux_pane_id": "%master",
+    },
+}
 
 
 @pytest.fixture()

@@ -29,6 +29,15 @@ def isolated_env(home: Path) -> dict[str, str]:
     env["PATH"] = os.pathsep.join((bin_dir, user_bin, env.get("PATH", "")))
     for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR"):
         env.pop(var, None)
+    # Bypass the FEAT-009 ``_peer_is_host_process`` /proc-based
+    # discriminator for in-process test daemons. The integration
+    # daemon and the test client share uid + namespace; on dev hosts
+    # with spurious ``/.dockerenv`` (WSL2 Docker-in-Docker, GitHub
+    # Actions container runners) the production check false-positives
+    # and refuses host-origin routing toggles. See
+    # ``socket_api.methods._peer_is_host_process`` for the env-var
+    # contract.
+    env["AGENTTOWER_TEST_FORCE_HOST_PEER"] = "1"
     return env
 
 
