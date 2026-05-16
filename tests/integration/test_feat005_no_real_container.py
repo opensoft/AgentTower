@@ -20,13 +20,15 @@ class TestDispatchTableCardinality:
         FEAT-006 explicitly adds 5 methods (FR-023): ``register_agent``,
         ``list_agents``, ``set_role``, ``set_label``, ``set_capability``.
         FEAT-007 adds 4 more (FR-038): ``attach_log``, ``detach_log``,
-        ``attach_log_status``, ``attach_log_preview``. FEAT-008 adds 2
-        more: ``events.list``, ``events.classifier_rules``. FEAT-009
-        adds 8 more (T049): ``queue.send_input``, ``queue.list``,
-        ``queue.approve``, ``queue.delay``, ``queue.cancel``,
-        ``routing.enable``, ``routing.disable``, ``routing.status``.
-        This test pins the closed FEAT-001..009 set so an accidental
-        extra method cannot sneak in beyond the spec'd surface.
+        ``attach_log_status``, ``attach_log_preview``. FEAT-008 adds 5
+        more: ``events.list``, ``events.follow_open``, ``events.follow_next``,
+        ``events.follow_close``, ``events.classifier_rules``. FEAT-009
+        adds 8 more (queue + routing surface, FR-006/FR-031–FR-036):
+        ``queue.send_input``, ``queue.list``, ``queue.approve``,
+        ``queue.delay``, ``queue.cancel``, ``routing.enable``,
+        ``routing.disable``, ``routing.status``. This test pins the
+        closed FEAT-001..009 set so an accidental extra method cannot
+        sneak in beyond the spec'd surface.
         """
         from agenttower.socket_api import methods as methods_module
 
@@ -56,7 +58,6 @@ class TestDispatchTableCardinality:
             "events.follow_next",
             "events.follow_close",
             "events.classifier_rules",
-            # FEAT-009 — queue + routing dispatchers (T049).
             "queue.send_input",
             "queue.list",
             "queue.approve",

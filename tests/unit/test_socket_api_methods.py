@@ -91,7 +91,7 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "events.follow_next",
         "events.follow_close",
         "events.classifier_rules",
-        # FEAT-009 queue + routing dispatchers (T049).
+        # FEAT-009 — queue + routing dispatch (T049).
         "queue.send_input",
         "queue.list",
         "queue.approve",
@@ -130,11 +130,22 @@ def test_status_returns_documented_shape(tmp_path: Path) -> None:
         # fields are present with the documented "not running" defaults.
         "events_reader",
         "events_persistence",
-        # FEAT-009 — routing kill switch + queue audit health blocks.
+        # FEAT-009 — plan §"Status surface". With no routing service or
+        # audit writer wired, the blocks report the not-running defaults.
         "routing",
         "queue_audit",
     }
     assert set(result.keys()) == expected_keys
+    assert result["routing"] == {
+        "value": None,
+        "last_updated_at": None,
+        "last_updated_by": None,
+    }
+    assert result["queue_audit"] == {
+        "degraded": False,
+        "pending_rows": 0,
+        "last_failure_exc_class": None,
+    }
     assert result["events_reader"] == {
         "running": False,
         "last_cycle_started_at": None,
@@ -145,17 +156,6 @@ def test_status_returns_documented_shape(tmp_path: Path) -> None:
     assert result["events_persistence"] == {
         "degraded_sqlite": None,
         "degraded_jsonl": None,
-    }
-    # FEAT-009 — unwired services produce documented null-safe defaults.
-    assert result["routing"] == {
-        "value": None,
-        "last_updated_at": None,
-        "last_updated_by": None,
-    }
-    assert result["queue_audit"] == {
-        "degraded": False,
-        "pending_rows": 0,
-        "last_failure_exc_class": None,
     }
     assert result["alive"] is True
     assert isinstance(result["pid"], int)

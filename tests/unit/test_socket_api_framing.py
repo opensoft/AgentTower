@@ -85,7 +85,7 @@ def test_closed_code_set_contains_feat002_through_feat009_codes() -> None:
     }
     assert feat008 <= errors.CLOSED_CODE_SET
     # FEAT-009 additions (specs/009-safe-prompt-queue/data-model.md §8).
-    # AGENT_NOT_FOUND is reused from FEAT-006 above and not repeated here.
+    # AGENT_NOT_FOUND continues to be reused from FEAT-006 — not in this set.
     feat009 = {
         errors.APPROVAL_NOT_APPLICABLE,
         errors.BODY_EMPTY,
