@@ -226,7 +226,15 @@ def test_invalidate_cache_forces_re_read(tmp_path: Path) -> None:
 
 def test_service_holds_a_threading_lock(tmp_path: Path) -> None:
     """The service uses a threading.Lock for cache + write-through.
-    Pinned defensively so a future refactor doesn't introduce a race."""
-    import threading as _threading
+    Pinned defensively so a future refactor doesn't introduce a race.
+
+    Checks the context-manager protocol rather than instantiating a
+    throwaway Lock to read its class — the prior form allocated a
+    real synchronization primitive on every test run just to inspect
+    its type, which is wasteful and obscures intent.
+    """
     svc = _make_service(tmp_path)
-    assert isinstance(svc._lock, _threading.Lock().__class__)
+    assert hasattr(svc._lock, "acquire")
+    assert hasattr(svc._lock, "release")
+    assert hasattr(svc._lock, "__enter__")
+    assert hasattr(svc._lock, "__exit__")

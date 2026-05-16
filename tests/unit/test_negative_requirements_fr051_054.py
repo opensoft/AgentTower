@@ -122,13 +122,13 @@ def test_send_input_argparse_has_no_event_subscription_flag() -> None:
     The argparse surface MUST not contain a flag like ``--from-event``
     or ``--event-id`` that would subscribe queue creation to FEAT-008."""
     parser = _build_parser()
-    # Walk every action of the send-input subparser.
+    # Find the send-input subparser via the parser's ``_subparsers``
+    # graph. The earlier revision had a separate loop that filtered
+    # ``isinstance(action, type(parser._subparsers._actions[0]).__class__)``
+    # — that expression resolves to ``type``, which an argparse action
+    # never is, so the loop matched nothing and did nothing. Removed.
     send_input_subparser = None
     for action in parser._actions:  # noqa: SLF001 — test-only introspection
-        if isinstance(action, type(parser._subparsers._actions[0]).__class__):  # type: ignore[attr-defined]
-            continue  # skip the subparsers container itself
-    # Find the send-input subparser via the parser's `_subparsers` graph.
-    for action in parser._actions:  # noqa: SLF001
         if not hasattr(action, "choices") or action.choices is None:
             continue
         if "send-input" in action.choices:

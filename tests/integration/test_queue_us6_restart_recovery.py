@@ -139,5 +139,25 @@ def test_us6_restart_recovers_half_stamped_row_to_failed_attempt_interrupted(
             f"got {len(failed_audits)}: {failed_audits}"
         )
         assert failed_audits[0]["reason"] == "attempt_interrupted"
+
+        # And — critically — NO queue_message_delivered audit rows
+        # for this message_id. The half-stamped row had reached
+        # ``delivery_attempt_started_at`` on the prior boot's worker
+        # cycle and the recovery pass MUST transition it to failed
+        # without ever re-pasting (FR-040). A delivered row here
+        # would mean the row was somehow re-picked by the new
+        # worker — a double-paste violation. Making the invariant
+        # explicit in the audit-stream assertion catches that bug
+        # class loudly instead of silently. (Sourcery R-4.)
+        delivered_audits = [
+            r for r in records
+            if r.get("message_id") == _HALF_STAMPED_ID
+            and r.get("event_type") == "queue_message_delivered"
+        ]
+        assert delivered_audits == [], (
+            "FR-040 invariant violated: half-stamped row produced a "
+            f"queue_message_delivered audit row after recovery: "
+            f"{delivered_audits}"
+        )
     finally:
         helpers.stop_daemon_if_alive(env)

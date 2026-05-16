@@ -106,11 +106,13 @@ AGENTTOWER_TEST_READER_TICK = "AGENTTOWER_TEST_READER_TICK"
 # test-seam-name scan in the Phase 9 polish slice keep them out of
 # production code. Both are no-ops when unset.
 
-#: T053 — path to a JSON file containing
+#: T053 — inline JSON value of the form
 #: ``{"now_iso_ms_utc": <ISO>, "monotonic": <float>}``, consumed by the
 #: ``routing.timestamps.Clock`` Protocol so delivery-attempt timing and
 #: ``observed_at`` audit timestamps are deterministic in tests without
-#: real-time ``time.sleep`` calls.
+#: real-time ``time.sleep`` calls. The env var holds the JSON content
+#: directly (not a path to a JSON file); see
+#: ``routing.timestamps.load_clock_from_env``.
 AGENTTOWER_TEST_ROUTING_CLOCK_FAKE = "AGENTTOWER_TEST_ROUTING_CLOCK_FAKE"
 
 #: T053 — Unix-domain-socket path. When set, the delivery worker replaces
