@@ -391,9 +391,13 @@ def insert_audit_event(
     truth (FR-048); the JSONL append is best-effort with a watermark.
 
     Caller MUST be inside an explicit transaction. ``event_type`` is
-    validated against the closed set at the SQLite layer (the CHECK
-    constraint rejects unknown values); we don't repeat the check
-    here to keep this module decoupled from ``routing/errors.py``.
+    validated HERE against the FEAT-009 audit-type set: post-v7 the
+    table CHECK constraint allows BOTH FEAT-008 classifier types AND
+    FEAT-009 audit types, so passing a classifier type through this
+    helper would succeed at the SQLite layer but produce a row with
+    NULL classifier columns — a downstream surprise. The explicit
+    prefix guard below rejects classifier types before they reach
+    SQLite, keeping the table-CHECK as defense-in-depth only.
 
     Args:
         conn: SQLite connection (caller manages transaction).
@@ -416,6 +420,20 @@ def insert_audit_event(
     Returns:
         The new ``event_id``.
     """
+    # FEAT-009 audit-type guard. The closed set is the seven
+    # ``queue_message_*`` transition verbs plus ``routing_toggled``;
+    # everything else (e.g. FEAT-008 ``activity``, ``completed``,
+    # ``error``) belongs to :func:`insert_event`, which DOES populate
+    # the classifier-only columns.
+    if not (
+        event_type.startswith("queue_message_")
+        or event_type == "routing_toggled"
+    ):
+        raise ValueError(
+            f"insert_audit_event: event_type {event_type!r} is not a "
+            "FEAT-009 audit type. Classifier events must go through "
+            "insert_event() so the classifier-only columns are non-NULL."
+        )
     cur = conn.execute(
         """
         INSERT INTO events (

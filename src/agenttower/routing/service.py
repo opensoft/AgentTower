@@ -442,7 +442,6 @@ class QueueService:
         self._notify_terminal(message_id)
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
-        self._notify_terminal(message_id)
         return row
 
     def cancel(self, message_id: str, *, operator: str) -> QueueRow:
