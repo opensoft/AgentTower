@@ -289,8 +289,14 @@ class MessageQueueDao:
         def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
+                # Plain string (not f-string): every value is bound via
+                # parameter markers below. Some scanners flag any
+                # ``f"""..."""`` near an INSERT as potential injection
+                # even when there are no interpolations — using a
+                # regular triple-quoted string removes the false
+                # positive without changing behavior.
                 self._conn.execute(
-                    f"""
+                    """
                     INSERT INTO message_queue (
                         message_id, state,
                         sender_agent_id, sender_label, sender_role, sender_capability,
@@ -343,8 +349,10 @@ class MessageQueueDao:
         def _op() -> Any:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
+                # Plain string (not f-string): see insert_queued above
+                # for the rationale — every value is parameter-bound.
                 self._conn.execute(
-                    f"""
+                    """
                     INSERT INTO message_queue (
                         message_id, state, block_reason,
                         sender_agent_id, sender_label, sender_role, sender_capability,
@@ -834,6 +842,31 @@ class MessageQueueDao:
         return with_lock_retry(_op, lock=self._tx_lock)
 
     # ─── FR-040 recovery ──────────────────────────────────────────────
+
+    def snapshot_in_flight_identities(self) -> list[tuple]:
+        """Return ``(message_id, sender_agent_id, sender_label, sender_role,
+        sender_capability, target_agent_id, target_label, target_role,
+        target_capability)`` for every row currently in flight
+        (``delivery_attempt_started_at`` set, no terminal stamps).
+
+        Used by the delivery worker's :meth:`run_recovery_pass` at boot
+        to emit one audit row per row about to be recovered to
+        ``failed/attempt_interrupted``. Acquires ``self._tx_lock`` so
+        the snapshot doesn't race the worker's writes — callers should
+        prefer this over reaching into the private ``_conn``.
+        """
+        with self._tx_lock:
+            cur = self._conn.execute(
+                "SELECT message_id, sender_agent_id, sender_label, sender_role, "
+                "       sender_capability, "
+                "       target_agent_id, target_label, target_role, target_capability "
+                "FROM message_queue "
+                "WHERE delivery_attempt_started_at IS NOT NULL "
+                "  AND delivered_at IS NULL "
+                "  AND failed_at IS NULL "
+                "  AND canceled_at IS NULL"
+            )
+            return list(cur.fetchall())
 
     def recover_in_flight_rows(
         self,

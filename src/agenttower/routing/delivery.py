@@ -152,18 +152,11 @@ class DeliveryWorker:
         """
         ts = now_iso_ms_utc(self._clock)
         # Snapshot interrupted rows BEFORE updating, so we have their
-        # identities for the audit emit. Use the partial index implicitly.
-        # (Cheap — the recovery path runs once at boot.)
-        cur = self._dao._conn.execute(  # noqa: SLF001 — internal use
-            "SELECT message_id, sender_agent_id, sender_label, sender_role, sender_capability, "
-            "       target_agent_id, target_label, target_role, target_capability "
-            "FROM message_queue "
-            "WHERE delivery_attempt_started_at IS NOT NULL "
-            "  AND delivered_at IS NULL "
-            "  AND failed_at IS NULL "
-            "  AND canceled_at IS NULL"
-        )
-        rows = cur.fetchall()
+        # identities for the audit emit. Use the DAO's public snapshot
+        # method so the read serializes with the DAO's tx_lock — the
+        # worker / dispatcher threads share the same SQLite connection
+        # and reaching into ``_dao._conn`` directly bypasses that lock.
+        rows = self._dao.snapshot_in_flight_identities()
         if not rows:
             return 0
 
