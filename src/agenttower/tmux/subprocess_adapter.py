@@ -305,6 +305,22 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         "no such pane",
     )
 
+    # docker-exec-failure signatures. Matched on lowercased stderr,
+    # substring match. When ``docker exec`` itself fails (container
+    # stopped mid-delivery, permission denied, OCI runtime error)
+    # the stderr is from docker, not from tmux — classifying it as
+    # ``tmux_paste_failed`` would mislead operators inspecting
+    # ``message_queue.failure_reason``.
+    _DOCKER_EXEC_FAILURE_PATTERNS = (
+        "no such container",
+        "container not running",
+        "is not running",
+        "permission denied",
+        "oci runtime exec failed",
+        "error response from daemon",
+        "container is paused",
+    )
+
     def _run_bytes(
         self,
         argv: list[str],
@@ -367,9 +383,18 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         default_failure_reason: str,
     ) -> str:
         """Pick the FR-018 ``failure_reason`` value for a delivery-time
-        tmux stderr. Returns ``default_failure_reason`` unless the
-        stderr matches a known "pane disappeared" pattern, in which
-        case returns ``pane_disappeared_mid_attempt``."""
+        stderr. Match order:
+
+        1. ``pane_disappeared_mid_attempt`` — tmux signalled the pane
+           is gone.
+        2. ``docker_exec_failed`` — ``docker exec`` itself failed
+           (container stopped mid-delivery, permission denied, OCI
+           runtime error). The stderr is from docker, not tmux, so
+           classifying as a tmux-step failure would mislead operators.
+        3. ``default_failure_reason`` — fall through to the
+           caller-supplied value (``tmux_paste_failed`` for
+           load/paste/delete, ``tmux_send_keys_failed`` for send_keys).
+        """
         try:
             stderr_text = stderr_bytes.decode("utf-8", errors="replace").lower()
         except Exception:
@@ -377,6 +402,9 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         for pattern in cls._PANE_DISAPPEARED_PATTERNS:
             if pattern in stderr_text:
                 return "pane_disappeared_mid_attempt"
+        for pattern in cls._DOCKER_EXEC_FAILURE_PATTERNS:
+            if pattern in stderr_text:
+                return "docker_exec_failed"
         return default_failure_reason
 
     def load_buffer(

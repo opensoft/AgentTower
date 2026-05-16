@@ -433,6 +433,12 @@ class QueueService:
         # block_reason rather than letting it sleep until timeout.
         # (Same pattern as ``cancel()`` and the delivery worker's
         # queued→blocked re-check transition.)
+        #
+        # This is the ONLY ``_notify_terminal`` invocation on the
+        # ``delay`` path. The DAO and audit_callback paths above are
+        # pure storage writes — neither dispatches to waiters. A
+        # second notify after the post-transition ``get_row_by_id``
+        # would be redundant; we don't add one.
         self._notify_terminal(message_id)
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
