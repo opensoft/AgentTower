@@ -40,7 +40,24 @@ from .socket_api.server import ControlServer
 LOCK_FILENAME = "agenttowerd.lock"
 PID_FILENAME = "agenttowerd.pid"
 LOG_FILENAME = "agenttowerd.log"
-_SQLITE_NO_WAIT_TIMEOUT_SECONDS = 0.0
+
+# SQLite ``timeout`` for connections used by pre-FEAT-009 services
+# (AgentService, LogService, schema_version reader, list-row
+# factories, etc.) — those services open ``BEGIN IMMEDIATE`` blocks
+# WITHOUT explicit retry/backoff, so we keep sqlite3's standard
+# 5-second busy timeout. A normal concurrent writer briefly holding
+# a lock should never surface as ``internal_error`` on these paths.
+_SQLITE_DEFAULT_TIMEOUT_SECONDS = 5.0
+
+# Zero-wait ``timeout`` reserved for the FEAT-009 ``worker_conn``.
+# That connection is shared across the delivery worker + every
+# FEAT-009 DAO under a single ``threading.Lock`` and every
+# ``BEGIN IMMEDIATE`` block runs inside
+# ``routing.dao.with_lock_retry`` (bounded retry with backoff). A
+# 0-second SQLite timeout makes the retry helper authoritative —
+# without it, SQLite would silently wait inside the C layer and
+# defeat the helper's deterministic budget.
+_SQLITE_FEAT009_WORKER_TIMEOUT_SECONDS = 0.0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -148,7 +165,7 @@ def _read_schema_version(paths: Paths) -> int | None:
     try:
         conn = sqlite3.connect(
             str(paths.state_db),
-            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
         )
         try:
             row = conn.execute("SELECT version FROM schema_version").fetchone()
@@ -169,7 +186,7 @@ def _build_discovery_service(
         str(paths.state_db),
         isolation_level=None,
         check_same_thread=False,
-        timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
     )
     service = DiscoveryService(
         connection=conn,
@@ -177,7 +194,7 @@ def _build_discovery_service(
         rule_provider=lambda: load_containers_block(paths.config_file),
         list_connection_factory=lambda: sqlite3.connect(
             str(paths.state_db),
-            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
         ),
         events_file=paths.events_file,
         lifecycle_logger=logger,
@@ -208,14 +225,14 @@ def _build_pane_service(
         str(paths.state_db),
         isolation_level=None,
         check_same_thread=False,
-        timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
     )
     service = PaneDiscoveryService(
         connection=conn,
         adapter=adapter,
         list_connection_factory=lambda: sqlite3.connect(
             str(paths.state_db),
-            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
         ),
         events_file=paths.events_file,
         lifecycle_logger=logger,
@@ -239,7 +256,7 @@ def _build_log_service(
         connection_factory=lambda: sqlite3.connect(
             str(paths.state_db),
             isolation_level=None,
-            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
         ),
         agent_locks=agent_locks,
         log_path_locks=LogPathLockMap(),
@@ -270,7 +287,7 @@ def _build_agent_service(paths: Paths, logger: LifecycleLogger) -> AgentService:
         connection_factory=lambda: sqlite3.connect(
             str(paths.state_db),
             isolation_level=None,
-            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
         ),
         register_locks=RegisterLockMap(),
         agent_locks=AgentLockMap(),
@@ -334,7 +351,7 @@ def _build_feat009_services(
         str(paths.state_db),
         isolation_level=None,
         check_same_thread=False,
-        timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+        timeout=_SQLITE_FEAT009_WORKER_TIMEOUT_SECONDS,
     )
 
     # One shared lock for all writers/readers of worker_conn. The
@@ -359,7 +376,7 @@ def _build_feat009_services(
     def _read_conn_factory() -> sqlite3.Connection:
         return sqlite3.connect(
             str(paths.state_db),
-            timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
         )
 
     agents_lookup = RegistryAgentsLookup(_read_conn_factory)
@@ -665,7 +682,7 @@ def _run(args: argparse.Namespace) -> int:
                 connection_factory=lambda: sqlite3.connect(
                     str(paths.state_db),
                     isolation_level=None,
-                    timeout=_SQLITE_NO_WAIT_TIMEOUT_SECONDS,
+                    timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
                 ),
                 docker_exec_runner=log_service.docker_exec_runner,
                 daemon_home=Path(os.path.expanduser("~")),
