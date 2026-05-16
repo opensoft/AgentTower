@@ -122,11 +122,21 @@ def _build_service(
         container_id="c" * 64,
         pane_id="%2",
     )
-    dao = MessageQueueDao(conn)
-    audit = QueueAuditWriter(conn, tmp_path / "events.jsonl")
+    # Share ONE tx_lock across every writer that holds ``conn`` —
+    # MessageQueueDao, DaemonStateDao, and QueueAuditWriter all
+    # serialize their ``BEGIN IMMEDIATE`` blocks on this lock. Without
+    # the shared lock each writer would create its own
+    # ``threading.Lock`` by default, and the threaded send-input /
+    # operator-action tests below can race two BEGIN IMMEDIATE blocks
+    # against the same sqlite3.Connection — SQLite then raises
+    # "cannot start a transaction within a transaction" intermittently.
+    # This mirrors the production wiring in ``daemon._build_feat009_services``.
+    tx_lock = threading.Lock()
+    dao = MessageQueueDao(conn, tx_lock=tx_lock)
+    audit = QueueAuditWriter(conn, tmp_path / "events.jsonl", tx_lock=tx_lock)
     service = QueueService(
         dao=dao,
-        routing_flag=RoutingFlagService(DaemonStateDao(conn)),
+        routing_flag=RoutingFlagService(DaemonStateDao(conn, tx_lock=tx_lock)),
         agents_lookup=_AgentsLookup([sender, target]),
         container_pane_lookup=_ContainerPaneLookup(),
         audit_writer=audit,

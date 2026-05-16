@@ -307,15 +307,21 @@ class SubprocessTmuxAdapter(TmuxAdapter):
 
     # docker-exec-failure signatures. Matched on lowercased stderr,
     # substring match. When ``docker exec`` itself fails (container
-    # stopped mid-delivery, permission denied, OCI runtime error)
-    # the stderr is from docker, not from tmux — classifying it as
-    # ``tmux_paste_failed`` would mislead operators inspecting
-    # ``message_queue.failure_reason``.
+    # stopped mid-delivery, OCI runtime error, daemon socket
+    # permission denied) the stderr is from docker, not from tmux —
+    # classifying it as ``tmux_paste_failed`` would mislead operators
+    # inspecting ``message_queue.failure_reason``.
+    #
+    # Patterns are intentionally docker-specific phrases. A bare
+    # ``"permission denied"`` would false-match tmux's own permission
+    # failures (e.g. socket directory perms in the bench container),
+    # so we use ``"docker daemon socket"`` to scope to docker's
+    # actual permission-denied phrasing without absorbing tmux's.
     _DOCKER_EXEC_FAILURE_PATTERNS = (
         "no such container",
         "container not running",
         "is not running",
-        "permission denied",
+        "docker daemon socket",
         "oci runtime exec failed",
         "error response from daemon",
         "container is paused",
