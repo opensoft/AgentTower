@@ -21,13 +21,16 @@ class TestDispatchTableCardinality:
         ``list_agents``, ``set_role``, ``set_label``, ``set_capability``.
         FEAT-007 adds 4 more (FR-038): ``attach_log``, ``detach_log``,
         ``attach_log_status``, ``attach_log_preview``. FEAT-008 adds 2
-        more: ``events.list``, ``events.classifier_rules``. This test
-        pins the closed FEAT-001..008 set so an accidental extra method
-        cannot sneak in beyond the spec'd surface.
+        more: ``events.list``, ``events.classifier_rules``. FEAT-009
+        adds 8 more (T049): ``queue.send_input``, ``queue.list``,
+        ``queue.approve``, ``queue.delay``, ``queue.cancel``,
+        ``routing.enable``, ``routing.disable``, ``routing.status``.
+        This test pins the closed FEAT-001..009 set so an accidental
+        extra method cannot sneak in beyond the spec'd surface.
         """
         from agenttower.socket_api import methods as methods_module
 
-        # The dispatch table is `DISPATCH` per the FEAT-002..008 builds.
+        # The dispatch table is `DISPATCH` per the FEAT-002..009 builds.
         dispatch = getattr(methods_module, "DISPATCH", None)
         assert dispatch is not None, "expected DISPATCH dict in socket_api/methods.py"
         assert isinstance(dispatch, dict)
@@ -53,8 +56,17 @@ class TestDispatchTableCardinality:
             "events.follow_next",
             "events.follow_close",
             "events.classifier_rules",
+            # FEAT-009 — queue + routing dispatchers (T049).
+            "queue.send_input",
+            "queue.list",
+            "queue.approve",
+            "queue.delay",
+            "queue.cancel",
+            "routing.enable",
+            "routing.disable",
+            "routing.status",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 21
+        assert len(dispatch) == 29
 
 
 # ---------------------------------------------------------------------------

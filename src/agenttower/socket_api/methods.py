@@ -7,6 +7,7 @@ unknown methods always return :data:`errors.UNKNOWN_METHOD`.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,6 +33,8 @@ Handler = Callable[..., dict[str, Any]]
 # Sentinel used when no peer-credential information is available
 # (e.g. unit tests calling DISPATCH directly without a real socket).
 _NO_PEER_UID = -1
+_NO_PEER_PID = -1
+_REQUEST_PEER = threading.local()
 
 
 @dataclass
@@ -57,6 +60,32 @@ class DaemonContext:
     events_reader: Any = None
     follow_session_registry: Any = None
     events_config: Any = None
+    # FEAT-009 — populated at daemon boot (T048). Handlers return
+    # ``internal_error`` if any is unwired (defensive — production wiring
+    # is mandatory). The ``state_conn`` is the SQLite connection the
+    # operator-pane liveness check (Group-A walk Q8) uses to look up
+    # caller agents via :func:`agents.select_agent_by_id`.
+    state_conn: Any = None
+    queue_service: Any = None
+    routing_flag_service: Any = None
+    delivery_worker: Any = None
+    queue_audit_writer: Any = None
+    message_queue_dao: Any = None
+    daemon_state_dao: Any = None
+
+
+def _set_request_peer_context(*, peer_pid: int) -> None:
+    _REQUEST_PEER.peer_pid = int(peer_pid)
+
+
+def _clear_request_peer_context() -> None:
+    if hasattr(_REQUEST_PEER, "peer_pid"):
+        delattr(_REQUEST_PEER, "peer_pid")
+
+
+def _request_peer_pid() -> int:
+    value = getattr(_REQUEST_PEER, "peer_pid", _NO_PEER_PID)
+    return int(value) if isinstance(value, int) else _NO_PEER_PID
 
 
 def _ping(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
@@ -102,6 +131,42 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "degraded_jsonl": snapshot.degraded_jsonl,
         }
 
+    # FEAT-009 — routing kill switch + queue audit persistence
+    # health surface (plan §"Status surface").
+    routing_block: dict[str, Any]
+    routing_svc = getattr(ctx, "routing_flag_service", None)
+    if routing_svc is None:
+        routing_block = {
+            "value": None,
+            "last_updated_at": None,
+            "last_updated_by": None,
+        }
+    else:
+        try:
+            value, last_at, last_by = routing_svc.read_full()
+        except Exception:
+            value, last_at, last_by = None, None, None
+        routing_block = {
+            "value": value,
+            "last_updated_at": last_at,
+            "last_updated_by": last_by,
+        }
+
+    audit_writer = getattr(ctx, "queue_audit_writer", None)
+    queue_audit_block: dict[str, Any]
+    if audit_writer is None:
+        queue_audit_block = {
+            "degraded": False,
+            "pending_rows": 0,
+            "last_failure_exc_class": None,
+        }
+    else:
+        queue_audit_block = {
+            "degraded": bool(audit_writer.degraded),
+            "pending_rows": int(audit_writer.pending_count),
+            "last_failure_exc_class": audit_writer.last_failure_exc_class,
+        }
+
     return errors.make_ok(
         {
             "alive": True,
@@ -114,6 +179,8 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "daemon_version": ctx.daemon_version,
             "events_reader": events_reader,
             "events_persistence": events_persistence,
+            "routing": routing_block,
+            "queue_audit": queue_audit_block,
         }
     )
 
@@ -520,6 +587,7 @@ _EVENTS_VALID_TYPES = frozenset(
         "long_running", "pane_exited", "swarm_member_reported",
     }
 )
+_EVENTS_DEFAULT_TYPES = tuple(sorted(_EVENTS_VALID_TYPES))
 
 
 def _events_config_value(ctx: DaemonContext, name: str, fallback: Any) -> Any:
@@ -709,7 +777,7 @@ def _events_list(
         limit = max_page_size
     cursor = params.get("cursor")
     reverse = params.get("reverse", False)
-    types = tuple(params.get("types") or [])
+    types = tuple(params.get("types") or _EVENTS_DEFAULT_TYPES)
     filter = EventFilter(
         target_agent_id=target,
         types=types,
@@ -794,7 +862,7 @@ def _events_follow_open(
     if err is not None:
         return err
 
-    types = tuple(params.get("types") or [])
+    types = tuple(params.get("types") or _EVENTS_DEFAULT_TYPES)
     since = params.get("since")
 
     # Compute live_starting_event_id = current max event_id at session-open
@@ -946,7 +1014,7 @@ def _events_follow_next(
                 conn,
                 filter=EventFilter(
                     target_agent_id=session.target_agent_id,
-                    types=tuple(session.type_filter),
+                    types=tuple(session.type_filter or _EVENTS_DEFAULT_TYPES),
                 ),
                 cursor=cursor_token,
                 limit=default_page_size,
@@ -1016,9 +1084,762 @@ def _events_follow_close(
     return errors.make_ok({})
 
 
+# ---------------------------------------------------------------------------
+# FEAT-009 — queue + routing dispatchers (T049).
+#
+# Eight new methods, all routed through ``QueueService`` /
+# ``RoutingFlagService`` on the daemon context. Each handler enforces
+# its caller-context gate at the dispatch boundary per Research §R-005
+# and Group-A walk Q8.
+#
+# Wire-level ``caller_pane`` shape:
+# * Absent or ``null`` → host-origin caller (FEAT-002 thin client running
+#   on the daemon host). Combined with the SO_PEERCRED uid match this
+#   discriminates host from bench-container origin (R-005).
+# * Object with at least ``{"agent_id": "agt_<12-hex>"}`` → bench-container
+#   thin client. The agent_id is the caller's own registered agent_id;
+#   the daemon trusts the same-uid peer to populate it (matches FEAT-006
+#   ``register_agent``'s trust model — FR-024).
+#
+# Mapping table (handler → caller-context gate):
+#
+# | Method              | Gate                                                    |
+# |---------------------|---------------------------------------------------------|
+# | queue.send_input    | caller_pane is not None (sender_not_in_pane)            |
+# | queue.list          | none (FR-029 — queue read works under kill switch)     |
+# | queue.approve       | if caller_pane: liveness (operator_pane_inactive)       |
+# | queue.delay         | if caller_pane: liveness (operator_pane_inactive)       |
+# | queue.cancel        | if caller_pane: liveness (operator_pane_inactive)       |
+# | routing.enable      | caller_pane is None AND peer_uid==os.geteuid()         |
+# | routing.disable     | caller_pane is None AND peer_uid==os.geteuid()         |
+# | routing.status      | none                                                   |
+# ---------------------------------------------------------------------------
+
+
+def _routing_services_or_error(
+    ctx: DaemonContext,
+) -> tuple[Any, Any, dict[str, Any] | None]:
+    """Return ``(queue_service, routing_flag_service, None)`` or
+    ``(None, None, error_envelope)`` if either service is unwired."""
+    queue = getattr(ctx, "queue_service", None)
+    routing = getattr(ctx, "routing_flag_service", None)
+    if queue is None or routing is None:
+        return None, None, errors.make_error(
+            errors.INTERNAL_ERROR, "routing services unavailable"
+        )
+    return queue, routing, None
+
+
+def _parse_caller_pane(params: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Pluck the optional ``caller_pane`` block out of ``params``.
+
+    Returns ``(caller_pane_or_None, error_or_None)``. ``caller_pane`` is
+    either a dict carrying at minimum ``agent_id``, or ``None`` for
+    host-origin callers (absent / null in params).
+    """
+    raw = params.get("caller_pane") if isinstance(params, dict) else None
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        return None, errors.make_error(
+            errors.BAD_REQUEST, "params.caller_pane must be an object or null"
+        )
+    return raw, None
+
+
+def _peer_is_host_process(peer_pid: int) -> bool:
+    """Best-effort host-vs-container discriminator for the AF_UNIX peer.
+
+    Fail closed: any missing peer pid, unreadable `/proc/<pid>`, container
+    marker file, or matching cgroup prefix is treated as "not proven host".
+
+    Test seam: when ``AGENTTOWER_TEST_FORCE_HOST_PEER=1`` is set in the
+    daemon's environment, this function returns ``True`` for any valid
+    pid. Integration tests + CI environments often run inside container-
+    shaped sandboxes (e.g. WSL2 with ``/.dockerenv``, Docker-in-Docker
+    runners) where the `/proc` markers false-positive even though the
+    daemon and the test client share the same uid + namespace. This
+    env var is intentionally NOT a documented production flag — it is
+    only set by the integration-test ``_daemon_helpers`` boot path.
+    """
+    if peer_pid == _NO_PEER_PID or peer_pid <= 0:
+        return False
+
+    if os.environ.get("AGENTTOWER_TEST_FORCE_HOST_PEER") == "1":
+        return True
+
+    from ..config_doctor.runtime_detect import CGROUP_PREFIXES
+
+    proc_dir = Path("/proc") / str(peer_pid)
+    root_dir = proc_dir / "root"
+    try:
+        if (root_dir / ".dockerenv").exists():
+            return False
+        if (root_dir / "run" / ".containerenv").exists():
+            return False
+    except OSError:
+        return False
+
+    cgroup_path = proc_dir / "cgroup"
+    try:
+        with cgroup_path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if any(prefix in line for prefix in CGROUP_PREFIXES):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def _coerce_caller_pane_key(
+    caller_pane: dict[str, Any],
+) -> tuple[tuple[str, str, str, int, int, str] | None, dict[str, Any] | None]:
+    raw = caller_pane.get("pane_composite_key")
+    if raw is None:
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.pane_composite_key is required",
+        )
+    if not isinstance(raw, dict):
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.pane_composite_key must be an object",
+        )
+    required = (
+        "container_id",
+        "tmux_socket_path",
+        "tmux_session_name",
+        "tmux_window_index",
+        "tmux_pane_index",
+        "tmux_pane_id",
+    )
+    for key in required:
+        value = raw.get(key)
+        if value is None or (isinstance(value, str) and not value):
+            return None, errors.make_error(
+                errors.BAD_REQUEST,
+                f"params.caller_pane.pane_composite_key.{key} is required",
+            )
+    try:
+        pane_key = (
+            str(raw["container_id"]),
+            str(raw["tmux_socket_path"]),
+            str(raw["tmux_session_name"]),
+            int(raw["tmux_window_index"]),
+            int(raw["tmux_pane_index"]),
+            str(raw["tmux_pane_id"]),
+        )
+    except (TypeError, ValueError):
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.pane_composite_key has invalid field types",
+        )
+    return pane_key, None
+
+
+def _resolve_caller_agent(
+    ctx: DaemonContext, caller_pane: dict[str, Any] | None,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Resolve the caller's ``AgentRecord`` from the ``caller_pane``.
+
+    FEAT-009 caller context is keyed by the pane composite key, not a
+    caller-supplied agent_id. That keeps the daemon's sender/operator
+    attribution anchored to the registered pane binding instead of a
+    spoofable string on the wire.
+    """
+    if caller_pane is None:
+        return None, None
+    pane_key, err = _coerce_caller_pane_key(caller_pane)
+    if err is not None:
+        return None, err
+
+    # Resolve the agents row via a per-request SQLite connection so
+    # the dispatcher thread doesn't race the worker / DAOs on the
+    # daemon's shared ``worker_conn`` (sqlite3.Connection isn't
+    # thread-safe even with ``check_same_thread=False``).
+    #
+    # The daemon's ``_build_context`` exposes both ``state_path`` (the
+    # state dir on disk) and ``state_conn`` (the shared worker_conn).
+    # We prefer opening a fresh connection from the on-disk state DB
+    # — that's production-safe and cleans up immediately. Tests that
+    # pre-populate an in-memory ``state_conn`` (without an on-disk
+    # DB) fall through to the connection-from-ctx path; tests are
+    # single-threaded against that connection so the concurrency
+    # concern doesn't apply.
+    # Lazy import keeps the FEAT-009 dispatch module independent of
+    # the state package's import graph for FEAT-001..004 boot paths.
+    from ..state.agents import select_agent_by_pane_key
+
+    state_dir = getattr(ctx, "state_path", None)
+    state_db = (state_dir / "agenttower.sqlite3") if state_dir is not None else None
+    if state_db is not None and state_db.exists():
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(state_db))
+        except sqlite3.Error as exc:  # pragma: no cover — defensive
+            return None, errors.make_error(
+                errors.INTERNAL_ERROR,
+                _internal_error_message(str(exc), prefix="agent registry"),
+            )
+        try:
+            record = select_agent_by_pane_key(conn, pane_key=pane_key)
+        finally:
+            conn.close()
+    else:
+        # No on-disk state DB → test fixture path. Use the
+        # in-memory ``state_conn`` the test wired into the context.
+        fallback_conn = getattr(ctx, "state_conn", None)
+        if fallback_conn is None:
+            return None, errors.make_error(
+                errors.INTERNAL_ERROR, "agent registry unavailable"
+            )
+        record = select_agent_by_pane_key(fallback_conn, pane_key=pane_key)
+    claimed_agent_id = caller_pane.get("agent_id")
+    if claimed_agent_id is not None and (
+        not isinstance(claimed_agent_id, str)
+        or record is None
+        or record.agent_id != claimed_agent_id
+    ):
+        return None, errors.make_error(
+            errors.BAD_REQUEST,
+            "params.caller_pane.agent_id does not match pane_composite_key",
+        )
+    if record is None or not record.active:
+        return None, errors.make_error(
+            errors.OPERATOR_PANE_INACTIVE,
+            "caller pane resolves to inactive or deregistered agent",
+        )
+    return record, None
+
+
+def _queue_error_to_envelope(exc: Exception, *, method: str) -> dict[str, Any]:
+    """Map a FEAT-009 service / target / liveness exception to the
+    FEAT-002 closed-set error envelope.
+
+    Only the closed-set codes pass through verbatim; anything else
+    surfaces as ``internal_error`` so the daemon stays alive (FR-035).
+    """
+    from ..routing.errors import (
+        OperatorPaneInactive,
+        QueueServiceError,
+        TargetResolveError,
+    )
+
+    if isinstance(exc, (QueueServiceError, TargetResolveError, OperatorPaneInactive)):
+        code = exc.code
+        if code in errors.CLOSED_CODE_SET:
+            bounded, _ = sanitize_text(exc.message or code, 2048)
+            return errors.make_error(code, bounded or code)
+    return errors.make_error(
+        errors.INTERNAL_ERROR,
+        _internal_error_message(str(exc), prefix=method),
+    )
+
+
+def _queue_row_to_payload(row: Any, *, excerpt: str = "") -> dict[str, Any]:
+    """Render a :class:`routing.dao.QueueRow` into the wire shape from
+    ``contracts/queue-row-schema.md`` (FR-011).
+
+    ``excerpt`` is the rendered preview (FR-047b). The caller computes it
+    from the envelope body and passes it in; this helper does not read
+    the body itself to keep the dispatcher's hot path clean.
+    """
+    return {
+        "message_id": row.message_id,
+        "state": row.state,
+        "block_reason": row.block_reason,
+        "failure_reason": row.failure_reason,
+        "sender": {
+            "agent_id": row.sender_agent_id,
+            "label": row.sender_label,
+            "role": row.sender_role,
+            "capability": row.sender_capability,
+        },
+        "target": {
+            "agent_id": row.target_agent_id,
+            "label": row.target_label,
+            "role": row.target_role,
+            "capability": row.target_capability,
+        },
+        "envelope_size_bytes": row.envelope_size_bytes,
+        "envelope_body_sha256": row.envelope_body_sha256,
+        "enqueued_at": row.enqueued_at,
+        "delivery_attempt_started_at": row.delivery_attempt_started_at,
+        "delivered_at": row.delivered_at,
+        "failed_at": row.failed_at,
+        "canceled_at": row.canceled_at,
+        "last_updated_at": row.last_updated_at,
+        "operator_action": row.operator_action,
+        "operator_action_at": row.operator_action_at,
+        "operator_action_by": row.operator_action_by,
+        "excerpt": excerpt,
+    }
+
+
+def _queue_send_input(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``queue.send_input`` — enqueue a row from a bench-container master.
+
+    Caller-context gate (R-005): ``caller_pane is not None`` (else
+    ``sender_not_in_pane``). The resolved sender record is passed to
+    :meth:`QueueService.send_input`; permission checks (role / liveness)
+    happen inside the service layer.
+    """
+    queue_service, _routing, err = _routing_services_or_error(ctx)
+    if err is not None:
+        return err
+    if not isinstance(params, dict):
+        return errors.make_error(errors.BAD_REQUEST, "params must be an object")
+    caller_pane, err = _parse_caller_pane(params)
+    if err is not None:
+        return err
+    if caller_pane is None:
+        return errors.make_error(
+            errors.SENDER_NOT_IN_PANE,
+            "send-input requires a bench-container caller; host-origin callers are refused",
+        )
+    sender, err = _resolve_caller_agent(ctx, caller_pane)
+    if err is not None:
+        # _resolve_caller_agent returns operator_pane_inactive; remap to
+        # sender_role_not_permitted for the send-input surface
+        # (FR-021/023: an inactive sender is "not in a permitted role").
+        if err.get("error", {}).get("code") == errors.OPERATOR_PANE_INACTIVE:
+            return errors.make_error(
+                errors.SENDER_ROLE_NOT_PERMITTED,
+                "sender pane resolves to inactive or deregistered agent",
+            )
+        return err
+    target = params.get("target")
+    if not isinstance(target, str) or not target:
+        return errors.make_error(
+            errors.BAD_REQUEST, "params.target must be a non-empty string"
+        )
+    body_b64 = params.get("body_bytes")
+    if not isinstance(body_b64, str):
+        return errors.make_error(
+            errors.BAD_REQUEST, "params.body_bytes must be a base64 string"
+        )
+    import base64
+    try:
+        body_bytes = base64.b64decode(body_b64, validate=True)
+    except (ValueError, TypeError) as exc:
+        return errors.make_error(
+            errors.BAD_REQUEST, f"params.body_bytes is not valid base64: {exc}"
+        )
+    wait = params.get("wait", True)
+    if not isinstance(wait, bool):
+        return errors.make_error(
+            errors.BAD_REQUEST, "params.wait must be a boolean"
+        )
+    wait_timeout = params.get("wait_timeout_seconds")
+    if wait_timeout is not None:
+        if not isinstance(wait_timeout, (int, float)) or wait_timeout < 0 or wait_timeout > 300:
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                "params.wait_timeout_seconds must be a number in [0.0, 300.0]",
+            )
+    try:
+        result = queue_service.send_input(
+            sender=sender,
+            target_input=target,
+            body_bytes=body_bytes,
+            wait=wait,
+            wait_timeout=float(wait_timeout) if wait_timeout is not None else None,
+        )
+    except Exception as exc:
+        return _queue_error_to_envelope(exc, method="queue.send_input")
+    # Compute the FR-047b excerpt from the body we already have in
+    # memory — avoids a redundant SQLite BLOB read and ensures the
+    # `--json` shape carries the documented `excerpt` field.
+    from ..routing.excerpt import render_excerpt
+    excerpt = render_excerpt(body_bytes)
+    payload = _queue_row_to_payload(result.row, excerpt=excerpt)
+    payload["waited_to_terminal"] = result.waited_to_terminal
+    return errors.make_ok(payload)
+
+
+def _queue_list(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``queue.list`` — list rows with filters. No origin restriction.
+
+    ``--target`` and ``--sender`` accept either an ``agt_<12-hex>``
+    agent_id OR a label (Research §R-001); we route both through
+    ``target_resolver.resolve_target`` so labels work and ambiguous
+    labels surface as ``target_label_ambiguous``. ``--since`` is
+    validated via ``parse_since`` (FR-012b); malformed values surface
+    as ``since_invalid_format``. The rendered rows include the FR-047b
+    excerpt by reading the persisted body BLOB once per row.
+    """
+    queue_service, _routing, err = _routing_services_or_error(ctx)
+    if err is not None:
+        return err
+    if not isinstance(params, dict):
+        return errors.make_error(errors.BAD_REQUEST, "params must be an object")
+    from ..routing.dao import QueueListFilter
+    from ..routing.errors import (
+        SINCE_INVALID_FORMAT,
+        TargetResolveError,
+    )
+    from ..routing.timestamps import format_iso_ms_utc, parse_since
+
+    state = params.get("state")
+    target_in = params.get("target")
+    sender_in = params.get("sender")
+    since = params.get("since")
+    limit = params.get("limit", 100)
+    # ``state`` is optional — but if present, MUST be a string from the
+    # documented closed set (queued|blocked|delivered|canceled|failed).
+    # Silently treating a non-string as "no filter" widens the query
+    # and hides client bugs (R7-4); be strict like the other params.
+    _VALID_QUEUE_STATES = (
+        "queued", "blocked", "delivered", "canceled", "failed",
+    )
+    if state is not None:
+        if not isinstance(state, str):
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.state must be a string or absent"
+            )
+        if state not in _VALID_QUEUE_STATES:
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                f"params.state must be one of {list(_VALID_QUEUE_STATES)}; "
+                f"got {state!r}",
+            )
+    if limit is not None and (not isinstance(limit, int) or limit < 1 or limit > 1000):
+        return errors.make_error(
+            errors.BAD_REQUEST, "params.limit must be an integer in [1, 1000]"
+        )
+
+    # Resolve target/sender filters via the same resolver send_input
+    # uses, so labels work + ambiguous labels surface verbatim.
+    target_agent_id: str | None = None
+    sender_agent_id: str | None = None
+    # Use the QueueService's public resolver helper instead of reaching
+    # into private fields. The helper raises TargetResolveError with
+    # the same closed-set codes (agent_not_found / target_label_ambiguous).
+    if target_in is not None:
+        if not isinstance(target_in, str) or not target_in:
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.target must be a non-empty string"
+            )
+        try:
+            target_agent_id = queue_service.resolve_target_agent_id(target_in)
+        except TargetResolveError as exc:
+            return _queue_error_to_envelope(exc, method="queue.list")
+    if sender_in is not None:
+        if not isinstance(sender_in, str) or not sender_in:
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.sender must be a non-empty string"
+            )
+        try:
+            sender_agent_id = queue_service.resolve_target_agent_id(sender_in)
+        except TargetResolveError as exc:
+            return _queue_error_to_envelope(exc, method="queue.list")
+
+    # Validate `since` format. ``parse_since`` accepts both the
+    # canonical ms-form and the seconds form per FR-012b. Normalize
+    # to canonical ms form before passing to the DAO — the DAO's
+    # ``enqueued_at >= ?`` test is a lexicographic SQLite string
+    # compare, so the seconds form (``...:04Z``) would incorrectly
+    # exclude rows within that second (string-order has
+    # ``...:04.123Z < ...:04Z``).
+    since_value: str | None = None
+    if since is not None:
+        if not isinstance(since, str):
+            return errors.make_error(
+                errors.BAD_REQUEST, "params.since must be a string"
+            )
+        try:
+            since_dt = parse_since(since)
+        except (ValueError, TypeError) as exc:
+            return errors.make_error(
+                SINCE_INVALID_FORMAT,
+                f"params.since must be ISO-8601 UTC of the form "
+                f"YYYY-MM-DDTHH:MM:SS[.sss]Z (FR-012b accepts both "
+                f"seconds and millisecond precision): {exc}",
+            )
+        since_value = format_iso_ms_utc(since_dt)
+
+    filters = QueueListFilter(
+        # state has already been validated above (None or a valid
+        # closed-set member); no need for an isinstance guard.
+        state=state,
+        target_agent_id=target_agent_id,
+        sender_agent_id=sender_agent_id,
+        since=since_value,
+        limit=limit if isinstance(limit, int) else 100,
+    )
+    try:
+        rows = queue_service.list_rows(filters)
+    except Exception as exc:
+        return _queue_error_to_envelope(exc, method="queue.list")
+
+    # Render each row with its FR-047b excerpt via the service's
+    # public helper. One BLOB read per row — acceptable for MVP list
+    # sizes (default limit 100, max 1000).
+    payloads = [
+        _queue_row_to_payload(
+            r, excerpt=queue_service.read_envelope_excerpt(r.message_id),
+        )
+        for r in rows
+    ]
+    return errors.make_ok({"rows": payloads, "next_cursor": None})
+
+
+def _resolve_operator_identity(
+    ctx: DaemonContext, params: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Group-A walk Q8: for operator-action handlers, resolve the
+    ``operator_action_by`` string.
+
+    * ``caller_pane is None`` → host-origin → ``HOST_OPERATOR_SENTINEL``.
+    * ``caller_pane is not None`` → resolve agent_id; if missing /
+      inactive, return ``operator_pane_inactive`` envelope.
+    """
+    caller_pane, err = _parse_caller_pane(params)
+    if err is not None:
+        return None, err
+    if caller_pane is None:
+        if not _peer_is_host_process(_request_peer_pid()):
+            return None, errors.make_error(
+                errors.BAD_REQUEST,
+                "bench-container callers must supply caller_pane for queue operator actions",
+            )
+        # Lazy import to keep dispatch module independent of agents pkg.
+        from ..agents.identifiers import HOST_OPERATOR_SENTINEL
+        return HOST_OPERATOR_SENTINEL, None
+    record, err = _resolve_caller_agent(ctx, caller_pane)
+    if err is not None:
+        return None, err
+    return record.agent_id, None
+
+
+def _queue_operator_action(
+    ctx: DaemonContext,
+    params: dict[str, Any],
+    *,
+    method: str,
+    service_method_name: str,
+) -> dict[str, Any]:
+    """Shared body for ``queue.approve`` / ``queue.delay`` / ``queue.cancel``."""
+    queue_service, _routing, err = _routing_services_or_error(ctx)
+    if err is not None:
+        return err
+    if not isinstance(params, dict):
+        return errors.make_error(errors.BAD_REQUEST, "params must be an object")
+    message_id = params.get("message_id")
+    if not isinstance(message_id, str) or not message_id:
+        return errors.make_error(
+            errors.BAD_REQUEST, "params.message_id must be a non-empty string"
+        )
+    operator, err = _resolve_operator_identity(ctx, params)
+    if err is not None:
+        return err
+    try:
+        method_fn = getattr(queue_service, service_method_name)
+        row = method_fn(message_id, operator=operator)
+    except Exception as exc:
+        return _queue_error_to_envelope(exc, method=method)
+    return errors.make_ok(
+        _queue_row_to_payload(
+            row, excerpt=queue_service.read_envelope_excerpt(row.message_id),
+        )
+    )
+
+
+def _queue_approve(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    return _queue_operator_action(
+        ctx, params, method="queue.approve", service_method_name="approve",
+    )
+
+
+def _queue_delay(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    return _queue_operator_action(
+        ctx, params, method="queue.delay", service_method_name="delay",
+    )
+
+
+def _queue_cancel(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    return _queue_operator_action(
+        ctx, params, method="queue.cancel", service_method_name="cancel",
+    )
+
+
+def _routing_host_only_gate(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int,
+) -> dict[str, Any] | None:
+    """Enforce the routing-toggle host-only gate (R-005 / Q2): caller
+    pane absent AND peer uid matches the daemon process uid.
+
+    Fail-closed: if ``peer_uid`` is the ``_NO_PEER_UID`` sentinel
+    (SO_PEERCRED unavailable or the call bypassed the socket boundary),
+    the gate REFUSES the toggle. A host-only security gate that allows
+    on "no credentials" is bypassable on non-Linux / failed-cred paths,
+    so we treat "no peer credentials" as the same as a non-host caller.
+
+    Returns ``None`` on success or an error envelope on refusal.
+    """
+    caller_pane, err = _parse_caller_pane(params)
+    if err is not None:
+        return err
+    if caller_pane is not None:
+        return errors.make_error(
+            errors.ROUTING_TOGGLE_HOST_ONLY,
+            "routing toggle is host-only; bench-container callers refused",
+        )
+    if peer_uid == _NO_PEER_UID:
+        return errors.make_error(
+            errors.ROUTING_TOGGLE_HOST_ONLY,
+            "routing toggle requires verifiable peer credentials; "
+            "SO_PEERCRED returned no uid",
+        )
+    import os
+    # Use ``geteuid()`` (effective uid) to match the FEAT-002
+    # ``ControlServer`` peer-credential check at the accept boundary
+    # (see ``socket_api/server.py``). If the daemon ever runs with
+    # real != effective uid (setuid binary, etc.) those two checks
+    # MUST report the same identity — otherwise the server would
+    # accept a connection that the gate refuses (or vice versa).
+    daemon_uid = os.geteuid()
+    if peer_uid != daemon_uid:
+        return errors.make_error(
+            errors.ROUTING_TOGGLE_HOST_ONLY,
+            "routing toggle requires daemon-host uid",
+        )
+    if not _peer_is_host_process(_request_peer_pid()):
+        return errors.make_error(
+            errors.ROUTING_TOGGLE_HOST_ONLY,
+            "routing toggle requires a host-origin peer process",
+        )
+    return None
+
+
+def _routing_toggle(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int, *, value: str,
+) -> dict[str, Any]:
+    """Shared body for ``routing.enable`` (value=``enabled``) and
+    ``routing.disable`` (value=``disabled``)."""
+    _queue, routing, err = _routing_services_or_error(ctx)
+    if err is not None:
+        return err
+    gate_err = _routing_host_only_gate(ctx, params, peer_uid)
+    if gate_err is not None:
+        return gate_err
+    from ..agents.identifiers import HOST_OPERATOR_SENTINEL
+    from ..routing.timestamps import now_iso_ms_utc
+
+    ts = now_iso_ms_utc()
+    # Pick the dispatched method name (``routing.enable`` /
+    # ``routing.disable``) for log/error correlation. The local
+    # ``value`` is the flag's target state (``enabled`` / ``disabled``)
+    # which doesn't match the RPC method name.
+    method_name = "routing.enable" if value == "enabled" else "routing.disable"
+
+    # Build the audit_callback only if the daemon has an audit writer
+    # attached (test daemons sometimes skip it). The callback fires
+    # ONLY on the changed=True path (RoutingFlagService skips it on
+    # idempotent toggles per contracts/socket-routing.md). It commits
+    # the FR-046 audit row inside the same transaction as the
+    # daemon_state UPDATE — atomic per audit_writer.py docstring. A
+    # SQLite failure in the callback rolls back the flag UPDATE too;
+    # the caller sees an internal_error and the toggle is not applied.
+    audit_writer = getattr(ctx, "queue_audit_writer", None)
+    captured: list[tuple[int, dict]] = []
+    audit_callback = None
+    if audit_writer is not None:
+        def audit_callback(conn, previous_value):  # type: ignore[no-redef]
+            eid, payload = audit_writer.insert_routing_toggled_in_tx(
+                conn,
+                previous_value=previous_value,
+                current_value=value,
+                operator=HOST_OPERATOR_SENTINEL,
+                observed_at=ts,
+            )
+            captured.append((eid, payload))
+
+    try:
+        result = (
+            routing.enable(
+                operator=HOST_OPERATOR_SENTINEL, ts=ts,
+                audit_callback=audit_callback,
+            )
+            if value == "enabled"
+            else routing.disable(
+                operator=HOST_OPERATOR_SENTINEL, ts=ts,
+                audit_callback=audit_callback,
+            )
+        )
+    except Exception as exc:
+        return errors.make_error(
+            errors.INTERNAL_ERROR,
+            _internal_error_message(str(exc), prefix=method_name),
+        )
+    # After the atomic SQLite commit, append the JSONL side
+    # (best-effort). On idempotent no-ops ``captured`` stays empty.
+    if result.changed and captured and audit_writer is not None:
+        eid, payload = captured[0]
+        try:
+            audit_writer.append_jsonl_for_routing_toggled(
+                eid, payload, watermark_ts=result.last_updated_at,
+            )
+        except Exception:
+            # JSONL append failure is non-fatal — the audit writer
+            # buffers + flags degraded; ``agenttower status`` surfaces
+            # the condition.
+            pass
+    return errors.make_ok(
+        {
+            "previous_value": result.previous_value,
+            "current_value": result.current_value,
+            "changed": result.changed,
+            "last_updated_at": result.last_updated_at,
+            "last_updated_by": result.last_updated_by,
+        }
+    )
+
+
+def _routing_enable(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    return _routing_toggle(ctx, params, peer_uid, value="enabled")
+
+
+def _routing_disable(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    return _routing_toggle(ctx, params, peer_uid, value="disabled")
+
+
+def _routing_status(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routing.status`` — read the kill-switch flag. No origin gate."""
+    _queue, routing, err = _routing_services_or_error(ctx)
+    if err is not None:
+        return err
+    try:
+        value, last_at, last_by = routing.read_full()
+    except Exception as exc:
+        return errors.make_error(
+            errors.INTERNAL_ERROR,
+            _internal_error_message(str(exc), prefix="routing.status"),
+        )
+    return errors.make_ok(
+        {"value": value, "last_updated_at": last_at, "last_updated_by": last_by}
+    )
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
 # FEAT-003's two, FEAT-004's two, FEAT-006's five, FEAT-007's four,
-# and FEAT-008's events.* surface.
+# FEAT-008's events.* surface, and FEAT-009's eight queue/routing methods.
 # FEAT-002 keys retain insertion order (FR-022).
 DISPATCH: dict[str, Handler] = {
     "ping": _ping,
@@ -1042,4 +1863,12 @@ DISPATCH: dict[str, Handler] = {
     "events.follow_next": _events_follow_next,
     "events.follow_close": _events_follow_close,
     "events.classifier_rules": _events_classifier_rules,
+    "queue.send_input": _queue_send_input,
+    "queue.list": _queue_list,
+    "queue.approve": _queue_approve,
+    "queue.delay": _queue_delay,
+    "queue.cancel": _queue_cancel,
+    "routing.enable": _routing_enable,
+    "routing.disable": _routing_disable,
+    "routing.status": _routing_status,
 }

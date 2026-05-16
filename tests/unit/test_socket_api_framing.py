@@ -9,7 +9,7 @@ import pytest
 from agenttower.socket_api import errors
 
 
-def test_closed_code_set_contains_feat002_through_feat007_codes() -> None:
+def test_closed_code_set_contains_feat002_through_feat009_codes() -> None:
     # FEAT-002 codes (FR-022 backward-compat).
     feat002 = {
         errors.BAD_JSON,
@@ -84,9 +84,38 @@ def test_closed_code_set_contains_feat002_through_feat007_codes() -> None:
         errors.EVENTS_FILTER_INVALID,
     }
     assert feat008 <= errors.CLOSED_CODE_SET
+    # FEAT-009 additions (specs/009-safe-prompt-queue/data-model.md §8).
+    # AGENT_NOT_FOUND is reused from FEAT-006 above and not repeated here.
+    feat009 = {
+        errors.APPROVAL_NOT_APPLICABLE,
+        errors.BODY_EMPTY,
+        errors.BODY_INVALID_CHARS,
+        errors.BODY_INVALID_ENCODING,
+        errors.BODY_TOO_LARGE,
+        errors.DAEMON_SHUTTING_DOWN,
+        errors.DAEMON_UNAVAILABLE,
+        errors.DELAY_NOT_APPLICABLE,
+        errors.DELIVERY_IN_PROGRESS,
+        errors.DELIVERY_WAIT_TIMEOUT,
+        errors.KILL_SWITCH_OFF,
+        errors.MESSAGE_ID_NOT_FOUND,
+        errors.OPERATOR_PANE_INACTIVE,
+        errors.ROUTING_DISABLED,
+        errors.ROUTING_TOGGLE_HOST_ONLY,
+        errors.SENDER_NOT_IN_PANE,
+        errors.SENDER_ROLE_NOT_PERMITTED,
+        errors.SINCE_INVALID_FORMAT,
+        errors.TARGET_CONTAINER_INACTIVE,
+        errors.TARGET_LABEL_AMBIGUOUS,
+        errors.TARGET_NOT_ACTIVE,
+        errors.TARGET_PANE_MISSING,
+        errors.TARGET_ROLE_NOT_PERMITTED,
+        errors.TERMINAL_STATE_CANNOT_CHANGE,
+    }
+    assert feat009 <= errors.CLOSED_CODE_SET
     # No surprise codes beyond the documented sets.
     assert errors.CLOSED_CODE_SET == (
-        feat002 | feat003 | feat004 | feat006 | feat007 | feat008
+        feat002 | feat003 | feat004 | feat006 | feat007 | feat008 | feat009
     )
 
 

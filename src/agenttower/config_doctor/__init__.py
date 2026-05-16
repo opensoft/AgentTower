@@ -8,8 +8,8 @@ client and FEAT-003 / FEAT-004 socket methods (FR-022, FR-026).
 
 from __future__ import annotations
 
-MAX_SUPPORTED_SCHEMA_VERSION = 6
-"""Highest SQLite schema_version this CLI build understands (R-010); bumped to 6 by FEAT-008 (events table)."""
+MAX_SUPPORTED_SCHEMA_VERSION = 7
+"""Highest SQLite schema_version this CLI build understands (R-010); bumped to 7 by FEAT-009 (message_queue + daemon_state + events-table rebuild)."""
 
 # Re-exports — see plan §Structure Decision. These are imported lazily inside
 # functions to avoid circular imports at package init time; consumers should

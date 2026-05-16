@@ -13,7 +13,12 @@ from __future__ import annotations
 
 # Re-exports — keep stable alphabetical order. Final list is locked by T092
 # (specs/006-agent-registration/tasks.md).
-from .identifiers import AGENT_ID_RE, generate_agent_id, validate_agent_id_shape
+from .identifiers import (
+    AGENT_ID_RE,
+    HOST_OPERATOR_SENTINEL,
+    generate_agent_id,
+    validate_agent_id_shape,
+)
 from .mutex import AgentLockMap, RegisterLockMap
 from .permissions import (
     EffectivePermissions,
@@ -25,6 +30,7 @@ __all__ = [
     "AGENT_ID_RE",
     "AgentLockMap",
     "EffectivePermissions",
+    "HOST_OPERATOR_SENTINEL",
     "RegisterLockMap",
     "effective_permissions",
     "generate_agent_id",
