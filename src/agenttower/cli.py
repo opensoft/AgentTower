@@ -2435,10 +2435,10 @@ def _send_input_read_body(
     args: argparse.Namespace, *, json_mode: bool,
 ) -> bytes | int:
     """Read the body from --message or --message-file. Return bytes on
-    success, an integer exit code on failure (the closed-set body_*
-    rejection — exit 11 per CLI_EXIT_CODE_MAP)."""
-    from .routing.errors import CLI_EXIT_CODE_MAP
-
+    success, an integer exit code on failure (the bad_request /
+    argparse exit 64 surface — body_* rejections live on the daemon
+    side and are mapped through CLI_EXIT_CODE_MAP at the dispatch
+    layer, not here)."""
     if args.message is not None and args.message_file is not None:
         # argparse's mutually_exclusive_group already enforces this; the
         # check stays as defense-in-depth for programmatic callers.
@@ -2512,14 +2512,21 @@ def _send_input_lookup_self_agent_id(
             and record.get("tmux_pane_id") == pane_key[5]
         ):
             return str(record["agent_id"])
-    # No matching agent — caller pane has never been registered. Surface
-    # the same code FR-021/FR-023 give for an unregistered sender.
+    # No matching agent — caller pane has never been registered. Per
+    # specs/009-safe-prompt-queue/contracts/cli-send-input.md +
+    # checklists/api.md CHK029, the closed-set code for "you're not
+    # running inside a registered bench pane" is ``sender_not_in_pane``
+    # (exit 3) — used for BOTH host-origin AND unregistered-pane
+    # callers. Round-11 fixed the host-origin path; this is the
+    # unregistered-pane path. ``sender_role_not_permitted`` (exit 4)
+    # is reserved for the role-check failure on a REGISTERED pane.
+    from .routing.errors import SENDER_NOT_IN_PANE
     _emit_local_error(
-        "sender_role_not_permitted",
+        SENDER_NOT_IN_PANE,
         "caller pane is not registered; run `agenttower register-self --role master --confirm`",
         json_mode,
     )
-    return CLI_EXIT_CODE_MAP.get("sender_role_not_permitted", 4)
+    return CLI_EXIT_CODE_MAP.get(SENDER_NOT_IN_PANE, 3)
 
 
 def _send_input_emit_daemon_error(exc: DaemonError, json_mode: bool) -> int:
