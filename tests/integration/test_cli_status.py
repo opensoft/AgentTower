@@ -65,13 +65,13 @@ def test_status_json_output_shape(env: dict[str, str]) -> None:
         # FEAT-008 — data-model.md §7.
         "events_reader",
         "events_persistence",
+        # FEAT-009 — plan §"Status surface".
+        "routing",
+        "queue_audit",
         "socket_path",
         "state_path",
         "schema_version",
         "daemon_version",
-        # FEAT-009 — routing kill switch + queue audit health blocks.
-        "routing",
-        "queue_audit",
     }
     assert result["alive"] is True
     # FEAT-004 bumps the schema to v3 (data-model.md §7); we read the

@@ -99,15 +99,37 @@ AGENTTOWER_TEST_EVENTS_CLOCK_FAKE = "AGENTTOWER_TEST_EVENTS_CLOCK_FAKE"
 AGENTTOWER_TEST_READER_TICK = "AGENTTOWER_TEST_READER_TICK"
 
 
+# FEAT-009 — register the two new test seams from plan.md §"Test seams".
+# Both are env-var driven (mirrors the FEAT-007 / FEAT-008 pattern).
+# Production callers MUST NOT read these names; the FEAT-009 AST gate at
+# ``tests/unit/test_no_shell_string_interpolation.py`` plus a follow-on
+# test-seam-name scan in the Phase 9 polish slice keep them out of
+# production code. Both are no-ops when unset.
+
+#: T053 — path to a JSON file containing
+#: ``{"now_iso_ms_utc": <ISO>, "monotonic": <float>}``, consumed by the
+#: ``routing.timestamps.Clock`` Protocol so delivery-attempt timing and
+#: ``observed_at`` audit timestamps are deterministic in tests without
+#: real-time ``time.sleep`` calls.
+AGENTTOWER_TEST_ROUTING_CLOCK_FAKE = "AGENTTOWER_TEST_ROUTING_CLOCK_FAKE"
+
+#: T053 — Unix-domain-socket path. When set, the delivery worker replaces
+#: its inter-cycle wakeup poll with a ``socket.recv`` on this path. Tests
+#: write one byte to advance the worker by exactly one cycle.
+AGENTTOWER_TEST_DELIVERY_TICK = "AGENTTOWER_TEST_DELIVERY_TICK"
+
+
 @pytest.fixture(autouse=True)
-def _isolate_feat008_test_seams(
+def _isolate_test_seams(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    """Ensure the two FEAT-008 test seams start unset for every test.
+    """Ensure the FEAT-008 and FEAT-009 test seams start unset for every test.
 
     Tests that need a seam set it explicitly via ``monkeypatch.setenv``
     inside the test body. This prevents a value leaking across tests.
     """
     monkeypatch.delenv(AGENTTOWER_TEST_EVENTS_CLOCK_FAKE, raising=False)
     monkeypatch.delenv(AGENTTOWER_TEST_READER_TICK, raising=False)
+    monkeypatch.delenv(AGENTTOWER_TEST_ROUTING_CLOCK_FAKE, raising=False)
+    monkeypatch.delenv(AGENTTOWER_TEST_DELIVERY_TICK, raising=False)
     yield

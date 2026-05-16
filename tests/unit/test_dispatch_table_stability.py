@@ -3,9 +3,9 @@
 The dispatch table's KEY ORDER is part of the FEAT-002 stability rule
 (insertion order preserved across feature versions). FEAT-001..005
 established the first seven entries; FEAT-006 appended five more;
-FEAT-007 appended four more; FEAT-009 appended eight more. This test
-pins the exact ordered key list so an accidental re-ordering or added
-entry is caught immediately.
+FEAT-007 appended four more; FEAT-008 appended five more; FEAT-009
+appended eight more. This test pins the exact ordered key list so an
+accidental re-ordering or added entry is caught immediately.
 """
 
 from __future__ import annotations
@@ -58,5 +58,5 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_29_entries() -> None:
+def test_dispatch_table_is_exactly_twentynine_entries() -> None:
     assert len(DISPATCH) == 29
