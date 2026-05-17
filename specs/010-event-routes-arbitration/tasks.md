@@ -117,13 +117,13 @@ Single project layout (per plan.md §Project Structure):
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Extend `tests/unit/test_routing_arbitration.py` with lex-lowest tie-break tests at N=2, N=3, N=5 active masters; verify 100% selection over N=100 simulated fires (SC-002 measurability).
+- [X] T033 [P] [US3] Extend `tests/unit/test_routing_arbitration.py` with lex-lowest tie-break tests at N=2, N=3, N=5 active masters; verify 100% selection over N=100 simulated fires (SC-002 measurability).
 - [ ] T034 [P] [US3] Create `tests/integration/test_routing_arbitration_determinism.py` reproducing the spec's Story 3 Independent Test against the bench-container fixture; include the freshly-restarted daemon replay variant (SC-010 for arbitration).
 
 ### Implementation for User Story 3
 
-- [ ] T035 [US3] Confirm `arbitration.py` (T022) implements the lex-lowest tie-break as `sorted(active_masters, key=lambda a: a.agent_id)[0]` (NOT `min(...)`, NOT a streaming-min, NOT a stable-sort dependency) — this is the implementation pattern that satisfies SC-002's 100% determinism contract over N=100 fires; add an explicit code comment citing FR-017 + SC-002.
-- [ ] T036 [US3] Confirm `routes_audit.emit_route_skipped` (T012) populates `winner_master_agent_id=null`, `target_agent_id=null`, `target_label=null`, `reason='no_eligible_master'` for the FR-018 arbitration-failure path (Clarifications Q2). Add an explicit unit-test case `test_emit_route_skipped_no_eligible_master_null_fields` in `tests/unit/test_routing_audit.py` asserting all three null fields appear in the JSONL envelope.
+- [X] T035 [US3] Confirm `arbitration.py` (T022) implements the lex-lowest tie-break as `sorted(active_masters, key=lambda a: a.agent_id)[0]` (NOT `min(...)`, NOT a streaming-min, NOT a stable-sort dependency) — this is the implementation pattern that satisfies SC-002's 100% determinism contract over N=100 fires; add an explicit code comment citing FR-017 + SC-002.
+- [X] T036 [US3] Confirm `routes_audit.emit_route_skipped` (T012) populates `winner_master_agent_id=null`, `target_agent_id=null`, `target_label=null`, `reason='no_eligible_master'` for the FR-018 arbitration-failure path (Clarifications Q2). Add an explicit unit-test case `test_emit_route_skipped_no_eligible_master_null_fields` in `tests/unit/test_routing_audit.py` asserting all three null fields appear in the JSONL envelope.
 
 **Checkpoint**: Arbitration determinism gated by automated tests; SC-002 and SC-003 measurable from CLI output.
 
@@ -138,12 +138,12 @@ Single project layout (per plan.md §Project Structure):
 ### Tests for User Story 4
 
 - [ ] T037 [P] [US4] Create `tests/integration/test_routing_crash_recovery.py` reproducing the spec's Story 4 Independent Test: fault-inject after BEGIN before COMMIT; fault-inject after COMMIT but before next-cycle wake; fault-inject during the second of N events in a batch; verify UNIQUE constraint as defense-in-depth fires only under deliberately-induced double-insert.
-- [ ] T038 [P] [US4] Extend `tests/unit/test_routing_worker.py` with explicit transaction-rollback path tests: SQLite `OperationalError(database is locked)` → cursor stays at previous value, route remains in next-cycle queue, degraded flag flips for that cycle and clears on next-successful cycle.
+- [X] T038 [P] [US4] Extend `tests/unit/test_routing_worker.py` with explicit transaction-rollback path tests: SQLite `OperationalError(database is locked)` → cursor stays at previous value, route remains in next-cycle queue, degraded flag flips for that cycle and clears on next-successful cycle.
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Implement the fault-injection hook in `worker.py` per the contract documented in `research.md §R16` (env var `_AGENTTOWER_FAULT_INJECT_ROUTING_TXN_ABORT` with values `before_commit` | `after_commit`; raises `SystemExit(137)` at the specified point; no-op when env var unset). The contract is already pinned in research.md; this task is the implementation only.
-- [ ] T040 [US4] Verify the `idx_message_queue_route_event` partial UNIQUE index actually fires on attempted double-insert by writing a test in `tests/unit/test_routing_dao.py` that deliberately calls the insert helper twice with identical `(route_id, event_id)` and asserts `sqlite3.IntegrityError`; map the exception to `RoutingDuplicateInsert` per `contracts/error-codes.md` §4.
+- [X] T039 [US4] Implement the fault-injection hook in `worker.py` per the contract documented in `research.md §R16` (env var `_AGENTTOWER_FAULT_INJECT_ROUTING_TXN_ABORT` with values `before_commit` | `after_commit`; raises `SystemExit(137)` at the specified point; no-op when env var unset). The contract is already pinned in research.md; this task is the implementation only.
+- [X] T040 [US4] Verify the `idx_message_queue_route_event` partial UNIQUE index actually fires on attempted double-insert by writing a test in `tests/unit/test_routing_dao.py` that deliberately calls the insert helper twice with identical `(route_id, event_id)` and asserts `sqlite3.IntegrityError`; map the exception to `RoutingDuplicateInsert` per `contracts/error-codes.md` §4.
 - [ ] T040a [P] [US4] Add `tests/integration/test_routing_event_purge_between_cycles.py` reproducing the spec Edge Case "FEAT-008 event table has been wiped between routing cycles": insert events 1..N, set `last_consumed_event_id=5`, delete events with `event_id < 100`, run one routing cycle, assert no exception is raised AND the next `event_id > 5` available is processed normally AND the cursor advances forward from that point (spec §Edge Cases).
 
 **Checkpoint**: SC-004 measurable; duplicate-routing safety gated by automated tests; events-purged-below-cursor edge case validated.
@@ -158,14 +158,14 @@ Single project layout (per plan.md §Project Structure):
 
 ### Tests for User Story 5
 
-- [ ] T041 [P] [US5] Create `tests/contract/test_cli_queue_origin_filter.py` covering `--origin direct|route|<absent>|<invalid>` per `contracts/cli-queue-origin.md`: filter behavior, JSON shape extension (origin/route_id/event_id present on every row), `queue_origin_invalid` exit code.
+- [X] T041 [P] [US5] Create `tests/contract/test_cli_queue_origin_filter.py` covering `--origin direct|route|<absent>|<invalid>` per `contracts/cli-queue-origin.md`: filter behavior, JSON shape extension (origin/route_id/event_id present on every row), `queue_origin_invalid` exit code.
 - [ ] T042 [P] [US5] Extend `tests/integration/test_routing_end_to_end.py` with `test_story5_kill_switch_off_route_blocks` reproducing the spec's Story 5 Independent Test; assert SC-005 100% threshold (every fire under kill-switch-off → blocked + cursor-advance).
 
 ### Implementation for User Story 5
 
-- [ ] T043 [US5] Extend `src/agenttower/routing/service.py` `QueueService.list_queue`: add `origin_filter: Literal['direct','route'] | None = None` kw arg; modify SELECT to `WHERE (:origin_filter IS NULL OR origin = :origin_filter) ORDER BY enqueued_at, message_id`.
-- [ ] T044 [US5] Extend `src/agenttower/cli.py` queue subparser: add `--origin {direct,route}` flag; pass through to `queue.list` socket method's new `origin_filter` parameter; reject other values with `queue_origin_invalid` exit code per `contracts/cli-queue-origin.md`.
-- [ ] T045 [US5] Extend the human-format `agenttower queue` table in `cli.py` to include `ORIGIN`, `ROUTE_ID`, `EVENT_ID` columns (truncated/dashed for direct rows) per `contracts/cli-queue-origin.md` "Human-format output" section.
+- [X] T043 [US5] Extend `src/agenttower/routing/service.py` `QueueService.list_queue`: add `origin_filter: Literal['direct','route'] | None = None` kw arg; modify SELECT to `WHERE (:origin_filter IS NULL OR origin = :origin_filter) ORDER BY enqueued_at, message_id`.
+- [X] T044 [US5] Extend `src/agenttower/cli.py` queue subparser: add `--origin {direct,route}` flag; pass through to `queue.list` socket method's new `origin_filter` parameter; reject other values with `queue_origin_invalid` exit code per `contracts/cli-queue-origin.md`.
+- [X] T045 [US5] Extend the human-format `agenttower queue` table in `cli.py` to include `ORIGIN`, `ROUTE_ID`, `EVENT_ID` columns (truncated/dashed for direct rows) per `contracts/cli-queue-origin.md` "Human-format output" section.
 - [ ] T045a [P] [US5] Add `tests/integration/test_routing_end_to_end.py::test_route_row_approve_delay_cancel` covering FR-034: create a route, trigger an event under kill-switch-off (row lands `blocked`), then exercise `agenttower queue approve <id>` / `queue delay <id>` / `queue cancel <id>` on the route-generated row; assert each transition succeeds identically to a direct-send row (same audit shape, same exit code, same JSON), with only `origin`/`route_id`/`event_id` differing in the audit envelope.
 
 **Checkpoint**: US5 closes the FEAT-009-reuse loop; route-tagged rows behave identically to direct rows under all FEAT-009 operations (listing AND operator-action paths covered).

@@ -1025,6 +1025,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="page size 1..1000 (default 100)",
     )
     queue_cmd.add_argument(
+        # FEAT-010 — restrict listing to one origin (FR-033 +
+        # contracts/cli-queue-origin.md). argparse validates the
+        # closed set so an invalid value exits at the CLI layer
+        # before any socket round-trip; the daemon-side mapping
+        # surfaces queue_origin_invalid for protocol-only callers.
+        "--origin", choices=("direct", "route"), default=None,
+        help="filter to one origin: direct (FEAT-009 send-input) or route (FEAT-010 routing worker)",
+    )
+    queue_cmd.add_argument(
         "--json", action="store_true", help=JSON_LINE_HELP,
     )
     queue_cmd.set_defaults(_handler=_queue_list_command)
@@ -2716,6 +2725,10 @@ def _queue_list_command(args: argparse.Namespace) -> int:
             json_mode,
         )
         return 64
+    # FEAT-010 — origin filter (FR-033). argparse already validated
+    # the closed set; just forward when supplied.
+    if getattr(args, "origin", None) is not None:
+        params["origin"] = args.origin
 
     try:
         result = send_request(
@@ -2736,10 +2749,15 @@ def _queue_list_command(args: argparse.Namespace) -> int:
     if not rows:
         print("(no rows match)")
         return 0
-    # Human-readable column layout.
+    # Human-readable column layout. FEAT-010 (T045) extends with
+    # ORIGIN / ROUTE_ID / EVENT_ID columns per
+    # contracts/cli-queue-origin.md "Human-format output". Direct rows
+    # show "direct" / "-" / "-"; route rows show "route" + the
+    # truncated route_id + event_id.
     header = (
         f"{'MESSAGE_ID':<36}  {'STATE':<9}  {'SENDER':<22}  "
-        f"{'TARGET':<22}  {'ENQUEUED':<24}  {'LAST_UPDATED':<24}  EXCERPT"
+        f"{'TARGET':<22}  {'ORIGIN':<6}  {'ROUTE_ID':<8}  {'EVT':<6}  "
+        f"{'ENQUEUED':<24}  {'LAST_UPDATED':<24}  EXCERPT"
     )
     print(header)
     for row in rows:
@@ -2749,11 +2767,19 @@ def _queue_list_command(args: argparse.Namespace) -> int:
         target_str = _queue_label_and_prefix(target)
         raw_excerpt = (row.get("excerpt") or "").splitlines()[0] if row.get("excerpt") else ""
         excerpt = _sanitize_for_terminal(raw_excerpt)
+        origin = row.get("origin") or "direct"
+        route_id_full = row.get("route_id") or ""
+        route_id_disp = route_id_full[:8] if route_id_full else "-"
+        event_id = row.get("event_id")
+        event_id_disp = str(event_id) if event_id is not None else "-"
         print(
             f"{row.get('message_id', ''):<36}  "
             f"{row.get('state', ''):<9}  "
             f"{sender_str:<22}  "
             f"{target_str:<22}  "
+            f"{origin:<6}  "
+            f"{route_id_disp:<8}  "
+            f"{event_id_disp:<6}  "
             f"{row.get('enqueued_at', ''):<24}  "
             f"{row.get('last_updated_at', ''):<24}  "
             f"{excerpt}"

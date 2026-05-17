@@ -104,13 +104,20 @@ class QueueRow:
 
 @dataclass(frozen=True)
 class QueueListFilter:
-    """Filters for :meth:`MessageQueueDao.list_rows` (FR-031)."""
+    """Filters for :meth:`MessageQueueDao.list_rows` (FR-031).
+
+    FEAT-010 extension: ``origin`` filters to direct-send OR
+    route-generated rows per FR-033 / contracts/cli-queue-origin.md.
+    ``None`` (the default) returns both origins.
+    """
 
     state: str | None = None
     target_agent_id: str | None = None
     sender_agent_id: str | None = None
     since: str | None = None  # canonical ISO 8601 ms UTC (FR-012b)
     limit: int | None = 100  # default 100, max 1000
+    # FEAT-010 — closed set: 'direct' | 'route' | None.
+    origin: str | None = None
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1008,6 +1015,16 @@ class MessageQueueDao:
         if filters.since is not None:
             clauses.append("enqueued_at >= ?")
             params.append(filters.since)
+        if filters.origin is not None:
+            # FEAT-010 / FR-033 — closed set guarded by the CLI layer
+            # (queue_origin_invalid); defense-in-depth check here.
+            if filters.origin not in ("direct", "route"):
+                raise ValueError(
+                    f"origin filter {filters.origin!r} must be "
+                    "'direct' or 'route'"
+                )
+            clauses.append("origin = ?")
+            params.append(filters.origin)
         where = " AND ".join(clauses) if clauses else "1=1"
         limit = filters.limit if filters.limit is not None else 100
         limit = max(1, min(limit, 1000))

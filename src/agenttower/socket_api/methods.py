@@ -1381,6 +1381,16 @@ def _queue_row_to_payload(row: Any, *, excerpt: str = "") -> dict[str, Any]:
         "operator_action": row.operator_action,
         "operator_action_at": row.operator_action_at,
         "operator_action_by": row.operator_action_by,
+        # FEAT-010 — route-tagging fields (FR-029 / FR-033).
+        # ``origin`` always present (defaults to 'direct' for pre-FEAT-010
+        # rows via the schema v8 DEFAULT clause); ``route_id`` /
+        # ``event_id`` are NULL on direct rows. ``getattr`` with a
+        # default keeps the helper backward-compatible with
+        # SimpleNamespace mocks in pre-FEAT-010 unit tests that
+        # don't include the new fields.
+        "origin": getattr(row, "origin", "direct"),
+        "route_id": getattr(row, "route_id", None),
+        "event_id": getattr(row, "event_id", None),
         "excerpt": excerpt,
     }
 
@@ -1571,6 +1581,16 @@ def _queue_list(
             )
         since_value = format_iso_ms_utc(since_dt)
 
+    # FEAT-010 — origin filter (FR-033 + contracts/cli-queue-origin.md).
+    # Closed-set guard at the boundary: argparse already caps the CLI
+    # value; here we reject protocol callers that pass anything else.
+    origin = params.get("origin")
+    if origin is not None and origin not in ("direct", "route"):
+        return errors.make_error(
+            errors.QUEUE_ORIGIN_INVALID,
+            f"origin must be 'direct' or 'route'; got {origin!r}",
+        )
+
     filters = QueueListFilter(
         # state has already been validated above (None or a valid
         # closed-set member); no need for an isinstance guard.
@@ -1579,6 +1599,7 @@ def _queue_list(
         sender_agent_id=sender_agent_id,
         since=since_value,
         limit=limit if isinstance(limit, int) else 100,
+        origin=origin,
     )
     try:
         rows = queue_service.list_rows(filters)

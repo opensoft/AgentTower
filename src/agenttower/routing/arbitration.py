@@ -172,9 +172,13 @@ def _pick_auto(
     if not eligible:
         return MasterSkip(reason=NO_ELIGIBLE_MASTER)
 
-    # T035 (tasks.md): explicit sorted-then-[0] pattern, NOT min().
-    # The sort key is the bare agent_id string so ties are impossible
-    # (agent_ids are UUIDv4-derived per FEAT-006 AGENT_ID_RE).
+    # FR-017 / SC-002: explicit sorted-then-[0] pattern, NOT min().
+    # SC-002 demands 100% lex-lowest selection over N=100 fires; the
+    # sorted(..., key=lambda a: a.agent_id)[0] pattern makes the
+    # determinism contract obvious at code-review time and survives
+    # any future change to the source iterable's natural ordering.
+    # Tested by test_pick_auto_uses_sorted_not_min_per_t035_invariant
+    # (AST scan) + test_auto_is_deterministic_across_n_one_hundred_fires_sc002.
     winner = sorted(eligible, key=lambda a: a.agent_id)[0]
     return MasterWon(agent=winner)
 
