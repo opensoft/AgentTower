@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from ..tmux.parsers import sanitize_text
 
@@ -72,6 +72,15 @@ class DaemonContext:
     queue_audit_writer: Any = None
     message_queue_dao: Any = None
     daemon_state_dao: Any = None
+    # FEAT-010 — populated at daemon boot (T025). The routes service
+    # exposes the operator-facing CRUD; the worker thread owns the
+    # routing cycle. The audit writer is shared with the worker so
+    # the ``agenttower status`` handler can call has_pending() per
+    # data-model.md §5.
+    routes_service: Any = None
+    routing_worker_thread: Any = None
+    routing_audit_writer: Any = None
+    routing_shared_state: Any = None
 
 
 def _set_request_peer_context(*, peer_pid: int) -> None:
@@ -167,6 +176,13 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "last_failure_exc_class": audit_writer.last_failure_exc_class,
         }
 
+    # FEAT-010 — status `routing` section (FR-038 + Clarifications Q3).
+    # MERGED into the same `routing` JSON object as the FEAT-009
+    # kill-switch state per contracts/cli-status-routing.md "Backward
+    # compatibility": operators conceptualize "routing" as one
+    # subsystem.
+    _extend_routing_block_with_feat010(routing_block, ctx)
+
     return errors.make_ok(
         {
             "alive": True,
@@ -183,6 +199,81 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "queue_audit": queue_audit_block,
         }
     )
+
+
+def _extend_routing_block_with_feat010(
+    routing_block: dict[str, Any], ctx: DaemonContext,
+) -> None:
+    """Mutate ``routing_block`` in place with FEAT-010 fields per
+    contracts/cli-status-routing.md.
+
+    All fields default to a not-running shape when the FEAT-010
+    wiring isn't installed (defensive — production boot always wires
+    it; this keeps unit tests of the FEAT-009 `status` surface
+    working without forcing every test fixture to instantiate the
+    FEAT-010 stack).
+    """
+    shared = getattr(ctx, "routing_shared_state", None)
+    audit = getattr(ctx, "routing_audit_writer", None)
+    routes_svc = getattr(ctx, "routes_service", None)
+
+    if shared is None or audit is None or routes_svc is None:
+        routing_block.update({
+            "routes_total": 0,
+            "routes_enabled": 0,
+            "routes_disabled": 0,
+            "last_routing_cycle_at": None,
+            "events_consumed_total": 0,
+            "skips_by_reason": {},
+            "most_stalled_route": None,
+            "routing_worker_degraded": False,
+            "degraded_routing_audit_persistence": False,
+        })
+        return
+
+    # Snapshot shared state under lock — counters are mutated by the
+    # worker on every cycle (data-model.md §4).
+    with shared.lock:
+        last_cycle = shared.last_routing_cycle_at
+        events_consumed_total = shared.events_consumed_total
+        skips_by_reason = dict(shared.skips_by_reason)
+        worker_degraded = shared.routing_worker_degraded
+
+    # Route counts + most_stalled_route — short-lived read connection.
+    # The routes_service was constructed with its own conn_factory at
+    # daemon boot; reuse that rather than re-resolving paths here.
+    import sqlite3
+    from ..routing.routes_service import compute_most_stalled, compute_route_counts
+    conn = routes_svc._conn_factory()  # short-lived read conn
+    try:
+        total, enabled, disabled = compute_route_counts(conn)
+        stalled = compute_most_stalled(conn)
+    finally:
+        conn.close()
+
+    most_stalled_payload: dict[str, Any] | None
+    if stalled is None:
+        most_stalled_payload = None
+    else:
+        most_stalled_payload = {
+            "route_id": stalled.route_id,
+            "lag": stalled.lag,
+        }
+
+    routing_block.update({
+        "routes_total": total,
+        "routes_enabled": enabled,
+        "routes_disabled": disabled,
+        "last_routing_cycle_at": last_cycle,
+        "events_consumed_total": events_consumed_total,
+        "skips_by_reason": skips_by_reason,
+        "most_stalled_route": most_stalled_payload,
+        "routing_worker_degraded": worker_degraded,
+        # Per data-model.md §4-§5: this flag is derived at read time
+        # from the audit buffer's pending-flush state — independent of
+        # worker degradation.
+        "degraded_routing_audit_persistence": bool(audit.has_pending()),
+    })
 
 
 def _shutdown(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:
@@ -1372,6 +1463,16 @@ def _queue_row_to_payload(row: Any, *, excerpt: str = "") -> dict[str, Any]:
         "operator_action": row.operator_action,
         "operator_action_at": row.operator_action_at,
         "operator_action_by": row.operator_action_by,
+        # FEAT-010 — route-tagging fields (FR-029 / FR-033).
+        # ``origin`` always present (defaults to 'direct' for pre-FEAT-010
+        # rows via the schema v8 DEFAULT clause); ``route_id`` /
+        # ``event_id`` are NULL on direct rows. ``getattr`` with a
+        # default keeps the helper backward-compatible with
+        # SimpleNamespace mocks in pre-FEAT-010 unit tests that
+        # don't include the new fields.
+        "origin": getattr(row, "origin", "direct"),
+        "route_id": getattr(row, "route_id", None),
+        "event_id": getattr(row, "event_id", None),
         "excerpt": excerpt,
     }
 
@@ -1562,6 +1663,16 @@ def _queue_list(
             )
         since_value = format_iso_ms_utc(since_dt)
 
+    # FEAT-010 — origin filter (FR-033 + contracts/cli-queue-origin.md).
+    # Closed-set guard at the boundary: argparse already caps the CLI
+    # value; here we reject protocol callers that pass anything else.
+    origin = params.get("origin")
+    if origin is not None and origin not in ("direct", "route"):
+        return errors.make_error(
+            errors.QUEUE_ORIGIN_INVALID,
+            f"origin must be 'direct' or 'route'; got {origin!r}",
+        )
+
     filters = QueueListFilter(
         # state has already been validated above (None or a valid
         # closed-set member); no need for an isinstance guard.
@@ -1570,6 +1681,7 @@ def _queue_list(
         sender_agent_id=sender_agent_id,
         since=since_value,
         limit=limit if isinstance(limit, int) else 100,
+        origin=origin,
     )
     try:
         rows = queue_service.list_rows(filters)
@@ -1837,9 +1949,194 @@ def _routing_status(
     )
 
 
+# ──────────────────────────────────────────────────────────────────────
+# FEAT-010 routes.* socket methods (T030)
+# ──────────────────────────────────────────────────────────────────────
+
+
+# Sentinel for the per-request caller identity. Host-CLI calls populate
+# ``host-operator``; future bench-container calls would populate the
+# caller's resolved ``agt_*`` id (FEAT-005 inheritance; not yet wired
+# at the dispatch layer — see T030 docstring).
+_HOST_OPERATOR_SENTINEL: Final[str] = "host-operator"
+
+
+def _routes_service_or_error(
+    ctx: DaemonContext,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Return ``(routes_service, None)`` or ``(None, error_envelope)``
+    when the FEAT-010 wiring isn't ready (defensive — production
+    boot always wires it)."""
+    svc = getattr(ctx, "routes_service", None)
+    if svc is None:
+        return None, errors.make_error(
+            errors.DAEMON_UNAVAILABLE,
+            "routes service not initialized",
+        )
+    return svc, None
+
+
+def _route_row_to_payload(row: Any) -> dict[str, Any]:
+    """Shape a RouteRow as the FR-045/FR-046 stable JSON object."""
+    return {
+        "route_id": row.route_id,
+        "event_type": row.event_type,
+        "source_scope": {
+            "kind": row.source_scope_kind,
+            "value": row.source_scope_value,
+        },
+        "target_rule": row.target_rule,
+        "target_value": row.target_value,
+        "master_rule": row.master_rule,
+        "master_value": row.master_value,
+        "template": row.template,
+        "enabled": bool(row.enabled),
+        "last_consumed_event_id": int(row.last_consumed_event_id),
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "created_by_agent_id": row.created_by_agent_id,
+    }
+
+
+def _map_route_error(exc: Exception, prefix: str) -> dict[str, Any]:
+    """Translate any :class:`RouteError` subclass to the
+    FEAT-002 error envelope using its bound CLI code."""
+    from ..routing.route_errors import RouteError
+    if isinstance(exc, RouteError):
+        return errors.make_error(exc.code, str(exc.message))
+    return errors.make_error(
+        errors.INTERNAL_ERROR,
+        _internal_error_message(str(exc), prefix=prefix),
+    )
+
+
+def _routes_add(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routes.add`` — operator-facing route creation (FR-001 + FR-002)."""
+    svc, err = _routes_service_or_error(ctx)
+    if err is not None:
+        return err
+    try:
+        row = svc.add_route(
+            event_type=params.get("event_type", ""),
+            source_scope_kind=params.get("source_scope_kind", "any"),
+            source_scope_value=params.get("source_scope_value"),
+            target_rule=params.get("target_rule", ""),
+            target_value=params.get("target_value"),
+            master_rule=params.get("master_rule", "auto"),
+            master_value=params.get("master_value"),
+            template_string=params.get("template", ""),
+            # FEAT-005 caller-identity surface — out of MVP scope per
+            # spec Assumptions; use the host-operator sentinel.
+            created_by_agent_id=_HOST_OPERATOR_SENTINEL,
+        )
+    except Exception as exc:
+        return _map_route_error(exc, prefix="routes.add")
+    return errors.make_ok(_route_row_to_payload(row))
+
+
+def _routes_list(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routes.list`` — FR-046 list-by-(created_at, route_id) ordering."""
+    svc, err = _routes_service_or_error(ctx)
+    if err is not None:
+        return err
+    enabled_only = bool(params.get("enabled_only", False))
+    try:
+        rows = svc.list_routes(enabled_only=enabled_only)
+    except Exception as exc:
+        return _map_route_error(exc, prefix="routes.list")
+    return errors.make_ok({"routes": [_route_row_to_payload(r) for r in rows]})
+
+
+def _routes_show(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routes.show`` — FR-047 route + runtime sub-object."""
+    svc, err = _routes_service_or_error(ctx)
+    if err is not None:
+        return err
+    route_id = params.get("route_id", "")
+    try:
+        row, runtime = svc.show_route(route_id)
+    except Exception as exc:
+        return _map_route_error(exc, prefix="routes.show")
+    payload = _route_row_to_payload(row)
+    payload["runtime"] = {
+        "last_routing_cycle_at": runtime.last_routing_cycle_at,
+        "events_consumed": runtime.events_consumed,
+        "last_skip_reason": runtime.last_skip_reason,
+        "last_skip_at": runtime.last_skip_at,
+    }
+    return errors.make_ok(payload)
+
+
+def _routes_remove(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routes.remove`` — FR-048 lifecycle response shape."""
+    svc, err = _routes_service_or_error(ctx)
+    if err is not None:
+        return err
+    route_id = params.get("route_id", "")
+    try:
+        svc.remove_route(
+            route_id, deleted_by_agent_id=_HOST_OPERATOR_SENTINEL,
+        )
+    except Exception as exc:
+        return _map_route_error(exc, prefix="routes.remove")
+    from ..routing.timestamps import now_iso_ms_utc
+    return errors.make_ok(
+        {"route_id": route_id, "operation": "removed", "at": now_iso_ms_utc()}
+    )
+
+
+def _routes_enable(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routes.enable`` — FR-048 lifecycle; FR-009 idempotent."""
+    svc, err = _routes_service_or_error(ctx)
+    if err is not None:
+        return err
+    route_id = params.get("route_id", "")
+    try:
+        svc.enable_route(
+            route_id, updated_by_agent_id=_HOST_OPERATOR_SENTINEL,
+        )
+    except Exception as exc:
+        return _map_route_error(exc, prefix="routes.enable")
+    from ..routing.timestamps import now_iso_ms_utc
+    return errors.make_ok(
+        {"route_id": route_id, "operation": "enabled", "at": now_iso_ms_utc()}
+    )
+
+
+def _routes_disable(
+    ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID,
+) -> dict[str, Any]:
+    """``routes.disable`` — FR-048 lifecycle; FR-009 idempotent."""
+    svc, err = _routes_service_or_error(ctx)
+    if err is not None:
+        return err
+    route_id = params.get("route_id", "")
+    try:
+        svc.disable_route(
+            route_id, updated_by_agent_id=_HOST_OPERATOR_SENTINEL,
+        )
+    except Exception as exc:
+        return _map_route_error(exc, prefix="routes.disable")
+    from ..routing.timestamps import now_iso_ms_utc
+    return errors.make_ok(
+        {"route_id": route_id, "operation": "disabled", "at": now_iso_ms_utc()}
+    )
+
+
 # Dispatch table — the closed set of methods FEAT-002 advertises plus
 # FEAT-003's two, FEAT-004's two, FEAT-006's five, FEAT-007's four,
-# FEAT-008's events.* surface, and FEAT-009's eight queue/routing methods.
+# FEAT-008's events.* surface, FEAT-009's eight queue/routing methods,
+# and FEAT-010's six routes.* methods.
 # FEAT-002 keys retain insertion order (FR-022).
 DISPATCH: dict[str, Handler] = {
     "ping": _ping,
@@ -1871,4 +2168,11 @@ DISPATCH: dict[str, Handler] = {
     "routing.enable": _routing_enable,
     "routing.disable": _routing_disable,
     "routing.status": _routing_status,
+    # FEAT-010 routes.* surface (T030)
+    "routes.add": _routes_add,
+    "routes.list": _routes_list,
+    "routes.show": _routes_show,
+    "routes.remove": _routes_remove,
+    "routes.enable": _routes_enable,
+    "routes.disable": _routes_disable,
 }

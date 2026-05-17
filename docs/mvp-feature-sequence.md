@@ -368,29 +368,65 @@ Goal: support the MVP autonomous workflow where masters route work to slaves,
 slaves report swarms, and multiple masters can share a slave without silent
 collisions.
 
-Build:
+### FEAT-010 (event routing + deterministic arbitration half) — **shipped**
 
-- `agenttower route --from <agent-id> --to <agent-id>`.
-- Event notification envelopes from daemon to masters.
-- Route subscriptions for selected event types.
-- Per-target FIFO delivery.
-- Arbitration request records.
-- Arbitration prompt shown to a requesting master when another master has a
-  pending or recently delivered prompt for the same slave.
-- Arbitration decisions: queue-next, delay, cancel.
-- Swarm member report parsing for:
-  `AGENTTOWER_SWARM_MEMBER parent=<agent-id> pane=<tmux-pane-id> ...`.
-- Swarm parent/child display in `list-agents`.
+The first half of the original FEAT-010 envelope shipped under
+`specs/010-event-routes-arbitration/` (commits `c8989eb..6685df6`,
+PRs to follow). What's in this slice:
 
-Acceptance:
+- `agenttower route add|list|show|remove|enable|disable` CRUD CLI
+  for durable route subscriptions, backed by a new SQLite `routes`
+  table (schema v8) with per-route cursors that prevent replay of
+  historical events (FR-002).
+- A daemon-internal routing worker thread that fires matching FEAT-008
+  events through the existing FEAT-009 enqueue path (same permission
+  gate, kill switch, per-target FIFO). Route-generated `message_queue`
+  rows are tagged `origin='route'` + `route_id` + `event_id`.
+- Deterministic master arbitration via lex-lowest active `agent_id`
+  when `master_rule=auto`; explicit naming via `master_rule=explicit`
+  + `master_value=<agent_id>`.
+- Six new audit event types in `events.jsonl` (`route_matched`,
+  `route_skipped`, `route_created`, `route_updated`, `route_deleted`,
+  `routing_worker_heartbeat`) — the full delivery chain is
+  inspectable via `agenttower events`.
+- `agenttower status` gains a `routing` section with route counts,
+  last cycle, skips by reason, most-stalled route, and two
+  independent degraded signals.
+- `agenttower queue --origin {direct|route}` filter so operators can
+  list only the FEAT-010-generated rows.
 
-- A slave event can notify one or more routed masters.
-- Two masters can target the same slave; the second master sees the first
-  prompt excerpt before its prompt is delivered.
-- Human can inspect and override queued arbitration state.
-- Swarm children are shown clearly under their parent slave.
+### FEAT-010 (deferred halves)
 
-Out of scope:
+Two pieces of the original FEAT-010 envelope are explicitly deferred
+to follow-up features (see
+`specs/010-event-routes-arbitration/spec.md` Assumptions):
+
+- **Operator-facing arbitration prompts** — the §17 "send the other
+  master's prompt excerpt to the requesting master and ask
+  queue-next/delay/cancel" behavior. FEAT-010 ships the
+  deterministic-winner primitive only.
+- **Swarm-member report parsing** —
+  `AGENTTOWER_SWARM_MEMBER parent=… pane=… …` parsing + parent/child
+  display in `list-agents`. FEAT-008's `swarm_member_reported` event
+  type already provides the ingest surface, so the deferral is
+  additive (not blocking).
+
+Acceptance (shipped half):
+
+- A slave event can fire any number of operator-defined routes; each
+  route deterministically picks a master + target and enqueues
+  through FEAT-009.
+- Two routes can target the same slave; per-target FIFO from FEAT-009
+  serializes their delivery in `enqueued_at` order.
+- The arbitrated master identity is captured at evaluation time and
+  byte-for-byte reproducible across daemon restarts (SC-010).
+- Operators can inspect every routing decision via `agenttower events`
+  + `agenttower queue --origin route` + `agenttower status`.
+
+Acceptance (deferred halves): out of scope until the follow-up
+features ship.
+
+Out of scope (entire FEAT-010 envelope):
 
 - Automatic semantic task assignment.
 - Automatic answers to agent questions.

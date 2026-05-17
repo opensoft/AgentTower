@@ -164,6 +164,15 @@ class QueueService:
         body_bytes: bytes,
         wait: bool = True,
         wait_timeout: float | None = None,
+        # FEAT-010 route-tagging (plan §R7). The leading underscore
+        # signals "in-process only" — the socket dispatcher for
+        # ``queue.send_input`` MUST NOT forward these. Set only from
+        # the FEAT-010 :meth:`enqueue_route_message` entry point so
+        # route-generated rows traverse the same validation /
+        # permission / kill-switch / FIFO path as direct sends.
+        _origin: str = "direct",
+        _route_id: str | None = None,
+        _event_id: int | None = None,
     ) -> SendInputResult:
         """Enqueue one ``send-input`` row and (optionally) wait for terminal.
 
@@ -267,6 +276,9 @@ class QueueService:
                 envelope_size_bytes=envelope_size_bytes,
                 enqueued_at=ts,
                 audit_callback=_audit_enqueue_queued,
+                origin=_origin,
+                route_id=_route_id,
+                event_id=_event_id,
             )
         else:
             assert decision.block_reason is not None
@@ -302,6 +314,9 @@ class QueueService:
                 enqueued_at=ts,
                 block_reason=decision.block_reason,
                 audit_callback=_audit_enqueue_blocked,
+                origin=_origin,
+                route_id=_route_id,
+                event_id=_event_id,
             )
 
         # Step 4b: JSONL append (best-effort; runs AFTER the atomic
@@ -331,6 +346,60 @@ class QueueService:
         row = self._dao.get_row_by_id(message_id)
         assert row is not None
         return SendInputResult(row=row, waited_to_terminal=terminal)
+
+    # ─── FEAT-010 routing entry (plan §R7) ────────────────────────────
+
+    def enqueue_route_message(
+        self,
+        *,
+        sender: AgentRecord,
+        target_input: str,
+        body_bytes: bytes,
+        route_id: str,
+        event_id: int,
+    ) -> SendInputResult:
+        """FEAT-010 entry point — enqueue a route-generated message.
+
+        Thin wrapper around :meth:`send_input` that routes through the
+        existing FEAT-009 validation / permission / kill-switch /
+        per-target-FIFO path verbatim, while tagging the resulting
+        ``message_queue`` row with ``origin='route'`` + non-NULL
+        ``route_id`` / ``event_id`` (data-model.md §2).
+
+        Per Story 5 #1 + FR-032: when the kill switch is off, the row
+        lands in ``blocked`` with ``block_reason='kill_switch_off'``
+        — this is NOT a route skip (the routing worker still advances
+        its cursor; see FR-012 + worker.py).
+
+        Args:
+            sender: The arbitration winner (from
+                :func:`agenttower.routing.arbitration.pick_master`).
+                Used as the ``sender`` identity on the resulting queue
+                row per FR-020.
+            target_input: The verbatim target value to resolve via
+                the existing :func:`routing.target_resolver.resolve_target`.
+                Caller (the worker) MUST pre-resolve role-targets
+                (``target_rule='role'``) to a concrete agent_id
+                before calling — this method is target-rule-agnostic.
+            body_bytes: The pre-rendered, pre-validated template
+                output bytes (from :func:`routing.template.render_template`).
+            route_id: The FEAT-010 ``route_id`` (UUIDv4).
+            event_id: The FEAT-008 source ``event_id``.
+
+        Returns:
+            :class:`SendInputResult` with ``waited_to_terminal=False``.
+            The worker fire-and-forgets — FEAT-009's delivery worker
+            handles paste asynchronously per the existing path.
+        """
+        return self.send_input(
+            sender=sender,
+            target_input=target_input,
+            body_bytes=body_bytes,
+            wait=False,  # routing worker does not block on delivery
+            _origin="route",
+            _route_id=route_id,
+            _event_id=event_id,
+        )
 
     # ─── Operator actions (FR-031 — FR-036) ────────────────────────────
 

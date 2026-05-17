@@ -100,6 +100,13 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "routing.enable",
         "routing.disable",
         "routing.status",
+        # FEAT-010 — routes.* CRUD (T030).
+        "routes.add",
+        "routes.list",
+        "routes.show",
+        "routes.remove",
+        "routes.enable",
+        "routes.disable",
     }
 
 
@@ -137,9 +144,24 @@ def test_status_returns_documented_shape(tmp_path: Path) -> None:
     }
     assert set(result.keys()) == expected_keys
     assert result["routing"] == {
+        # FEAT-009 — kill-switch shape.
         "value": None,
         "last_updated_at": None,
         "last_updated_by": None,
+        # FEAT-010 — additive routing section per
+        # contracts/cli-status-routing.md. Defaults to "not running"
+        # shape when the FEAT-010 wiring isn't installed in this
+        # test's DaemonContext (no routes_service/audit_writer/shared
+        # state); per-key types match the contract.
+        "routes_total": 0,
+        "routes_enabled": 0,
+        "routes_disabled": 0,
+        "last_routing_cycle_at": None,
+        "events_consumed_total": 0,
+        "skips_by_reason": {},
+        "most_stalled_route": None,
+        "routing_worker_degraded": False,
+        "degraded_routing_audit_persistence": False,
     }
     assert result["queue_audit"] == {
         "degraded": False,

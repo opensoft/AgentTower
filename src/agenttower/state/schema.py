@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -653,6 +653,114 @@ def _apply_migration_v7(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_v8(conn: sqlite3.Connection) -> None:
+    """FEAT-010 — add the ``routes`` table and extend ``message_queue``.
+
+    Three additive changes (specs/010-event-routes-arbitration/data-model.md §3):
+
+    1. New ``routes`` table — one row per operator-created subscription,
+       with the ``last_consumed_event_id`` per-route cursor and the
+       audit-stamp columns from FR-001.
+    2. Three new ``message_queue`` columns:
+       ``origin TEXT NOT NULL DEFAULT 'direct'`` (FR-029 — backward-
+       compatible for every existing FEAT-009 row), ``route_id TEXT``,
+       and ``event_id INTEGER``.
+    3. A partial UNIQUE index ``(route_id, event_id) WHERE origin='route'``
+       (FR-030 — defense-in-depth against duplicate routing on top of
+       the primary cursor-advance-with-enqueue atomicity guarantee from
+       FR-012).
+
+    The ``ALTER TABLE message_queue ADD COLUMN`` operations are guarded
+    by ``PRAGMA table_info`` existence checks so an interrupted prior
+    application of this migration (column added, index not yet created)
+    is safe to resume.
+
+    Runs inside the existing ``BEGIN IMMEDIATE`` transaction in
+    ``_apply_pending_migrations``; partial application is impossible.
+    """
+    # ─────────────────────────────────────────────────────────────────
+    # Part 1: routes table + sort index
+    # ─────────────────────────────────────────────────────────────────
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS routes (
+            route_id               TEXT NOT NULL PRIMARY KEY,
+            event_type             TEXT NOT NULL CHECK (event_type IN (
+                'activity', 'waiting_for_input', 'completed', 'error',
+                'test_failed', 'test_passed', 'manual_review_needed',
+                'long_running', 'pane_exited', 'swarm_member_reported'
+            )),
+            source_scope_kind      TEXT NOT NULL CHECK (
+                source_scope_kind IN ('any', 'agent_id', 'role')
+            ),
+            source_scope_value     TEXT,
+            target_rule            TEXT NOT NULL CHECK (
+                target_rule IN ('explicit', 'source', 'role')
+            ),
+            target_value           TEXT,
+            master_rule            TEXT NOT NULL CHECK (
+                master_rule IN ('auto', 'explicit')
+            ),
+            master_value           TEXT,
+            template               TEXT NOT NULL,
+            enabled                INTEGER NOT NULL DEFAULT 1
+                                   CHECK (enabled IN (0, 1)),
+            last_consumed_event_id INTEGER NOT NULL DEFAULT 0
+                                   CHECK (last_consumed_event_id >= 0),
+            created_at             TEXT NOT NULL,
+            updated_at             TEXT NOT NULL,
+            created_by_agent_id    TEXT,
+            CHECK (
+                (source_scope_kind = 'any' AND source_scope_value IS NULL)
+                OR (source_scope_kind != 'any' AND source_scope_value IS NOT NULL)
+            ),
+            CHECK (
+                (target_rule = 'source' AND target_value IS NULL)
+                OR (target_rule != 'source' AND target_value IS NOT NULL)
+            ),
+            CHECK (
+                (master_rule = 'auto' AND master_value IS NULL)
+                OR (master_rule = 'explicit' AND master_value IS NOT NULL)
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_routes_created_at_route_id
+            ON routes (created_at, route_id)
+        """
+    )
+
+    # ─────────────────────────────────────────────────────────────────
+    # Part 2: extend message_queue with three columns (idempotent)
+    # ─────────────────────────────────────────────────────────────────
+    existing_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(message_queue)").fetchall()
+    }
+    if "origin" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE message_queue "
+            "ADD COLUMN origin TEXT NOT NULL DEFAULT 'direct' "
+            "CHECK (origin IN ('direct', 'route'))"
+        )
+    if "route_id" not in existing_cols:
+        conn.execute("ALTER TABLE message_queue ADD COLUMN route_id TEXT")
+    if "event_id" not in existing_cols:
+        conn.execute("ALTER TABLE message_queue ADD COLUMN event_id INTEGER")
+
+    # ─────────────────────────────────────────────────────────────────
+    # Part 3: partial UNIQUE index for duplicate-routing defense
+    # ─────────────────────────────────────────────────────────────────
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_message_queue_route_event
+            ON message_queue (route_id, event_id)
+            WHERE origin = 'route'
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
     3: _apply_migration_v3,
@@ -660,6 +768,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _apply_migration_v5,
     6: _apply_migration_v6,
     7: _apply_migration_v7,
+    8: _apply_migration_v8,
 }
 
 
@@ -746,6 +855,7 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
     _apply_migration_v5(conn)
     _apply_migration_v6(conn)
     _apply_migration_v7(conn)
+    _apply_migration_v8(conn)
 
 
 def _chmod_new_companions(

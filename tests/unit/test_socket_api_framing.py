@@ -113,9 +113,24 @@ def test_closed_code_set_contains_feat002_through_feat009_codes() -> None:
         errors.TERMINAL_STATE_CANNOT_CHANGE,
     }
     assert feat009 <= errors.CLOSED_CODE_SET
+
+    # FEAT-010 additions (specs/010-event-routes-arbitration/contracts/error-codes.md §1).
+    feat010 = {
+        errors.QUEUE_ORIGIN_INVALID,
+        errors.ROUTE_CREATION_FAILED,
+        errors.ROUTE_EVENT_TYPE_INVALID,
+        errors.ROUTE_ID_NOT_FOUND,
+        errors.ROUTE_MASTER_RULE_INVALID,
+        errors.ROUTE_SOURCE_SCOPE_INVALID,
+        errors.ROUTE_TARGET_RULE_INVALID,
+        errors.ROUTE_TEMPLATE_INVALID,
+    }
+    assert feat010 <= errors.CLOSED_CODE_SET
+
     # No surprise codes beyond the documented sets.
     assert errors.CLOSED_CODE_SET == (
-        feat002 | feat003 | feat004 | feat006 | feat007 | feat008 | feat009
+        feat002 | feat003 | feat004 | feat006 | feat007 | feat008
+        | feat009 | feat010
     )
 
 

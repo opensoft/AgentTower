@@ -51,6 +51,13 @@ EXPECTED_ORDER = [
     "routing.enable",
     "routing.disable",
     "routing.status",
+    # FEAT-010 (T030 — operator-facing routes.* CRUD).
+    "routes.add",
+    "routes.list",
+    "routes.show",
+    "routes.remove",
+    "routes.enable",
+    "routes.disable",
 ]
 
 
@@ -58,5 +65,5 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_twentynine_entries() -> None:
-    assert len(DISPATCH) == 29
+def test_dispatch_table_is_exactly_thirtyfive_entries() -> None:
+    assert len(DISPATCH) == 35

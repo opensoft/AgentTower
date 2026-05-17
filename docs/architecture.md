@@ -544,11 +544,44 @@ checks, the global routing kill switch (`daemon_state.routing_enabled`),
 and tmux-safe paste-buffer delivery from master agents to eligible
 target agents (`slave` / `swarm`).
 
-Multi-master arbitration is built on top of that queue and is deferred
-to FEAT-010 — FEAT-009 supplies only the per-target FIFO primitive on
-which arbitration will later build. See FR-052 for the explicit
-non-goal and [`specs/009-safe-prompt-queue/`](../specs/009-safe-prompt-queue/)
-for the queue's contracts.
+**FEAT-010 (shipped)** turns the FEAT-008 event stream into a
+deterministic, auditable routing layer that feeds the FEAT-009 queue.
+Operators create durable route subscriptions via `agenttower route
+add` that map a FEAT-008 event-type filter to a target rule + master
+selection + template; the daemon's routing worker thread fires
+matching events through the existing FEAT-009 enqueue path (same
+permission gate, kill switch, per-target FIFO). Six new audit event
+types in `events.jsonl` make the full chain inspectable (`route_matched`
++ `route_skipped` + `route_created/updated/deleted` +
+`routing_worker_heartbeat`). `agenttower status` gains a `routing`
+section with route counts, last cycle, skips by reason, most-stalled
+route, and two independent degraded signals. See
+[`specs/010-event-routes-arbitration/`](../specs/010-event-routes-arbitration/)
+for the spec, plan, data model, and contracts.
+
+Key design properties:
+- **Single-threaded sequential worker** — one routing cycle in flight,
+  routes processed in `(created_at, route_id)` order — eliminates
+  intra-cycle race nondeterminism (Clarifications Q4).
+- **Cursor-advance-with-enqueue atomicity** + UNIQUE `(route_id,
+  event_id)` partial index — no duplicate routing across crashes
+  (FR-012 + FR-030, validated by SC-004).
+- **Deterministic lex-lowest arbitration** when `master_rule=auto`
+  (FR-017, validated by SC-002 at 100% over N=100 fires).
+- **Conservative no-auto-deliver** — when no master is eligible OR
+  target resolution fails OR template render fails, the route emits
+  `route_skipped(reason=…)` with one of 10 closed-set reasons and
+  advances the cursor; no queue row is created.
+- **Heartbeat thread** — separate daemon thread emits one
+  `routing_worker_heartbeat` JSONL line every 60s regardless of
+  cycle activity (FR-039a + Clarifications Q3).
+
+Multi-master arbitration *prompts* (the §17 "send the other master's
+prompt to the requesting master and ask queue-next/delay/cancel"
+behavior described below) remain OUT OF SCOPE for FEAT-010 MVP —
+FEAT-010 ships the deterministic-winner primitive only. Swarm-member
+parsing (also originally part of the FEAT-010 envelope per
+`docs/mvp-feature-sequence.md`) is deferred to a follow-up feature.
 
 Multiple masters may address the same slave. AgentTower serializes messages per
 target pane, but it does not enforce exclusive ownership.

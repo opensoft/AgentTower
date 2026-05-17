@@ -94,17 +94,30 @@ class QueueRow:
     operator_action: str | None
     operator_action_at: str | None
     operator_action_by: str | None
+    # FEAT-010 route-tagging columns (data-model.md §2). Defaults match
+    # the schema v8 backward-compat contract: every direct-send row
+    # (origin='direct') has NULL route_id / event_id.
+    origin: str = "direct"
+    route_id: str | None = None
+    event_id: int | None = None
 
 
 @dataclass(frozen=True)
 class QueueListFilter:
-    """Filters for :meth:`MessageQueueDao.list_rows` (FR-031)."""
+    """Filters for :meth:`MessageQueueDao.list_rows` (FR-031).
+
+    FEAT-010 extension: ``origin`` filters to direct-send OR
+    route-generated rows per FR-033 / contracts/cli-queue-origin.md.
+    ``None`` (the default) returns both origins.
+    """
 
     state: str | None = None
     target_agent_id: str | None = None
     sender_agent_id: str | None = None
     since: str | None = None  # canonical ISO 8601 ms UTC (FR-012b)
     limit: int | None = 100  # default 100, max 1000
+    # FEAT-010 — closed set: 'direct' | 'route' | None.
+    origin: str | None = None
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -186,7 +199,9 @@ _QUEUE_COLUMNS = (
     "enqueued_at, delivery_attempt_started_at, "
     "delivered_at, failed_at, canceled_at, "
     "last_updated_at, "
-    "operator_action, operator_action_at, operator_action_by"
+    "operator_action, operator_action_at, operator_action_by, "
+    # FEAT-010 route-tagging columns (data-model.md §2).
+    "origin, route_id, event_id"
 )
 
 
@@ -217,6 +232,12 @@ def _row_to_queue_row(row: tuple) -> QueueRow:
         operator_action=row[22],
         operator_action_at=row[23],
         operator_action_by=row[24],
+        # FEAT-010 route-tagging columns. The schema v8 migration sets
+        # origin='direct' as the DEFAULT, so pre-FEAT-010 rows decode
+        # cleanly without code changes anywhere else.
+        origin=row[25],
+        route_id=row[26],
+        event_id=(int(row[27]) if row[27] is not None else None),
     )
 
 
@@ -275,6 +296,13 @@ class MessageQueueDao:
         envelope_size_bytes: int,
         enqueued_at: str,
         audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+        # FEAT-010 route-tagging (data-model.md §2 + plan §R7). Defaults
+        # match the FEAT-009 direct-send contract; the FEAT-010 worker
+        # passes ``origin='route'`` + non-NULL route_id/event_id via the
+        # service-layer ``enqueue_route_message`` entry point.
+        origin: str = "direct",
+        route_id: str | None = None,
+        event_id: int | None = None,
     ) -> Any:
         """Insert a new row in state ``queued`` (FR-019 happy path).
 
@@ -303,8 +331,9 @@ class MessageQueueDao:
                         target_agent_id, target_label, target_role, target_capability,
                         target_container_id, target_pane_id,
                         envelope_body, envelope_body_sha256, envelope_size_bytes,
-                        enqueued_at, last_updated_at
-                    ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        enqueued_at, last_updated_at,
+                        origin, route_id, event_id
+                    ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         message_id,
@@ -315,6 +344,7 @@ class MessageQueueDao:
                         target["container_id"], target["pane_id"],
                         envelope_body, envelope_body_sha256, envelope_size_bytes,
                         enqueued_at, enqueued_at,
+                        origin, route_id, event_id,
                     ),
                 )
                 result = audit_callback(self._conn) if audit_callback else None
@@ -338,6 +368,13 @@ class MessageQueueDao:
         enqueued_at: str,
         block_reason: str,
         audit_callback: Callable[[sqlite3.Connection], Any] | None = None,
+        # FEAT-010 route-tagging (data-model.md §2). Same defaults as
+        # ``insert_queued`` — direct-send rows pass ``'direct'``/None/None;
+        # the FEAT-010 worker passes ``origin='route'`` + non-NULL
+        # route_id/event_id when the kill switch is off (Story 5 #1).
+        origin: str = "direct",
+        route_id: str | None = None,
+        event_id: int | None = None,
     ) -> Any:
         """Insert a new row in state ``blocked`` (FR-020) with the
         FR-019 first-failing-step ``block_reason``.
@@ -359,8 +396,9 @@ class MessageQueueDao:
                         target_agent_id, target_label, target_role, target_capability,
                         target_container_id, target_pane_id,
                         envelope_body, envelope_body_sha256, envelope_size_bytes,
-                        enqueued_at, last_updated_at
-                    ) VALUES (?, 'blocked', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        enqueued_at, last_updated_at,
+                        origin, route_id, event_id
+                    ) VALUES (?, 'blocked', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         message_id, block_reason,
@@ -371,6 +409,7 @@ class MessageQueueDao:
                         target["container_id"], target["pane_id"],
                         envelope_body, envelope_body_sha256, envelope_size_bytes,
                         enqueued_at, enqueued_at,
+                        origin, route_id, event_id,
                     ),
                 )
                 result = audit_callback(self._conn) if audit_callback else None
@@ -976,6 +1015,16 @@ class MessageQueueDao:
         if filters.since is not None:
             clauses.append("enqueued_at >= ?")
             params.append(filters.since)
+        if filters.origin is not None:
+            # FEAT-010 / FR-033 — closed set guarded by the CLI layer
+            # (queue_origin_invalid); defense-in-depth check here.
+            if filters.origin not in ("direct", "route"):
+                raise ValueError(
+                    f"origin filter {filters.origin!r} must be "
+                    "'direct' or 'route'"
+                )
+            clauses.append("origin = ?")
+            params.append(filters.origin)
         where = " AND ".join(clauses) if clauses else "1=1"
         limit = filters.limit if filters.limit is not None else 100
         limit = max(1, min(limit, 1000))
