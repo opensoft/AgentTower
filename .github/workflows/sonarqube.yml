@@ -1,0 +1,114 @@
+name: SonarQube
+
+# CI-based SonarQube integration. Runs pytest with coverage, then
+# pushes results + analysis to whatever Sonar instance is configured
+# via repository secrets / variables.
+#
+# This workflow is the project's ONLY path for Sonar reporting — the
+# SonarCloud / SonarQube GitHub App is intentionally NOT installed.
+# The scanner uses GitHub Actions' built-in PR-context env vars
+# (GITHUB_*) plus a long-lived SONAR_TOKEN to push PR decoration
+# directly. No third-party app needs repo access.
+#
+# Required repository configuration:
+#
+#   Secrets:
+#     SONAR_TOKEN          User token from the Sonar instance (Account
+#                          → Security → Generate Tokens). Needs at
+#                          least "Execute Analysis" on the project.
+#
+#   Variables (optional — defaults shown):
+#     SONAR_HOST_URL       Sonar server URL.
+#                          Default: https://sonarcloud.io
+#                          For self-hosted SonarQube, set the repo
+#                          variable to e.g. https://sonar.example.com.
+#
+# The workflow runs on:
+#   * push to main (sets the "main branch" baseline analysis)
+#   * any pull_request (PR mode — Sonar posts findings on the PR)
+#   * workflow_dispatch (manual re-run)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # pull-requests:write lets sonar-scanner's PR decoration post
+  # comments via the GitHub Actions OIDC token. Sonar's official
+  # action reads this scope when present.
+  pull-requests: write
+
+jobs:
+  analyze:
+    name: Coverage + Sonar analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Sonar needs full history for "since-last-commit" /
+          # new-code-detection blame.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + test extras
+        run: |
+          python -m pip install --upgrade pip
+          # The package's [test] extra carries pytest, jsonschema, and
+          # pytest-cov. Editable install so test imports resolve
+          # against the source tree.
+          python -m pip install -e '.[test]'
+
+      - name: Run unit tests with coverage
+        # Unit-only — the integration suite needs the `agenttower`
+        # console scripts on PATH (provided by the editable install)
+        # but ALSO an isolated daemon harness that spawns processes,
+        # which is too heavy + flaky for the main Sonar gate. The
+        # fresh-container E2E (tests/e2e/) is similarly out-of-scope
+        # for the gate.
+        run: |
+          python -m pytest tests/unit \
+            --cov \
+            --cov-report=xml \
+            --cov-report=term \
+            -q
+
+      - name: Upload coverage XML (artifact for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          # Long-lived analysis token. Add to the repo's secrets:
+          # Settings → Secrets and variables → Actions → New
+          # repository secret.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Sonar host URL. SonarCloud default works without setting
+          # this; for self-hosted, add a repo variable (Settings →
+          # Secrets and variables → Actions → Variables).
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL || 'https://sonarcloud.io' }}
+        with:
+          # The scanner reads sonar-project.properties from the repo
+          # root by default, including the project key, organization,
+          # source / test paths, and coverage report path.
+          # Override here if a per-workflow flag is needed.
+          args: >
+            -Dsonar.scm.provider=git

@@ -25,7 +25,48 @@ test = [
     # Upper-bound pinned to <5 so a major-version bump can't silently
     # break CI (review CRIT #2).
     "jsonschema>=4,<5",
+    # SonarQube CI: coverage.xml feeds sonar.python.coverage.reportPaths.
+    "pytest-cov>=4,<6",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agenttower"]
+
+# ──────────────────────────────────────────────────────────────────────
+# pytest + coverage configuration (used by CI; opt-in locally)
+# ──────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+# Default test selection — keeps `pytest` (no args) behavior unchanged
+# from FEAT-001..008. CI passes explicit paths when it needs to scope
+# the run (e.g., unit-only for the SonarQube workflow).
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["src/agenttower"]
+branch = true
+# Omit files whose coverage signal is dominated by import-time side
+# effects or tight platform branches that can't be reached in unit
+# tests (the integration suite covers them).
+omit = [
+    "src/agenttower/daemon.py",
+    "src/agenttower/tmux/subprocess_adapter.py",
+]
+
+[tool.coverage.report]
+# Report missing lines and skip 100%-covered files in the summary
+# table to keep the CI log readable.
+show_missing = true
+skip_covered = true
+# Match the existing constitution — no third-party runtime deps means
+# coverage is over stdlib + agenttower code; no "exclude_lines" tuning
+# needed for typing-only / TYPE_CHECKING blocks (they're rare here).
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
