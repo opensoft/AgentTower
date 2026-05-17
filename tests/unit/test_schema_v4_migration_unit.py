@@ -139,6 +139,11 @@ def test_v3_to_current_preserves_feat001_through_feat004_tables(tmp_path: Path) 
         "idx_message_queue_sender_enqueued",
         "idx_message_queue_in_flight",
         "daemon_state",
+        # FEAT-010 artifacts (routes table + 2 indexes — the partial UNIQUE
+        # is on FEAT-009's message_queue table, not a FEAT-001..004 table).
+        "routes",
+        "idx_routes_created_at_route_id",
+        "idx_message_queue_route_event",
         # SQLite metadata: AUTOINCREMENT requires sqlite_sequence (v7 events
         # rebuild adds it because events.event_id is INTEGER PRIMARY KEY
         # AUTOINCREMENT).

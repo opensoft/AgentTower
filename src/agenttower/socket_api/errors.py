@@ -101,6 +101,17 @@ TARGET_PANE_MISSING: Final[str] = "target_pane_missing"
 TARGET_ROLE_NOT_PERMITTED: Final[str] = "target_role_not_permitted"
 TERMINAL_STATE_CANNOT_CHANGE: Final[str] = "terminal_state_cannot_change"
 
+# FEAT-010 additions (specs/010-event-routes-arbitration/contracts/error-codes.md §1).
+# Eight new CLI / socket error codes for route catalog CRUD + queue --origin filter.
+QUEUE_ORIGIN_INVALID: Final[str] = "queue_origin_invalid"
+ROUTE_CREATION_FAILED: Final[str] = "route_creation_failed"
+ROUTE_EVENT_TYPE_INVALID: Final[str] = "route_event_type_invalid"
+ROUTE_ID_NOT_FOUND: Final[str] = "route_id_not_found"
+ROUTE_MASTER_RULE_INVALID: Final[str] = "route_master_rule_invalid"
+ROUTE_SOURCE_SCOPE_INVALID: Final[str] = "route_source_scope_invalid"
+ROUTE_TARGET_RULE_INVALID: Final[str] = "route_target_rule_invalid"
+ROUTE_TEMPLATE_INVALID: Final[str] = "route_template_invalid"
+
 CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
     {
         BAD_JSON,
@@ -178,6 +189,15 @@ CLOSED_CODE_SET: Final[frozenset[str]] = frozenset(
         TARGET_PANE_MISSING,
         TARGET_ROLE_NOT_PERMITTED,
         TERMINAL_STATE_CANNOT_CHANGE,
+        # FEAT-010 (contracts/error-codes.md §1).
+        QUEUE_ORIGIN_INVALID,
+        ROUTE_CREATION_FAILED,
+        ROUTE_EVENT_TYPE_INVALID,
+        ROUTE_ID_NOT_FOUND,
+        ROUTE_MASTER_RULE_INVALID,
+        ROUTE_SOURCE_SCOPE_INVALID,
+        ROUTE_TARGET_RULE_INVALID,
+        ROUTE_TEMPLATE_INVALID,
     }
 )
 
