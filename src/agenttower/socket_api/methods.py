@@ -176,6 +176,13 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "last_failure_exc_class": audit_writer.last_failure_exc_class,
         }
 
+    # FEAT-010 — status `routing` section (FR-038 + Clarifications Q3).
+    # MERGED into the same `routing` JSON object as the FEAT-009
+    # kill-switch state per contracts/cli-status-routing.md "Backward
+    # compatibility": operators conceptualize "routing" as one
+    # subsystem.
+    _extend_routing_block_with_feat010(routing_block, ctx)
+
     return errors.make_ok(
         {
             "alive": True,
@@ -192,6 +199,81 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "queue_audit": queue_audit_block,
         }
     )
+
+
+def _extend_routing_block_with_feat010(
+    routing_block: dict[str, Any], ctx: DaemonContext,
+) -> None:
+    """Mutate ``routing_block`` in place with FEAT-010 fields per
+    contracts/cli-status-routing.md.
+
+    All fields default to a not-running shape when the FEAT-010
+    wiring isn't installed (defensive — production boot always wires
+    it; this keeps unit tests of the FEAT-009 `status` surface
+    working without forcing every test fixture to instantiate the
+    FEAT-010 stack).
+    """
+    shared = getattr(ctx, "routing_shared_state", None)
+    audit = getattr(ctx, "routing_audit_writer", None)
+    routes_svc = getattr(ctx, "routes_service", None)
+
+    if shared is None or audit is None or routes_svc is None:
+        routing_block.update({
+            "routes_total": 0,
+            "routes_enabled": 0,
+            "routes_disabled": 0,
+            "last_routing_cycle_at": None,
+            "events_consumed_total": 0,
+            "skips_by_reason": {},
+            "most_stalled_route": None,
+            "routing_worker_degraded": False,
+            "degraded_routing_audit_persistence": False,
+        })
+        return
+
+    # Snapshot shared state under lock — counters are mutated by the
+    # worker on every cycle (data-model.md §4).
+    with shared.lock:
+        last_cycle = shared.last_routing_cycle_at
+        events_consumed_total = shared.events_consumed_total
+        skips_by_reason = dict(shared.skips_by_reason)
+        worker_degraded = shared.routing_worker_degraded
+
+    # Route counts + most_stalled_route — short-lived read connection.
+    # The routes_service was constructed with its own conn_factory at
+    # daemon boot; reuse that rather than re-resolving paths here.
+    import sqlite3
+    from ..routing.routes_service import compute_most_stalled, compute_route_counts
+    conn = routes_svc._conn_factory()  # short-lived read conn
+    try:
+        total, enabled, disabled = compute_route_counts(conn)
+        stalled = compute_most_stalled(conn)
+    finally:
+        conn.close()
+
+    most_stalled_payload: dict[str, Any] | None
+    if stalled is None:
+        most_stalled_payload = None
+    else:
+        most_stalled_payload = {
+            "route_id": stalled.route_id,
+            "lag": stalled.lag,
+        }
+
+    routing_block.update({
+        "routes_total": total,
+        "routes_enabled": enabled,
+        "routes_disabled": disabled,
+        "last_routing_cycle_at": last_cycle,
+        "events_consumed_total": events_consumed_total,
+        "skips_by_reason": skips_by_reason,
+        "most_stalled_route": most_stalled_payload,
+        "routing_worker_degraded": worker_degraded,
+        # Per data-model.md §4-§5: this flag is derived at read time
+        # from the audit buffer's pending-flush state — independent of
+        # worker degradation.
+        "degraded_routing_audit_persistence": bool(audit.has_pending()),
+    })
 
 
 def _shutdown(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER_UID) -> dict[str, Any]:

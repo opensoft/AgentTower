@@ -433,7 +433,50 @@ def _status_command(args: argparse.Namespace) -> int:
         print(f"uptime_seconds={result.get('uptime_seconds')}")
         print(f"socket_path={result.get('socket_path')}")
         print(f"state_path={result.get('state_path')}")
+        # FEAT-010 T057 — routing section per
+        # contracts/cli-status-routing.md "Human-format output".
+        routing = result.get("routing") or {}
+        if "routes_total" in routing:
+            _render_status_routing_block(routing)
     return 0
+
+
+def _render_status_routing_block(routing: dict[str, Any]) -> None:
+    """Emit the FEAT-010 routing-section human-format block."""
+    print("Routing:")
+    print(
+        f"  Routes: {routing.get('routes_total', 0)} total "
+        f"({routing.get('routes_enabled', 0)} enabled, "
+        f"{routing.get('routes_disabled', 0)} disabled)"
+    )
+    print(f"  Last cycle: {routing.get('last_routing_cycle_at')}")
+    print(
+        f"  Events consumed (since start): "
+        f"{routing.get('events_consumed_total', 0)}"
+    )
+    skips = routing.get("skips_by_reason") or {}
+    if skips:
+        print("  Skips by reason:")
+        for reason, count in sorted(skips.items()):
+            print(f"    {reason}: {count}")
+    else:
+        print("  Skips by reason: (none)")
+    most_stalled = routing.get("most_stalled_route")
+    if most_stalled is None:
+        print("  Most stalled: (none)")
+    else:
+        print(
+            f"  Most stalled: {most_stalled['route_id']} "
+            f"(lag={most_stalled['lag']})"
+        )
+    print(
+        f"  Worker degraded: "
+        f"{str(routing.get('routing_worker_degraded', False)).lower()}"
+    )
+    print(
+        f"  Audit buffer degraded: "
+        f"{str(routing.get('degraded_routing_audit_persistence', False)).lower()}"
+    )
 
 
 def _stop_daemon(args: argparse.Namespace) -> int:

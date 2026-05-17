@@ -439,18 +439,21 @@ def _build_feat010_services(
     *,
     paths: Paths,
     queue_service: object,
-) -> tuple[object, object, object, object]:
-    """Construct FEAT-010 routing-worker stack + spawn the worker thread.
+) -> tuple[object, object, object, object, object]:
+    """Construct FEAT-010 routing-worker stack + spawn the worker AND
+    heartbeat threads.
 
-    Returns ``(routes_service, routes_audit, shared_state, worker_thread)``.
-    The worker thread is ALREADY RUNNING when this function returns —
-    the caller only owns ``worker_thread.stop()`` on shutdown.
+    Returns ``(routes_service, routes_audit, shared_state,
+    worker_thread, heartbeat_thread)``. Both threads are ALREADY
+    RUNNING when this function returns — the caller owns
+    ``worker_thread.stop()`` + ``heartbeat_shutdown.set()`` +
+    ``heartbeat_thread.join()`` on shutdown.
 
     Spawn order (plan §Implementation Invariants §1): the routing
     worker is spawned AFTER the FEAT-009 delivery worker (caller
     contract) so on shutdown the inverse order — routing worker
-    first, delivery worker second — preserves the no-new-rows-during-
-    drain invariant.
+    first, then heartbeat, then delivery worker — preserves the
+    no-new-rows-during-drain invariant.
     """
     import threading as _threading
 
@@ -461,6 +464,7 @@ def _build_feat010_services(
         RoutingEventReader,
         RoutingWorkerThread,
     )
+    from .routing.heartbeat import HeartbeatEmitter
     from .routing.routes_audit import RoutesAuditWriter
     from .routing.routes_service import RoutesService
     from .routing.worker import RoutingWorker, _SharedRoutingState
@@ -501,7 +505,31 @@ def _build_feat010_services(
     worker_thread = RoutingWorkerThread(worker, name="agenttower-routing")
     worker_thread.start()
 
-    return routes_service, audit_writer, shared_state, worker_thread
+    # Heartbeat is a SEPARATE thread per Clarifications Q3 + plan
+    # §1: a long routing cycle never delays the heartbeat, and a slow
+    # JSONL write never delays the routing cycle.
+    heartbeat_shutdown = _threading.Event()
+    heartbeat_emitter = HeartbeatEmitter(
+        audit_emitter=audit_writer,
+        shared_state=shared_state,
+        events_file=paths.events_file,
+        shutdown_event=heartbeat_shutdown,
+    )
+    heartbeat_thread = _threading.Thread(
+        target=heartbeat_emitter.run,
+        name="agenttower-heartbeat",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+
+    # Wrap the heartbeat with a stop()-style API so the daemon's
+    # shutdown sequence can treat it uniformly with the worker.
+    class _HeartbeatHandle:
+        def stop(self, *, timeout: float | None = None) -> None:
+            heartbeat_shutdown.set()
+            heartbeat_thread.join(timeout=timeout if timeout is not None else 5.0)
+
+    return routes_service, audit_writer, shared_state, worker_thread, _HeartbeatHandle()
 
 
 class _NullContainerPaneLookup:
@@ -816,6 +844,7 @@ def _run(args: argparse.Namespace) -> int:
         worker_conn = None
         delivery_worker = None
         routing_worker_thread = None
+        routing_heartbeat_handle = None
         try:
             # FEAT-009 T048 — instantiate the queue/routing/delivery
             # services, run the FR-040 recovery pass synchronously,
@@ -842,12 +871,14 @@ def _run(args: argparse.Namespace) -> int:
             # worker is running (plan §Implementation Invariants §1).
             # The worker reads enabled routes on each cycle and fires
             # them through the existing queue_service.enqueue_route_message
-            # path; FEAT-009 plumbing handles the rest.
+            # path; FEAT-009 plumbing handles the rest. T054: also
+            # spawns the heartbeat thread.
             (
                 routes_service,
                 routes_audit_writer,
                 routing_shared_state,
                 routing_worker_thread,
+                routing_heartbeat_handle,
             ) = _build_feat010_services(
                 paths=paths,
                 queue_service=queue_service,
@@ -897,10 +928,16 @@ def _run(args: argparse.Namespace) -> int:
             #
             # Shutdown ordering per plan §Implementation Invariants §1:
             # routing worker stops FIRST (no new route-generated rows),
-            # then the FEAT-009 delivery worker drains.
+            # then the heartbeat thread, then the FEAT-009 delivery
+            # worker drains.
             if routing_worker_thread is not None:
                 try:
                     routing_worker_thread.stop()
+                except Exception:  # pragma: no cover — defensive
+                    pass
+            if routing_heartbeat_handle is not None:
+                try:
+                    routing_heartbeat_handle.stop()
                 except Exception:  # pragma: no cover — defensive
                     pass
             if delivery_worker is not None:

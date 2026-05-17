@@ -106,6 +106,75 @@ class RouteRuntime:
     last_skip_at: str | None
 
 
+@dataclass(frozen=True)
+class StalledRoute:
+    """One enabled route's lag — emitted by :func:`compute_most_stalled`
+    when at least one enabled route has unconsumed matching events.
+
+    ``lag`` is the count of events ``WHERE event_id > cursor AND
+    event_type = route.event_type`` for the route's selector. Higher
+    is more-stalled.
+    """
+
+    route_id: str
+    lag: int
+
+
+def compute_most_stalled(conn) -> StalledRoute | None:
+    """Per-enabled-route lag computation for the ``most_stalled_route``
+    JSON field on ``agenttower status`` (FR-038 + contracts/cli-status-routing.md).
+
+    Returns the enabled route with the largest lag, OR ``None`` when
+    every enabled route's lag is 0 (no backlog anywhere). Disabled
+    routes are EXCLUDED — a deliberately-paused route is not "stalled"
+    per contracts/cli-status-routing.md "Lag-computation with disabled
+    routes".
+
+    Tie-break per contracts/cli-status-routing.md: ``(created_at,
+    route_id)`` of the route row (matches the routing worker's
+    FR-042 processing order).
+
+    Complexity: one indexed scan per enabled route. At MVP scale
+    (1000 routes, 100K events post-cursor) total cost ≈ 1000 ×
+    O(log N + M) which is well under SC-006's 500 ms budget (per
+    plan §Performance Addendum).
+    """
+    routes = routes_dao.list_routes(conn, enabled_only=True)
+    if not routes:
+        return None
+
+    leader: StalledRoute | None = None
+    for route in routes:
+        # Routes are pre-sorted by (created_at ASC, route_id ASC),
+        # so the FIRST route to claim a given lag wins the tie.
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM events "
+            "WHERE event_id > ? AND event_type = ?",
+            (int(route.last_consumed_event_id), route.event_type),
+        )
+        (count,) = cur.fetchone()
+        lag = int(count or 0)
+        if lag <= 0:
+            continue
+        if leader is None or lag > leader.lag:
+            leader = StalledRoute(route_id=route.route_id, lag=lag)
+    return leader
+
+
+def compute_route_counts(conn) -> tuple[int, int, int]:
+    """Return ``(total, enabled, disabled)`` for the routes table.
+    Used by the ``agenttower status`` ``routing`` JSON section."""
+    row = conn.execute(
+        "SELECT "
+        "  COUNT(*) AS total, "
+        "  COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled "
+        "FROM routes"
+    ).fetchone()
+    total = int(row[0] or 0)
+    enabled = int(row[1] or 0)
+    return total, enabled, total - enabled
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Shared-state Protocol (avoid hard import of worker module)
 # ──────────────────────────────────────────────────────────────────────
