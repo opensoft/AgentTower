@@ -37,7 +37,11 @@ import logging
 import re
 from typing import Any, Callable, Final, Mapping
 
-from agenttower.routing.envelope import BodyValidationError, validate_body
+from agenttower.routing.envelope import (
+    DEFAULT_ENVELOPE_BODY_MAX_BYTES,
+    BodyValidationError,
+    validate_body,
+)
 from agenttower.routing.excerpt import render_excerpt
 from agenttower.routing.route_errors import (
     BODY_EMPTY,
@@ -242,5 +246,19 @@ def render_template(
             sub_reason,
             f"rendered body failed FEAT-009 validation: {exc}",
         ) from exc
+
+    # Step 4: enforce the FEAT-009 envelope-body size cap per plan §1
+    # (validate_body checks UTF-8 / NUL / chars but NOT size — size is
+    # enforced at the envelope-serialization step in FEAT-009's
+    # send_input). For FEAT-010 we apply it here so the worker's
+    # template-render path surfaces oversized rendering as
+    # ``body_too_large`` BEFORE the FEAT-009 enqueue call, matching
+    # the closed-set sub-reason contract (contracts/error-codes.md §3).
+    if len(body_bytes) > DEFAULT_ENVELOPE_BODY_MAX_BYTES:
+        raise RouteTemplateRenderError(
+            BODY_TOO_LARGE,
+            f"rendered body {len(body_bytes)} bytes exceeds "
+            f"DEFAULT_ENVELOPE_BODY_MAX_BYTES {DEFAULT_ENVELOPE_BODY_MAX_BYTES}",
+        )
 
     return body_bytes
