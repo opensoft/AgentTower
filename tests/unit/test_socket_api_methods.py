@@ -100,6 +100,13 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "routing.enable",
         "routing.disable",
         "routing.status",
+        # FEAT-010 — routes.* CRUD (T030).
+        "routes.add",
+        "routes.list",
+        "routes.show",
+        "routes.remove",
+        "routes.enable",
+        "routes.disable",
     }
 
 

@@ -1070,6 +1070,12 @@ def _build_parser() -> argparse.ArgumentParser:
         op.add_argument("--json", action="store_true", help=JSON_LINE_HELP)
         op.set_defaults(_handler=_routing_command_factory(op_name))
 
+    # ------------------------------------------------------------------ #
+    # FEAT-010 — `agenttower route` (T032)
+    # ------------------------------------------------------------------ #
+    from .routing.cli_routes import register as _register_route_subcommands
+    _register_route_subcommands(subparsers)
+
     return parser
 
 

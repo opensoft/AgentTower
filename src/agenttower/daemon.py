@@ -537,6 +537,10 @@ def _build_context(
     queue_audit_writer: object | None = None,
     message_queue_dao: object | None = None,
     daemon_state_dao: object | None = None,
+    routes_service: object | None = None,
+    routing_worker_thread: object | None = None,
+    routing_audit_writer: object | None = None,
+    routing_shared_state: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -562,6 +566,10 @@ def _build_context(
         queue_audit_writer=queue_audit_writer,
         message_queue_dao=message_queue_dao,
         daemon_state_dao=daemon_state_dao,
+        routes_service=routes_service,
+        routing_worker_thread=routing_worker_thread,
+        routing_audit_writer=routing_audit_writer,
+        routing_shared_state=routing_shared_state,
     )
 
 
@@ -863,6 +871,10 @@ def _run(args: argparse.Namespace) -> int:
                 queue_audit_writer=audit_writer,
                 message_queue_dao=message_queue_dao,
                 daemon_state_dao=daemon_state_dao,
+                routes_service=routes_service,
+                routing_worker_thread=routing_worker_thread,
+                routing_audit_writer=routes_audit_writer,
+                routing_shared_state=routing_shared_state,
             )
 
             server = _bind_control_server(paths, ctx, logger)
