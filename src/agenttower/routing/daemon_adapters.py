@@ -46,6 +46,9 @@ __all__ = [
     "RegistryAgentsLookup",
     "DiscoveryContainerPaneLookup",
     "RegistryDeliveryContextResolver",
+    "RoutingAgentsAdapter",
+    "RoutingEventReader",
+    "RoutingWorkerThread",
 ]
 
 
@@ -188,3 +191,120 @@ class RegistryDeliveryContextResolver:
             socket_path=socket_path,
             pane_id=row.target_pane_id,
         )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# FEAT-010 routing-worker adapters (T025)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class RoutingAgentsAdapter:
+    """FEAT-006 registry adapter exposing the worker's ``AgentsService``
+    Protocol surface (specs/010-event-routes-arbitration/.../worker.py).
+
+    Each method opens a short-lived connection — keeps the worker's
+    per-event transactions independent of long-held adapter
+    connections (mirrors the pattern in :class:`RegistryAgentsLookup`).
+    """
+
+    def __init__(self, connection_factory: Callable[[], sqlite3.Connection]) -> None:
+        self._connection_factory = connection_factory
+
+    def list_active_masters(self) -> list[AgentRecord]:
+        conn = self._connection_factory()
+        try:
+            return list_agents(conn, role=["master"], active_only=True)
+        finally:
+            conn.close()
+
+    def get_agent_by_id(self, agent_id: str) -> AgentRecord | None:
+        conn = self._connection_factory()
+        try:
+            return select_agent_by_id(conn, agent_id=agent_id)
+        finally:
+            conn.close()
+
+    def list_active_by_role(
+        self, role: str, capability: str | None = None,
+    ) -> list[AgentRecord]:
+        conn = self._connection_factory()
+        try:
+            rows = list_agents(conn, role=[role], active_only=True)
+        finally:
+            conn.close()
+        if capability is None:
+            return rows
+        return [r for r in rows if r.capability == capability]
+
+
+class RoutingEventReader:
+    """FEAT-008 events-table adapter exposing the worker's ``EventReader``
+    Protocol — simple
+    ``WHERE event_id > cursor AND event_type = ? ORDER BY event_id LIMIT N``
+    query (per-cycle event scan, FR-010).
+    """
+
+    def select_events_after_cursor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        cursor: int,
+        event_type: str,
+        limit: int,
+    ) -> list["EventRowSnapshot"]:
+        from agenttower.routing.worker import EventRowSnapshot
+
+        rows = conn.execute(
+            """
+            SELECT event_id, event_type, agent_id, excerpt, observed_at
+              FROM events
+             WHERE event_id > ?
+               AND event_type = ?
+             ORDER BY event_id ASC
+             LIMIT ?
+            """,
+            (cursor, event_type, limit),
+        ).fetchall()
+        return [
+            EventRowSnapshot(
+                event_id=int(r[0]),
+                event_type=r[1],
+                source_agent_id=r[2],
+                excerpt=r[3],
+                observed_at=r[4],
+            )
+            for r in rows
+        ]
+
+
+class RoutingWorkerThread:
+    """Owns the :class:`RoutingWorker` + its daemon thread + shutdown
+    plumbing. Mirrors the FEAT-009 :class:`DeliveryWorker` start/stop
+    contract so the daemon's startup + cleanup code can treat both
+    workers uniformly.
+    """
+
+    def __init__(self, worker: object, *, name: str = "routing-worker") -> None:
+        import threading as _threading
+        self._worker = worker
+        self._thread = _threading.Thread(
+            target=worker.run, name=name, daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self, *, timeout: float | None = None) -> None:
+        """Signal shutdown + join the thread.
+
+        ``timeout`` bounds the join (default: 5 × cycle_interval per
+        plan §Implementation Invariants §1). The worker's
+        :class:`threading.Event`-based ``wait`` returns immediately
+        when the shutdown event is set, so in-practice shutdown
+        latency is dominated by the in-flight event's processing.
+        """
+        # The worker reads shutdown_event before every cycle and
+        # between routes / events; we set it via the worker's own
+        # reference.
+        self._worker._shutdown_event.set()  # type: ignore[attr-defined]
+        self._thread.join(timeout=timeout if timeout is not None else 5.0)

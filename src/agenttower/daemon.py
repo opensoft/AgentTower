@@ -435,6 +435,75 @@ def _build_feat009_services(
     )
 
 
+def _build_feat010_services(
+    *,
+    paths: Paths,
+    queue_service: object,
+) -> tuple[object, object, object, object]:
+    """Construct FEAT-010 routing-worker stack + spawn the worker thread.
+
+    Returns ``(routes_service, routes_audit, shared_state, worker_thread)``.
+    The worker thread is ALREADY RUNNING when this function returns —
+    the caller only owns ``worker_thread.stop()`` on shutdown.
+
+    Spawn order (plan §Implementation Invariants §1): the routing
+    worker is spawned AFTER the FEAT-009 delivery worker (caller
+    contract) so on shutdown the inverse order — routing worker
+    first, delivery worker second — preserves the no-new-rows-during-
+    drain invariant.
+    """
+    import threading as _threading
+
+    # Local imports keep the daemon module's import graph independent
+    # of the FEAT-010 module tree during FEAT-001..009-only test runs.
+    from .routing.daemon_adapters import (
+        RoutingAgentsAdapter,
+        RoutingEventReader,
+        RoutingWorkerThread,
+    )
+    from .routing.routes_audit import RoutesAuditWriter
+    from .routing.routes_service import RoutesService
+    from .routing.worker import RoutingWorker, _SharedRoutingState
+
+    # Connection factory used by both the routing worker's adapters
+    # AND the routes service (CRUD). Short-lived per-call connections
+    # mirror the existing FEAT-009 adapter pattern.
+    def _routing_conn_factory() -> sqlite3.Connection:
+        return sqlite3.connect(
+            str(paths.state_db),
+            timeout=_SQLITE_DEFAULT_TIMEOUT_SECONDS,
+            isolation_level=None,
+        )
+
+    audit_writer = RoutesAuditWriter()
+    shared_state = _SharedRoutingState()
+    agents_adapter = RoutingAgentsAdapter(_routing_conn_factory)
+    event_reader = RoutingEventReader()
+
+    worker = RoutingWorker(
+        conn_factory=_routing_conn_factory,
+        agents_service=agents_adapter,
+        event_reader=event_reader,
+        queue_service=queue_service,
+        audit_writer=audit_writer,
+        events_file=paths.events_file,
+        shutdown_event=_threading.Event(),
+        shared_state=shared_state,
+    )
+
+    routes_service = RoutesService(
+        conn_factory=_routing_conn_factory,
+        audit_writer=audit_writer,
+        events_file=paths.events_file,
+        shared_state=shared_state,
+    )
+
+    worker_thread = RoutingWorkerThread(worker, name="agenttower-routing")
+    worker_thread.start()
+
+    return routes_service, audit_writer, shared_state, worker_thread
+
+
 class _NullContainerPaneLookup:
     """Inert :class:`ContainerPaneLookup` used when FEAT-003 / FEAT-004
     aren't wired (returns ``False`` for every check — every queued row
@@ -738,6 +807,7 @@ def _run(args: argparse.Namespace) -> int:
         # created AFTER _build_feat009_services returns.
         worker_conn = None
         delivery_worker = None
+        routing_worker_thread = None
         try:
             # FEAT-009 T048 — instantiate the queue/routing/delivery
             # services, run the FR-040 recovery pass synchronously,
@@ -758,6 +828,21 @@ def _run(args: argparse.Namespace) -> int:
                 paths=paths,
                 discovery_service=discovery_service,
                 pane_service=pane_service,
+            )
+
+            # FEAT-010 T025 — spawn routing worker AFTER delivery
+            # worker is running (plan §Implementation Invariants §1).
+            # The worker reads enabled routes on each cycle and fires
+            # them through the existing queue_service.enqueue_route_message
+            # path; FEAT-009 plumbing handles the rest.
+            (
+                routes_service,
+                routes_audit_writer,
+                routing_shared_state,
+                routing_worker_thread,
+            ) = _build_feat010_services(
+                paths=paths,
+                queue_service=queue_service,
             )
             ctx = _build_context(
                 paths=paths,
@@ -797,6 +882,15 @@ def _run(args: argparse.Namespace) -> int:
             # ``delivery_worker`` / ``worker_conn`` may still be None
             # if ``_build_feat009_services`` raised before assigning
             # them; skip in that case.
+            #
+            # Shutdown ordering per plan §Implementation Invariants §1:
+            # routing worker stops FIRST (no new route-generated rows),
+            # then the FEAT-009 delivery worker drains.
+            if routing_worker_thread is not None:
+                try:
+                    routing_worker_thread.stop()
+                except Exception:  # pragma: no cover — defensive
+                    pass
             if delivery_worker is not None:
                 try:
                     delivery_worker.stop()
