@@ -77,6 +77,25 @@ _ROUTING_AUDIT_EVENT_TYPES: Final[frozenset[str]] = frozenset({"routing_toggled"
 """Singleton routing-toggle audit event type (FR-046 + Contracts §socket-routing)."""
 
 
+_ROUTE_AUDIT_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "route_matched",
+        "route_skipped",
+        "route_created",
+        "route_updated",
+        "route_deleted",
+        "routing_worker_heartbeat",
+    }
+)
+"""Six FEAT-010 audit event types (specs/010-event-routes-arbitration/spec.md §FR-035 + §FR-039a).
+
+Disjoint from :data:`_QUEUE_AUDIT_EVENT_TYPES` (FEAT-009's seven
+``queue_message_*`` types) and :data:`_ROUTING_AUDIT_EVENT_TYPES`
+(FEAT-009's singleton ``routing_toggled``). The R-008 disjointness
+test verifies the union is unique.
+"""
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Failure-reason closed set (matches data-model §4.3 + spec FR-018)
 # ──────────────────────────────────────────────────────────────────────
@@ -265,6 +284,7 @@ __all__ = [
     # Audit event-type sets
     "_QUEUE_AUDIT_EVENT_TYPES",
     "_ROUTING_AUDIT_EVENT_TYPES",
+    "_ROUTE_AUDIT_EVENT_TYPES",
     "_FAILURE_REASONS",
     "_BLOCK_REASONS",
     # Exit-code map

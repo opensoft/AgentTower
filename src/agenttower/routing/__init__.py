@@ -18,6 +18,7 @@ from agenttower.agents.identifiers import HOST_OPERATOR_SENTINEL
 
 from .errors import (
     _QUEUE_AUDIT_EVENT_TYPES,
+    _ROUTE_AUDIT_EVENT_TYPES,
     _ROUTING_AUDIT_EVENT_TYPES,
     CLI_EXIT_CODE_MAP,
     OperatorPaneInactive,
@@ -78,6 +79,7 @@ __all__ = [
     "DEFAULT_DEGRADED_AUDIT_BUFFER_MAX_ROWS",
     "DEFAULT_SUBMIT_KEYSTROKE",
     "_QUEUE_AUDIT_EVENT_TYPES",
+    "_ROUTE_AUDIT_EVENT_TYPES",
     "_ROUTING_AUDIT_EVENT_TYPES",
     "CLI_EXIT_CODE_MAP",
     "cli_exit_code",

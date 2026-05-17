@@ -35,10 +35,9 @@ def _open_v7(tmp_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
-    conn.execute("INSERT INTO schema_version (version) VALUES (6)")
-    for v in (2, 3, 4, 5, 6):
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (schema.CURRENT_SCHEMA_VERSION,))
+    for v in range(2, schema.CURRENT_SCHEMA_VERSION + 1):
         schema._MIGRATIONS[v](conn)
-    schema._apply_migration_v7(conn)
     conn.commit()
     return conn
 

@@ -41,15 +41,22 @@ from agenttower.state import schema
 
 
 def _open_v7(tmp_path: Path) -> sqlite3.Connection:
-    """Create a fresh v7 DB and return a connection."""
+    """Create a fresh DB at the current head-of-tree schema and return
+    a connection.
+
+    Originally named ``_open_v7`` for FEAT-009; kept the name to avoid
+    a sweeping rename across this file's callers. After FEAT-010's
+    v7 → v8 bump, this fixture now opens at v8 (every test in this
+    file exercises the v8 message_queue surface, including the three
+    new ``origin`` / ``route_id`` / ``event_id`` columns).
+    """
     db = tmp_path / "state.sqlite3"
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
-    conn.execute("INSERT INTO schema_version (version) VALUES (6)")
-    for v in (2, 3, 4, 5, 6):
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (schema.CURRENT_SCHEMA_VERSION,))
+    for v in range(2, schema.CURRENT_SCHEMA_VERSION + 1):
         schema._MIGRATIONS[v](conn)
-    schema._apply_migration_v7(conn)
     conn.commit()
     return conn
 
@@ -758,3 +765,4 @@ def test_daemon_state_dao_write_rejects_invalid_value(tmp_path: Path) -> None:
         dao.write_routing_flag(
             "maybe", ts="2026-05-12T00:00:01.000Z", updated_by="host-operator"
         )
+
