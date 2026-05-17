@@ -66,11 +66,13 @@ from agenttower.routing import (
     arbitration,
     routes_dao,
     source_scope,
+    target_resolver,
     template,
 )
 from agenttower.routing.errors import (
     QueueServiceError,
     SqliteLockConflict,
+    TargetResolveError,
 )
 from agenttower.routing.route_errors import (
     NO_ELIGIBLE_TARGET,
@@ -151,6 +153,11 @@ class AgentsService(Protocol):
 
     Defined as a Protocol so tests can pass a thin in-memory mock
     without spinning up the full FEAT-006 AgentsService stack.
+
+    Structurally compatible with
+    :class:`agenttower.routing.target_resolver.AgentsLookup` so the
+    worker can delegate ``target_rule='explicit'`` resolution to the
+    shared :func:`target_resolver.resolve_target` helper (FR-021).
     """
 
     def list_active_masters(self) -> list[AgentRecord]:
@@ -162,6 +169,14 @@ class AgentsService(Protocol):
         """Lookup one agent by id (any role, any active state).
         Returns ``None`` on miss. Used for ``target_rule='source'``
         and ``target_rule='explicit'`` resolution."""
+
+    def find_agents_by_label(
+        self, label: str, *, only_active: bool = True,
+    ) -> list[AgentRecord]:
+        """Return every :class:`AgentRecord` whose ``label`` equals
+        ``label``. With ``only_active=True``, deregistered or inactive
+        agents are filtered out. Used by the FR-021 label-fallback
+        path inside ``target_rule='explicit'`` resolution."""
 
     def list_active_by_role(
         self, role: str, capability: str | None = None
@@ -549,10 +564,23 @@ class RoutingWorker:
 
         if rule == "explicit":
             assert value is not None
-            agent = self._agents.get_agent_by_id(value)
-            if agent is None:
-                raise _TargetResolveSkip("target_not_found")
-            return agent
+            # FR-021: resolve as agent_id first, then as label. Reuses
+            # the FEAT-009 :func:`target_resolver.resolve_target` so
+            # ``send-input`` and the routing worker share one
+            # resolution policy (id-shaped → id lookup; otherwise →
+            # label lookup, with ``only_active=True`` so a
+            # deregistered agent can't shadow the current owner).
+            # Ambiguous labels (multiple active matches) also fold
+            # into ``target_not_found`` — the routing-worker closed
+            # set has no separate ``target_label_ambiguous`` reason.
+            try:
+                return target_resolver.resolve_target(value, self._agents)
+            except TargetResolveError as exc:
+                _log.warning(
+                    "route %s target_value=%r resolution failed: %s",
+                    route.route_id, value, exc,
+                )
+                raise _TargetResolveSkip("target_not_found") from exc
 
         if rule == "source":
             # FR-022: source agent is the target.

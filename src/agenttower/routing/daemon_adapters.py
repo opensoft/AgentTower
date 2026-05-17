@@ -224,6 +224,19 @@ class RoutingAgentsAdapter:
         finally:
             conn.close()
 
+    def find_agents_by_label(
+        self, label: str, *, only_active: bool = True,
+    ) -> list[AgentRecord]:
+        # Mirror :class:`RegistryAgentsLookup.find_agents_by_label`
+        # so the routing worker's FR-021 explicit-label fallback can
+        # delegate to :func:`target_resolver.resolve_target`.
+        conn = self._connection_factory()
+        try:
+            rows = list_agents(conn, active_only=only_active)
+        finally:
+            conn.close()
+        return [r for r in rows if r.label == label]
+
     def list_active_by_role(
         self, role: str, capability: str | None = None,
     ) -> list[AgentRecord]:

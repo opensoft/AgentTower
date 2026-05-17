@@ -3,37 +3,50 @@
 **Branch**: `010-event-routes-arbitration` | **Date**: 2026-05-16 | **Plan**: [plan.md](./plan.md)
 
 This quickstart walks an operator through the happy path of
-FEAT-010 — creating a route, triggering a matching event, observing
-the delivered prompt, and inspecting the audit trail — plus the
-two most important "should-not-happen" paths (kill switch off, no
-eligible master). It also shows the dev quickstart for running
-the FEAT-010 test suites.
+FEAT-010 — creating a route, observing a matching event get routed,
+inspecting the delivered prompt and the audit trail — plus the two
+most important "should-not-happen" paths (kill switch off, no
+eligible master). It also shows the dev quickstart for running the
+FEAT-010 test suites.
+
+> **No event-injection CLI exists.** FEAT-010 has no
+> `_testing inject-event` helper. The routing worker only fires in
+> response to events the FEAT-008 reader has classified from a real
+> tmux pane log (FR-052: "no non-event triggers"). The manual
+> sections below describe driving the slave's pane naturally; the
+> automated end-to-end path lives in
+> `tests/integration/test_queue_routing_toggle_host_only.py` and
+> the Docker fixture (T018, see `docs/test-fault-injection.md`).
 
 ## Prerequisites
 
 - `agenttowerd` running on the host (FEAT-001..009 already
   shipped).
-- At least one registered active **master** agent (FEAT-006).
+- At least one registered active **master** agent (FEAT-006) with
+  an attached log (FEAT-007).
 - At least one registered active **slave** agent in a bench
-  container (FEAT-006).
+  container (FEAT-006) with an attached log (FEAT-007).
 - FEAT-008 classifier is ingesting events from at least the
-  slave's tmux log (`agenttower events --follow` shows entries
-  when the slave produces typical log output).
+  slave's tmux pane log (`agenttower events --follow` shows entries
+  as the slave produces matching log output).
 - FEAT-009 kill switch is **enabled** (`agenttower routing status
   --json` shows `routing.enabled = true`).
 
 Verify with:
 
 ```bash
-agenttower agents list --json | jq '
-  [.[] | {agent_id, role, active}]'
+agenttower list-agents --json | jq '
+  [.[] | {agent_id, role, label, active}]'
 agenttower routing status --json | jq .routing.enabled
-agenttower events --json --limit 5 | jq '.[] | .event_type'
+agenttower events --json --limit 5 | jq '[.events[] | .event_type]'
 ```
 
 ## §1. Operator happy path: route a `waiting_for_input` event
 
 ### Step 1 — Create the route
+
+Pick a real slave `agent_id` from the `list-agents` output above
+and substitute it for `agt_a1b2c3d4e5f6` below.
 
 ```bash
 agenttower route add \
@@ -74,7 +87,8 @@ A corresponding `route_created` JSONL line appears in
 `events.jsonl`:
 
 ```bash
-agenttower events --json --limit 1 | jq '.[0]'
+agenttower events --json --type route_created --limit 1 \
+  | jq '.events[0]'
 ```
 
 ```json
@@ -88,19 +102,30 @@ agenttower events --json --limit 1 | jq '.[0]'
 
 ### Step 2 — Trigger a matching event
 
-Drive the slave's tmux session to produce a `waiting_for_input`
-classifier match (the FEAT-008 classifier recognizes patterns
-like `>` prompts, `(y/n)` questions, etc.). For testing, the
-fastest approach is to run the FEAT-008 fault-injection helper:
+Drive the slave's tmux pane to produce a `waiting_for_input`
+classifier match. The FEAT-008 classifier recognizes prompts like
+`> `, `(y/n)`, etc.; the simplest reliable trigger is to run a
+command in the slave's pane that prints a prompt and waits for
+input. For example, attach to the slave's tmux session inside its
+bench container and run:
 
 ```bash
-agenttower _testing inject-event \
-  --event-type waiting_for_input \
-  --source-agent agt_a1b2c3d4e5f6 \
-  --excerpt 'Press y to continue'
+read -p "> " answer
 ```
 
-Within one routing cycle (1s default), the route fires.
+The FEAT-008 reader sees the prompt within one reader cycle
+(≤ 1 s by default) and emits a `waiting_for_input` event with
+`agent_id = <slave's agent_id>`.
+
+Within one routing cycle (1 s default) after that, the route fires.
+
+Streaming verification:
+
+```bash
+agenttower events --follow --json --type waiting_for_input
+# ...separately in another shell:
+agenttower events --follow --json --type route_matched
+```
 
 ### Step 3 — Observe the delivered prompt
 
@@ -123,7 +148,7 @@ Within one routing cycle (1s default), the route fires.
       "role": "slave",
       "label": "slave-1"
     },
-    "envelope_body_excerpt": "respond to slave-1: Press y to continue",
+    "envelope_body_excerpt": "respond to slave-1: > ",
     "state": "delivered",
     "enqueued_at": "2026-05-16T21:30:01.456Z",
     "delivered_at": "2026-05-16T21:30:01.512Z"
@@ -135,7 +160,7 @@ The full delivery chain in `events.jsonl`:
 
 ```bash
 agenttower events --json --limit 10 | jq '
-  [.[] | select(.event_type | test("waiting_for_input|route_matched|queue_message_.*"))]
+  [.events[] | select(.event_type | test("waiting_for_input|route_matched|queue_message_.*"))]
   | sort_by(.event_id // 1e18)'
 ```
 
@@ -174,16 +199,13 @@ agenttower route show 11111111-2222-4333-8444-555555555555 --json
 
 ```bash
 agenttower routing disable
-agenttower _testing inject-event \
-  --event-type waiting_for_input \
-  --source-agent agt_a1b2c3d4e5f6 \
-  --excerpt 'Another prompt'
 ```
 
-Within one cycle, a NEW queue row appears with
-`state='blocked'`, `block_reason='kill_switch_off'`,
-`origin='route'`. No tmux paste happens. The route's cursor still
-advances (FR-032, Story 5 #1).
+Then trigger another `waiting_for_input` in the slave's pane
+(same `read -p "> " answer` trick as §1 Step 2). Within one cycle,
+a NEW queue row appears with `state='blocked'`,
+`block_reason='kill_switch_off'`, `origin='route'`. No tmux paste
+happens. The route's cursor still advances (FR-032, Story 5 #1).
 
 ```bash
 agenttower queue --origin route --state blocked --json | jq '
@@ -202,28 +224,29 @@ direct-send approval (FEAT-009 plumbing).
 
 ## §3. "Should-not-happen" path B: no eligible master
 
-Deactivate every master, then trigger:
+FEAT-010 has no CLI to deactivate an agent. The realistic ways to
+exercise the `no_eligible_master` skip path on a live daemon are:
 
-```bash
-for m in $(agenttower agents list --json | jq -r '.[]
-   | select(.role == "master" and .active) | .agent_id'); do
-  agenttower agents deactivate $m
-done
+- **Detach the master's pane log** (`agenttower detach-log
+  <master_agent_id>`) and stop its tmux pane. The FEAT-004 pane
+  scan marks the pane inactive on its next sweep, which cascades
+  to `agents.active = 0` — the master is no longer in the
+  `list_active_masters` snapshot the worker takes.
+- **Use the integration test fixture**
+  (`tests/integration/test_queue_routing_toggle_host_only.py` +
+  per-test `_feat009_helpers.py`), which scripts the master
+  registration / deactivation against an isolated daemon.
 
-agenttower _testing inject-event \
-  --event-type waiting_for_input \
-  --source-agent agt_a1b2c3d4e5f6 \
-  --excerpt 'Yet another prompt'
-```
-
-Within one cycle, a `route_skipped` JSONL entry appears with
+After every master is inactive, trigger another
+`waiting_for_input` event in the slave's pane. Within one cycle, a
+`route_skipped` JSONL entry appears with
 `reason='no_eligible_master'`, `winner_master_agent_id=null`,
 `target_agent_id=null`. No queue row is created. The route's
 cursor advances past the event (FR-018, Story 3 #4).
 
 ```bash
-agenttower events --json --limit 5 | jq '
-  [.[] | select(.event_type == "route_skipped")][0]'
+agenttower events --json --type route_skipped --limit 5 \
+  | jq '.events[0]'
 ```
 
 ```json
@@ -235,7 +258,7 @@ agenttower events --json --limit 5 | jq '
   "target_agent_id": null,
   "target_label": null,
   "reason": "no_eligible_master",
-  "event_excerpt": "Yet another prompt",
+  "event_excerpt": "> ",
   "emitted_at": "2026-05-16T21:31:00.123Z"
 }
 ```
@@ -266,7 +289,8 @@ The heartbeat appears in `events.jsonl` every 60s regardless of
 activity:
 
 ```bash
-agenttower events --json --limit 1 | jq '.[0]'
+agenttower events --json --type routing_worker_heartbeat --limit 1 \
+  | jq '.events[0]'
 ```
 
 ```json
@@ -304,7 +328,11 @@ pytest tests/unit/test_routing_routes_dao.py \
        tests/unit/test_routing_arbitration.py \
        tests/unit/test_routing_worker.py \
        tests/unit/test_routing_heartbeat.py \
-       tests/unit/test_routing_audit.py
+       tests/unit/test_routing_route_errors.py \
+       tests/unit/test_routing_dao_feat010_columns.py \
+       tests/unit/test_schema_migration_v8.py \
+       tests/unit/test_no_per_cycle_audit_calls.py \
+       tests/unit/test_scope_boundary_invariants.py
 
 # Contract tests (socket + CLI + audit schema)
 pytest tests/contract/test_socket_routes.py \
@@ -313,18 +341,18 @@ pytest tests/contract/test_socket_routes.py \
        tests/contract/test_cli_status_routing.py \
        tests/contract/test_route_audit_schema.py
 
-# Integration tests (real daemon + tmux + bench container)
-pytest tests/integration/test_routing_end_to_end.py \
-       tests/integration/test_routing_arbitration_determinism.py \
-       tests/integration/test_routing_crash_recovery.py
+# Performance SLOs (in-process; SC-006/SC-007/SC-009)
+pytest tests/performance/test_routing_slos.py
 ```
 
-The integration suite uses the same `bench-test` Docker fixture
-as FEAT-008/009. Story 4 (crash recovery) uses the
-`_AGENTTOWER_FAULT_INJECT_ROUTING_TXN_ABORT` env var to abort
-the cursor-advance transaction at a specific point — see
-`tests/integration/test_routing_crash_recovery.py` and
-`docs/test-fault-injection.md`.
+End-to-end coverage (SC-001 five-second latency, SC-004 crash
+recovery, SC-010 cross-process determinism) requires the Docker
+bench-container fixture and is **deferred** in this branch — see
+`tests/integration/test_queue_routing_toggle_host_only.py` for the
+shipped FEAT-009/010 host-toggle integration test and
+`docs/test-fault-injection.md` for the fault-injection contract
+the routing worker honors
+(`_AGENTTOWER_FAULT_INJECT_ROUTING_TXN_ABORT`).
 
 ## §7. Common operator pitfalls
 
@@ -358,9 +386,13 @@ should be observable:
   `routing` object.
 - **FR-039a**: A `routing_worker_heartbeat` JSONL entry appears
   every 60s with the documented field set.
-- **SC-001**: Event-to-paste latency ≤ 5s.
 - **SC-005**: With kill switch off, 100% of route-generated rows
   land in `blocked`, cursor advances.
-- **SC-010**: Re-running the same event sequence on a fresh
-  daemon process produces byte-identical FEAT-010 audit + queue
-  entries (modulo timestamps).
+
+> **SC-001** (5 s event-to-paste latency), **SC-004** (no
+> duplicate row across N=10 crash cycles), and **SC-010**
+> (byte-for-byte determinism across two daemon processes) are
+> measured by the Docker bench-container fixture (T018), which is
+> deferred. The in-process performance suite
+> (`tests/performance/test_routing_slos.py`) covers SC-006,
+> SC-007, and SC-009.

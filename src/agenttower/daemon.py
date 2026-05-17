@@ -479,8 +479,18 @@ def _build_feat010_services(
             isolation_level=None,
         )
 
-    audit_writer = RoutesAuditWriter()
+    # Construct shared_state FIRST so the audit writer can fire a
+    # callback into ``audit_buffer_dropped`` whenever the bounded
+    # retry deque rolls over (data-model.md §4). Without this wiring
+    # the counter stays at 0 even when the JSONL stream is unwritable
+    # long enough to evict entries — a silent observability gap.
     shared_state = _SharedRoutingState()
+
+    def _on_audit_buffer_drop() -> None:
+        with shared_state.lock:
+            shared_state.audit_buffer_dropped += 1
+
+    audit_writer = RoutesAuditWriter(on_buffer_drop=_on_audit_buffer_drop)
     agents_adapter = RoutingAgentsAdapter(_routing_conn_factory)
     event_reader = RoutingEventReader()
 

@@ -82,6 +82,17 @@ class _FakeAgents:
     def get_agent_by_id(self, agent_id: str) -> _FakeAgent | None:
         return self.by_id.get(agent_id)
 
+    def find_agents_by_label(
+        self, label: str, *, only_active: bool = True,
+    ) -> list[_FakeAgent]:
+        # Mirror :class:`RoutingAgentsAdapter.find_agents_by_label`
+        # so the worker's FR-021 explicit-label fallback path can
+        # exercise this Protocol surface in tests.
+        out = [a for a in self.by_id.values() if a.label == label]
+        if only_active:
+            out = [a for a in out if a.active]
+        return out
+
     def list_active_by_role(
         self, role: str, capability: str | None = None
     ) -> list[_FakeAgent]:
@@ -237,7 +248,7 @@ def _make_route(
     source_scope_kind: str = "any",
     source_scope_value: str | None = None,
     target_rule: str = "explicit",
-    target_value: str | None = "agt_slave000001",
+    target_value: str | None = "agt_5a1e00000001",
     master_rule: str = "auto",
     master_value: str | None = None,
     template: str = "respond: {event_excerpt}",
@@ -267,7 +278,7 @@ def _make_event(
     *,
     event_id: int = 1,
     event_type: str = "waiting_for_input",
-    source_agent_id: str = "agt_slave000001",
+    source_agent_id: str = "agt_5a1e00000001",
     excerpt: str = "please respond",
     observed_at: str = "2026-05-17T00:00:01.000000+00:00",
 ) -> EventRowSnapshot:
@@ -305,12 +316,12 @@ def test_worker_rejects_out_of_bounds_batch_size(harness) -> None:
 
 
 def test_happy_path_enqueues_advances_cursor_emits_matched(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=10)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     worker = harness.build()
     worker._run_one_cycle()
@@ -318,16 +329,16 @@ def test_happy_path_enqueues_advances_cursor_emits_matched(harness) -> None:
     # Queue insert was called exactly once with the right args.
     harness.queue.enqueue_route_message.assert_called_once()
     kwargs = harness.queue.enqueue_route_message.call_args.kwargs
-    assert kwargs["sender"].agent_id == "agt_master00001"
-    assert kwargs["target_input"] == "agt_slave000001"
+    assert kwargs["sender"].agent_id == "agt_ba5e00000001"
+    assert kwargs["target_input"] == "agt_5a1e00000001"
     assert kwargs["route_id"] == "r1"
     assert kwargs["event_id"] == 10
 
     # route_matched audit emitted.
     assert len(harness.audit.matched) == 1
     assert len(harness.audit.skipped) == 0
-    assert harness.audit.matched[0]["target_agent_id"] == "agt_slave000001"
-    assert harness.audit.matched[0]["winner_master_agent_id"] == "agt_master00001"
+    assert harness.audit.matched[0]["target_agent_id"] == "agt_5a1e00000001"
+    assert harness.audit.matched[0]["winner_master_agent_id"] == "agt_ba5e00000001"
 
     # Cursor advanced.
     assert harness.state.events_consumed_total == 1
@@ -345,7 +356,7 @@ def test_no_eligible_master_skips_and_advances_cursor(harness) -> None:
     harness.events = [_make_event(event_id=i) for i in range(1, 11)]
     harness.masters = []  # zero active masters
     harness.by_id = {
-        "agt_slave000001": _FakeAgent(agent_id="agt_slave000001", role="slave"),
+        "agt_5a1e00000001": _FakeAgent(agent_id="agt_5a1e00000001", role="slave"),
     }
 
     worker = harness.build()
@@ -372,13 +383,13 @@ def test_no_eligible_master_skips_and_advances_cursor(harness) -> None:
 
 
 def test_explicit_target_not_in_registry_skips(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
     harness.routes = [_make_route(target_value="agt_does_not_exist")]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
     harness.by_id = {
-        "agt_slave000001": _FakeAgent(agent_id="agt_slave000001", role="slave"),
-        "agt_master00001": master,
+        "agt_5a1e00000001": _FakeAgent(agent_id="agt_5a1e00000001", role="slave"),
+        "agt_ba5e00000001": master,
     }
 
     worker = harness.build()
@@ -386,7 +397,7 @@ def test_explicit_target_not_in_registry_skips(harness) -> None:
 
     assert len(harness.audit.skipped) == 1
     assert harness.audit.skipped[0]["reason"] == "target_not_found"
-    assert harness.audit.skipped[0]["winner_master_agent_id"] == "agt_master00001"
+    assert harness.audit.skipped[0]["winner_master_agent_id"] == "agt_ba5e00000001"
     assert harness.audit.skipped[0]["target_agent_id"] is None
 
 
@@ -396,14 +407,14 @@ def test_explicit_target_not_in_registry_skips(harness) -> None:
 
 
 def test_oversized_template_render_skips_with_body_too_large(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     # Build a template that renders > 4 KiB envelope cap.
     huge = "X" * 200_000
     harness.routes = [_make_route(template=f"prefix {huge} suffix")]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     worker = harness.build()
     worker._run_one_cycle()
@@ -412,7 +423,7 @@ def test_oversized_template_render_skips_with_body_too_large(harness) -> None:
     assert harness.audit.skipped[0]["reason"] == "template_render_error"
     assert harness.audit.skipped[0]["sub_reason"] == BODY_TOO_LARGE
     # Target was resolved before render → target fields populated.
-    assert harness.audit.skipped[0]["target_agent_id"] == "agt_slave000001"
+    assert harness.audit.skipped[0]["target_agent_id"] == "agt_5a1e00000001"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -421,12 +432,12 @@ def test_oversized_template_render_skips_with_body_too_large(harness) -> None:
 
 
 def test_feat009_queue_error_maps_to_skip_reason(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
     harness.queue.enqueue_route_message.side_effect = QueueServiceError(
         "target_pane_missing", "pane gone"
     )
@@ -437,7 +448,7 @@ def test_feat009_queue_error_maps_to_skip_reason(harness) -> None:
     assert len(harness.audit.skipped) == 1
     assert harness.audit.skipped[0]["reason"] == "target_pane_missing"
     # Target was resolved before enqueue → identity populated.
-    assert harness.audit.skipped[0]["target_agent_id"] == "agt_slave000001"
+    assert harness.audit.skipped[0]["target_agent_id"] == "agt_5a1e00000001"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -450,12 +461,12 @@ def test_kill_switch_off_is_not_a_skip_and_cursor_advances(harness) -> None:
     insert returns normally with the row in 'blocked' state — the
     worker treats this as a successful match (route_matched audit
     emitted), NOT a skip."""
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
     # service.enqueue_route_message returns normally (FEAT-009 handles
     # the kill-switch path internally by inserting into 'blocked').
 
@@ -473,12 +484,12 @@ def test_kill_switch_off_is_not_a_skip_and_cursor_advances(harness) -> None:
 
 
 def test_sqlite_locked_during_enqueue_does_not_advance_cursor(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
     harness.queue.enqueue_route_message.side_effect = sqlite3.OperationalError(
         "database is locked"
     )
@@ -504,12 +515,12 @@ def test_unique_constraint_violation_treated_as_recovery(harness) -> None:
     worker MUST treat this as 'already done' and still advance the
     cursor + emit route_matched (so the event isn't re-evaluated
     forever)."""
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
     harness.queue.enqueue_route_message.side_effect = sqlite3.IntegrityError(
         "UNIQUE constraint failed: message_queue.route_id, message_queue.event_id"
     )
@@ -530,8 +541,8 @@ def test_unique_constraint_violation_treated_as_recovery(harness) -> None:
 
 
 def test_routes_processed_in_created_at_then_route_id_order(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     # Three routes with overlapping selectors; same event matches all.
     harness.routes = [
         _make_route(
@@ -546,7 +557,7 @@ def test_routes_processed_in_created_at_then_route_id_order(harness) -> None:
     ]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     worker = harness.build()
     worker._run_one_cycle()
@@ -568,12 +579,12 @@ def test_mid_batch_disable_stops_processing_remaining_events(
     middle of a batch, the worker MUST stop processing further events
     for that route (the cycle completes for events it has already
     started; subsequent events become next-cycle work)."""
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=i) for i in range(1, 6)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     fake_dao = _FakeRoutesDao(harness.routes)
     monkeypatch.setattr(wkr.routes_dao, "list_routes", fake_dao.list_routes)
@@ -613,15 +624,15 @@ def test_mid_batch_disable_stops_processing_remaining_events(
 
 
 def test_shutdown_event_breaks_route_loop(harness) -> None:
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [
         _make_route(route_id="r1", created_at="2026-05-17T00:00:00.000Z"),
         _make_route(route_id="r2", created_at="2026-05-17T00:00:01.000Z"),
     ]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     # Trip the shutdown event after the first route is processed.
     def _set_shutdown_after_first_call(*args, **kwargs):
@@ -646,12 +657,12 @@ def test_fault_injection_env_var_triggers_systemexit(harness, monkeypatch) -> No
     monkeypatch.setenv(
         wkr._FAULT_INJECT_ENV, wkr._FAULT_INJECT_BEFORE_COMMIT,
     )
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     worker = harness.build()
     with pytest.raises(SystemExit) as info:
@@ -661,12 +672,12 @@ def test_fault_injection_env_var_triggers_systemexit(harness, monkeypatch) -> No
 
 def test_no_fault_injection_when_env_var_unset(harness, monkeypatch) -> None:
     monkeypatch.delenv(wkr._FAULT_INJECT_ENV, raising=False)
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route()]
     harness.events = [_make_event(event_id=1)]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     worker = harness.build()
     # Should NOT raise SystemExit.
@@ -701,15 +712,15 @@ def test_source_scope_mismatch_advances_cursor_silently(harness) -> None:
     """FR-010 only emits audit for MATCHING events that reach a
     terminal decision. Events whose source doesn't match the route's
     source_scope are silently consumed (cursor advances, no audit)."""
-    master = _FakeAgent(agent_id="agt_master00001", role="master")
-    slave = _FakeAgent(agent_id="agt_slave000001", role="slave")
+    master = _FakeAgent(agent_id="agt_ba5e00000001", role="master")
+    slave = _FakeAgent(agent_id="agt_5a1e00000001", role="slave")
     harness.routes = [_make_route(
         source_scope_kind="agent_id",
         source_scope_value="agt_different00",
     )]
-    harness.events = [_make_event(event_id=1, source_agent_id="agt_slave000001")]
+    harness.events = [_make_event(event_id=1, source_agent_id="agt_5a1e00000001")]
     harness.masters = [master]
-    harness.by_id = {"agt_slave000001": slave, "agt_master00001": master}
+    harness.by_id = {"agt_5a1e00000001": slave, "agt_ba5e00000001": master}
 
     worker = harness.build()
     worker._run_one_cycle()
