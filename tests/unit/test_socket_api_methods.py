@@ -107,6 +107,11 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "routes.remove",
         "routes.enable",
         "routes.disable",
+        # FEAT-011 — app.* host-only namespace (T002 / FR-001 / FR-042).
+        "app.preflight",
+        "app.hello",
+        "app.readiness",
+        "app.dashboard",
     }
 
 

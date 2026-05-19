@@ -26,13 +26,17 @@ class TestDispatchTableCardinality:
         adds 8 more (queue + routing surface, FR-006/FR-031–FR-036):
         ``queue.send_input``, ``queue.list``, ``queue.approve``,
         ``queue.delay``, ``queue.cancel``, ``routing.enable``,
-        ``routing.disable``, ``routing.status``. This test pins the
-        closed FEAT-001..009 set so an accidental extra method cannot
-        sneak in beyond the spec'd surface.
+        ``routing.disable``, ``routing.status``. FEAT-010 adds 6 more
+        (routes.* CRUD): ``routes.add``, ``routes.list``, ``routes.show``,
+        ``routes.remove``, ``routes.enable``, ``routes.disable``.
+        FEAT-011 adds 4 more (app.* host-only namespace per FR-001 / FR-042):
+        ``app.preflight``, ``app.hello``, ``app.readiness``, ``app.dashboard``.
+        This test pins the closed FEAT-001..011 set so an accidental
+        extra method cannot sneak in beyond the spec'd surface.
         """
         from agenttower.socket_api import methods as methods_module
 
-        # The dispatch table is `DISPATCH` per the FEAT-002..009 builds.
+        # The dispatch table is `DISPATCH` per the FEAT-002..011 builds.
         dispatch = getattr(methods_module, "DISPATCH", None)
         assert dispatch is not None, "expected DISPATCH dict in socket_api/methods.py"
         assert isinstance(dispatch, dict)
@@ -66,8 +70,20 @@ class TestDispatchTableCardinality:
             "routing.enable",
             "routing.disable",
             "routing.status",
+            # FEAT-010 routes.* (T030).
+            "routes.add",
+            "routes.list",
+            "routes.show",
+            "routes.remove",
+            "routes.enable",
+            "routes.disable",
+            # FEAT-011 app.* host-only namespace (T002 / FR-001 / FR-042).
+            "app.preflight",
+            "app.hello",
+            "app.readiness",
+            "app.dashboard",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 29
+        assert len(dispatch) == 39
 
 
 # ---------------------------------------------------------------------------

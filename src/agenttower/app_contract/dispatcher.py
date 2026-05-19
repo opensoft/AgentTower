@@ -35,12 +35,16 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
     (``host_only.py`` imports from there, so importing app_contract
     eagerly from methods.py would loop).
     """
+    from . import dashboard as _dashboard
     from . import hello as _hello
     from . import preflight as _preflight
+    from . import readiness as _readiness
 
     return {
         "app.preflight": _preflight.app_preflight,
         "app.hello": _hello.app_hello,
+        "app.readiness": _readiness.app_readiness,
+        "app.dashboard": _dashboard.app_dashboard,
     }
 
 

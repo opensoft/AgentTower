@@ -4,8 +4,10 @@ The dispatch table's KEY ORDER is part of the FEAT-002 stability rule
 (insertion order preserved across feature versions). FEAT-001..005
 established the first seven entries; FEAT-006 appended five more;
 FEAT-007 appended four more; FEAT-008 appended five more; FEAT-009
-appended eight more. This test pins the exact ordered key list so an
-accidental re-ordering or added entry is caught immediately.
+appended eight more; FEAT-010 appended six more (routes.*); FEAT-011
+appended four more (app.* host-only namespace, FR-001/FR-002/FR-042).
+This test pins the exact ordered key list so an accidental
+re-ordering or added entry is caught immediately.
 """
 
 from __future__ import annotations
@@ -58,6 +60,13 @@ EXPECTED_ORDER = [
     "routes.remove",
     "routes.enable",
     "routes.disable",
+    # FEAT-011 (app.* host-only namespace; T002 / FR-001 / FR-042).
+    # Appended via DISPATCH.update(APP_DISPATCH) at the end of
+    # ``socket_api/methods.py``. Insertion order preserved by Python 3.7+ dict.
+    "app.preflight",
+    "app.hello",
+    "app.readiness",
+    "app.dashboard",
 ]
 
 
@@ -65,5 +74,6 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_thirtyfive_entries() -> None:
-    assert len(DISPATCH) == 35
+def test_dispatch_table_is_exactly_thirtynine_entries() -> None:
+    """35 legacy (FEAT-002..010) + 4 new (FEAT-011 app.*) = 39."""
+    assert len(DISPATCH) == 39

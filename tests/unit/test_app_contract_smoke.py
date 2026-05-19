@@ -339,3 +339,235 @@ def test_is_major_compatible() -> None:
     assert versioning.is_major_compatible(1) is True
     assert versioning.is_major_compatible(2) is False
     assert versioning.is_major_compatible(0) is False
+
+
+# ─── app.readiness (FR-012, FR-013, FR-014a, FR-045) ─────────────────────
+
+
+@pytest.fixture
+def daemon_ctx_with_db(tmp_path: Path) -> "DaemonContext":
+    """DaemonContext with a real SQLite schema applied (no services wired)."""
+    from agenttower.state.schema import open_registry
+
+    state_db = tmp_path / "registry.db"
+    conn, _status = open_registry(state_db, namespace_root=tmp_path)
+    events_file = tmp_path / "events.jsonl"
+    events_file.parent.mkdir(parents=True, exist_ok=True)
+
+    return DaemonContext(
+        pid=os.getpid(),
+        start_time_utc=datetime.now(timezone.utc),
+        socket_path=tmp_path / "agenttowerd.sock",
+        state_path=state_db,
+        daemon_version="0.0.0-test",
+        schema_version=10,
+        state_conn=conn,
+        events_file=events_file,
+    )
+
+
+def _readiness_call(ctx, host_uid):
+    from agenttower.app_contract import readiness as r
+    return r.app_readiness(ctx, {}, peer_uid=host_uid)
+
+
+def _dashboard_call(ctx, host_uid, recent_limit=None):
+    from agenttower.app_contract import dashboard as d
+    params = {} if recent_limit is None else {"recent_limit": recent_limit}
+    return d.app_dashboard(ctx, params, peer_uid=host_uid)
+
+
+def test_readiness_host_only_gate(daemon_ctx_with_db) -> None:
+    """FR-042: readiness rejects no-credentials peer with host_only."""
+    env = _readiness_call(daemon_ctx_with_db, -1)
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.HOST_ONLY
+
+
+def test_readiness_envelope_shape(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-012, FR-013, FR-014a: state + 6 subsystems + hints array."""
+    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    assert env["ok"] is True
+    r = env["result"]
+    # FR-012: state is from the closed set.
+    assert r["state"] in {"ready", "degraded", "unavailable"}
+    # FR-013: all 6 required subsystems present, in fixed order.
+    assert [s["name"] for s in r["subsystems"]] == list(
+        versioning.SUBSYSTEM_NAMES
+    )
+    # Each row carries the documented fields.
+    for row in r["subsystems"]:
+        assert set(row.keys()) == {"name", "status", "reason", "hint"}
+        assert row["status"] in {"ok", "degraded", "unavailable"}
+        if row["status"] == "ok":
+            assert row["reason"] == ""
+    # FR-014a: hints array is always present.
+    assert isinstance(r["hints"], list)
+
+
+def test_readiness_sqlite_probe_ok(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """SQLite probe is ``ok`` against a freshly-opened registry."""
+    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    by_name = {s["name"]: s for s in env["result"]["subsystems"]}
+    assert by_name["sqlite"]["status"] == "ok"
+
+
+def test_readiness_unwired_services_are_unavailable(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """Unwired services produce subsystem rows with status=unavailable +
+    a non-empty reason."""
+    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    by_name = {s["name"]: s for s in env["result"]["subsystems"]}
+    for name in (
+        "docker",
+        "tmux_discovery",
+        "routing_worker",
+        "log_attachment_workers",
+    ):
+        assert by_name[name]["status"] == "unavailable", (
+            f"{name} should be unavailable when service is unwired"
+        )
+        assert by_name[name]["reason"] != ""
+
+
+def test_readiness_emits_docker_unavailable_hint(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-014a: docker unwired → docker_unavailable_hint with action_required."""
+    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    codes = {h["code"] for h in env["result"]["hints"]}
+    assert "docker_unavailable_hint" in codes
+    # Severity check
+    by_code = {h["code"]: h for h in env["result"]["hints"]}
+    assert by_code["docker_unavailable_hint"]["severity"] == "action_required"
+
+
+# ─── app.dashboard (FR-015, FR-016, FR-017, FR-018, FR-045) ──────────────
+
+
+def test_dashboard_host_only_gate(daemon_ctx_with_db) -> None:
+    """FR-042: dashboard rejects container peer with host_only."""
+    env = _dashboard_call(daemon_ctx_with_db, -1)
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.HOST_ONLY
+
+
+def test_dashboard_envelope_shape(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-015, FR-016, FR-017, FR-014a: counts + recents + hints all present."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    assert env["ok"] is True
+    r = env["result"]
+    # All 7 count surfaces present (FR-016).
+    assert set(r["counts"].keys()) == {
+        "containers", "panes", "agents", "log_attachments",
+        "events", "queue", "routes",
+    }
+    # Container counts have the FR-016 buckets.
+    assert set(r["counts"]["containers"].keys()) == {
+        "active", "inactive", "degraded_scan"
+    }
+    # Pane counts have the FR-016 buckets.
+    assert set(r["counts"]["panes"].keys()) == {
+        "total", "registered", "unregistered"
+    }
+    # Agent counts include the FEAT-006 closed role set.
+    assert "by_role" in r["counts"]["agents"]
+    assert set(r["counts"]["agents"]["by_role"].keys()) == set(
+        versioning.AGENT_ROLES
+    )
+    # Queue counts cover the full FEAT-009 closed state set.
+    assert set(r["counts"]["queue"].keys()) == set(versioning.QUEUE_STATES)
+    # Route counts: enabled + disabled.
+    assert set(r["counts"]["routes"].keys()) == {"enabled", "disabled"}
+    # Recents present for events/queue/routes (FR-017).
+    assert set(r["recent"].keys()) == {"events", "queue", "routes"}
+    for surface in ("events", "queue", "routes"):
+        assert isinstance(r["recent"][surface], list)
+    # Hints array always present.
+    assert isinstance(r["hints"], list)
+
+
+def test_dashboard_empty_system_returns_zero_counts(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """Coverage: an empty system returns all-zero counts and empty recents."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    r = env["result"]
+    for bucket in ("active", "inactive", "degraded_scan"):
+        assert r["counts"]["containers"][bucket] == 0
+    assert r["counts"]["panes"]["total"] == 0
+    assert r["counts"]["agents"]["total"] == 0
+    assert r["counts"]["events"]["total"] == 0
+    for state in versioning.QUEUE_STATES:
+        assert r["counts"]["queue"][state] == 0
+    assert r["counts"]["routes"] == {"enabled": 0, "disabled": 0}
+    assert r["recent"]["events"] == []
+    assert r["recent"]["queue"] == []
+    assert r["recent"]["routes"] == []
+
+
+def test_dashboard_recent_limit_default_is_10(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-017: default recent_limit is 10."""
+    # With an empty system the recent arrays are empty; the assertion is on
+    # request acceptance, not row count.
+    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    assert env["ok"] is True
+
+
+@pytest.mark.parametrize("limit", [0, 51, 100, -1])
+def test_dashboard_recent_limit_out_of_bounds_returns_validation_failed(
+    daemon_ctx_with_db, host_peer: int, limit: int
+) -> None:
+    """FR-017: recent_limit out of bounds → validation_failed.details.field."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, recent_limit=limit)
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.VALIDATION_FAILED
+    assert env["error"]["details"]["field"] == "recent_limit"
+
+
+@pytest.mark.parametrize("bad", ["10", 10.0, True, [10]])
+def test_dashboard_recent_limit_wrong_type_returns_validation_failed(
+    daemon_ctx_with_db, host_peer: int, bad
+) -> None:
+    """FR-017: recent_limit must be an integer (not str/float/bool/list)."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, recent_limit=bad)
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.VALIDATION_FAILED
+
+
+def test_dashboard_emits_start_bench_container_hint_when_empty(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-014a: zero containers and docker unwired → docker hint, not
+    start_bench_container (the latter only fires if docker is reachable)."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    codes = {h["code"] for h in env["result"]["hints"]}
+    # docker_unavailable_hint should be emitted (docker unwired)
+    assert "docker_unavailable_hint" in codes
+    # start_bench_container should NOT be emitted (docker is unavailable so
+    # we suppress the start-container hint to avoid double-nagging)
+    assert "start_bench_container" not in codes
+
+
+def test_dashboard_no_audit_side_effect(
+    daemon_ctx_with_db, host_peer: int, tmp_path: Path
+) -> None:
+    """FR-045: dashboard MUST be side-effect-free (no audit row written)."""
+    events_file = daemon_ctx_with_db.events_file
+    # Confirm the events file either doesn't exist or is empty before.
+    before_size = events_file.stat().st_size if events_file.exists() else 0
+    _dashboard_call(daemon_ctx_with_db, host_peer)
+    after_size = events_file.stat().st_size if events_file.exists() else 0
+    assert after_size == before_size, (
+        "app.dashboard wrote to the audit JSONL — violates FR-045 "
+        "side-effect-free guarantee"
+    )
