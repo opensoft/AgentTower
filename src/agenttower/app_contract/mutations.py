@@ -348,14 +348,19 @@ def app_agent_register_from_pane(
         )
 
     # 5. State DB for pre-flight checks (FR-028a, FR-028b, FR-028c).
-    state_path = getattr(ctx, "state_path", None)
-    if state_path is None:
+    # The production daemon sets ``state_path`` to the state dir;
+    # tests sometimes point it at the SQLite file. Use reads' helper
+    # to coerce both shapes to the same file path.
+    from . import reads as _reads
+
+    db_path = _reads._resolve_state_db_path(ctx)
+    if db_path is None:
         return _envelope.failure(
             INTERNAL_ERROR,
             "state_path unwired",
             details={},
         )
-    conn = sqlite3.connect(str(state_path))
+    conn = sqlite3.connect(str(db_path))
     try:
         # FR-028a: full 6-field identity match.
         matched, mismatch_field = _find_pane_with_full_identity_match(conn, identity)
@@ -456,7 +461,7 @@ def app_agent_register_from_pane(
     # Fetch the canonical row for the view model (including derived
     # fields). Use a fresh connection — register_agent has already
     # committed the row.
-    conn = sqlite3.connect(str(state_path))
+    conn = sqlite3.connect(str(db_path))
     agent_view: dict[str, Any] = {}
     try:
         from ..state import agents as state_agents

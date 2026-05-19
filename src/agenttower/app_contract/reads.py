@@ -221,16 +221,37 @@ def _validate_order_by(
 _PANE_ORDER_BY_FIELDS = frozenset({"default", "discovered_at", "last_seen_at"})
 
 
+def _resolve_state_db_path(ctx: "DaemonContext"):
+    """Coerce ``ctx.state_path`` to the SQLite file path.
+
+    The production daemon sets ``state_path`` to the **state directory**
+    (containing ``agenttower.sqlite3``), while in-process tests often
+    point ``state_path`` directly at the file. Accept both: if the path
+    is a directory, return ``state_path / "agenttower.sqlite3"``;
+    otherwise return ``state_path`` unchanged.
+    """
+    from pathlib import Path
+
+    if ctx.state_path is None:
+        return None
+    p = Path(str(ctx.state_path))
+    if p.is_dir():
+        return p / "agenttower.sqlite3"
+    return p
+
+
 def _connect_state_db(ctx: "DaemonContext") -> sqlite3.Connection | None:
     """Open a fresh read-only-ish connection to the state DB.
 
-    Returns ``None`` if ``ctx.state_path`` is unwired. Callers must
-    close the connection in a ``finally`` block.
+    Returns ``None`` if ``ctx.state_path`` is unwired or the resolved
+    file doesn't exist. Callers must close the connection in a
+    ``finally`` block.
     """
-    if ctx.state_path is None:
+    path = _resolve_state_db_path(ctx)
+    if path is None:
         return None
     try:
-        return sqlite3.connect(str(ctx.state_path))
+        return sqlite3.connect(str(path))
     except sqlite3.Error:
         return None
 
