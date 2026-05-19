@@ -70,4 +70,4 @@
 - [X] CHK038 Do **all references to `stale_object`** consistently scope it to queue terminal-state guards only (FR-030a is the binding rule)? [Consistency, Spec §FR-030a, §FR-034, §FR-034a]
 - [X] CHK039 Does the **`hints[]` array on both dashboard AND readiness** (round-2) have consistent schema documentation in FR-014a and across data-model.md / closed-sets.md / app-methods.md? [Consistency, Spec §FR-014a, DataModel, Contracts]
 - [X] CHK040 Does the **`details` always-an-object rule** (FR-033 + FR-034a) have consistent enforcement language across spec.md, data-model.md, error-codes.md? [Consistency, Spec §FR-033, §FR-034a]
-- [X] CHK041 Are all references to the **error-code closed set** counting **26 entries** (after `host_only` round-2 + `payload_too_large` round-3 + `scan_not_found` round-2 additions)? [Consistency, Spec §FR-034, Contracts §error-codes]
+- [X] CHK041 Are all references to the **error-code closed set** counting **27 entries** at v1.0 (after `host_only` round-2 + `payload_too_large` round-3 + `scan_not_found` round-2 + `malformed_request` round-4 additions)? [Consistency, Spec §FR-034, Contracts §error-codes]

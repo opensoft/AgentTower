@@ -267,9 +267,11 @@ def test_audit_never_writes_token(session: AppSession, tmp_path: Path) -> None:
 def test_audit_rejects_protected_payload_keys(
     session: AppSession, tmp_path: Path
 ) -> None:
-    """origin / app_session_id / app_session_token are owned by the helper."""
+    """event_type / origin / app_session_id / app_session_token are
+    owned by the helper. event_type protection prevents accidental
+    override of the upstream audit-event vocabulary."""
     events_file = tmp_path / "events.jsonl"
-    for protected in ("origin", "app_session_id", "app_session_token"):
+    for protected in ("event_type", "origin", "app_session_id", "app_session_token"):
         with pytest.raises(ValueError):
             audit_mod.emit_app_mutation(
                 events_file,

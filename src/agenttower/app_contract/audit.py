@@ -129,9 +129,16 @@ def emit_app_mutation(
         "app_session_id": session.app_session_id,
     }
     # ``payload`` overlays last so handlers can supply event-specific
-    # fields freely — but they must NOT include ``origin`` /
-    # ``app_session_id`` keys (those are owned by this helper).
-    for protected in ("origin", "app_session_id", "app_session_token"):
+    # fields freely — but they must NOT include any of the fields this
+    # helper owns. ``event_type`` is the upstream audit-event name
+    # (Round-4 Block G Q44 vocabulary); silently allowing it to be
+    # overridden via payload would corrupt the audit vocabulary.
+    for protected in (
+        "event_type",
+        "origin",
+        "app_session_id",
+        "app_session_token",
+    ):
         if protected in payload:
             raise ValueError(
                 f"audit payload must not include {protected!r}; "

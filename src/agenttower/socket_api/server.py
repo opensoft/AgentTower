@@ -210,7 +210,7 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         if not line:
             return errors.make_error(errors.BAD_JSON, "empty request")
 
-        if len(line) > MAX_REQUEST_BYTES or not line.endswith(b"\n"):
+        if len(line) > MAX_REQUEST_BYTES:
             # FR-003a / FR-034a: ``app.*`` oversized lines emit the
             # FEAT-011 ``payload_too_large`` envelope (carries
             # ``size_limit_bytes`` + ``actual_size_bytes``). Legacy
@@ -222,6 +222,18 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             return errors.make_error(
                 errors.REQUEST_TOO_LARGE,
                 f"request line exceeds {MAX_REQUEST_BYTES} bytes",
+            )
+        if not line.endswith(b"\n"):
+            # Short line missing the NDJSON terminator: this is a
+            # framing violation, not a size overflow. App-namespace
+            # callers get the FR-003b ``malformed_request`` envelope
+            # with a precise reason; legacy callers keep the FEAT-002
+            # ``bad_request`` shape per FR-002.
+            if _line_looks_like_app_method(line):
+                return _make_malformed_request_envelope("missing newline terminator")
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                "request line missing newline terminator",
             )
 
         # FR-003b wire-framing gate. Five cases are caught BEFORE handler

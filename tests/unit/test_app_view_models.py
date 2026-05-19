@@ -282,3 +282,177 @@ def test_compact_event_summary_includes_agent_when_present() -> None:
 def test_compact_event_summary_fallbacks_to_type_only() -> None:
     out = vm.compact_event({"event_id": 1, "event_type": "task_done"})
     assert out["summary"] == "task_done"
+
+
+def test_compact_event_summary_blank_when_no_type_or_agent() -> None:
+    out = vm.compact_event({"event_id": 1})
+    assert out["summary"] == "(event)"
+
+
+def test_compact_queue_full_shape() -> None:
+    out = vm.compact_queue({
+        "message_id": "msg-1",
+        "state": "pending",
+        "origin": "route",
+        "target_agent_id": "agt-1",
+        "created_at": 1000,
+    })
+    assert out["id"] == "msg-1"
+    assert out["state"] == "pending"
+    assert out["state_priority"] == 1
+    assert out["type"] == "route"
+    assert out["target_agent_id"] == "agt-1"
+    assert out["timestamp"] == 1000
+    assert "pending" in out["summary"]
+    assert "agt-1" in out["summary"]
+
+
+def test_compact_queue_unknown_state_falls_back_to_high_priority() -> None:
+    out = vm.compact_queue({"message_id": "m", "state": "weird"})
+    assert out["state_priority"] == 99
+
+
+def test_compact_route_enabled_summary() -> None:
+    out = vm.compact_route({"route_id": "r-1", "enabled": True, "created_at": 1000})
+    assert out["id"] == "r-1"
+    assert out["enabled"] is True
+    assert out["type"] == "route"
+    assert out["summary"] == "route r-1 (enabled)"
+
+
+def test_compact_route_disabled_summary() -> None:
+    out = vm.compact_route({"route_id": "r-2", "enabled": False, "created_at": 1000})
+    assert out["enabled"] is False
+    assert out["summary"] == "route r-2 (disabled)"
+
+
+# ─── Helper coverage: _get / _coerce_int / _summarize_* ──────────────────
+
+
+def test_get_helper_returns_default_for_none_row() -> None:
+    """_get(None, ...) → default."""
+    out = vm.container_view(None, pane_count=5)
+    assert out["pane_count"] == 5
+
+
+def test_get_helper_handles_object_with_attributes() -> None:
+    """_get works on dataclass-like objects (getattr path)."""
+    class Row:
+        agent_id = "a-1"
+        role = "slave"
+        capability = "claude"
+        label = "x"
+        pane_id = "p-1"
+        container_id = "c-1"
+        registered_at = 1000
+    out = vm.agent_view(Row())
+    assert out["agent_id"] == "a-1"
+    assert out["role"] == "slave"
+
+
+def test_get_helper_handles_object_with_none_attribute() -> None:
+    """getattr returning None should fall through to default (FR-022/023
+    handling for optional fields)."""
+    class Row:
+        agent_id = "a-1"
+        role = None  # noqa: deliberately None
+        capability = "claude"
+        label = "x"
+        pane_id = "p-1"
+        container_id = "c-1"
+        registered_at = 1000
+    out = vm.agent_view(Row())
+    # role defaults to "unknown" in agent_view when row's role is None.
+    assert out["role"] == "unknown"
+
+
+def test_get_helper_handles_object_with_index_access() -> None:
+    """sqlite3.Row-style mapping access via __getitem__."""
+    class MappingLike:
+        def __init__(self, data):
+            self._data = data
+        def __getitem__(self, key):
+            return self._data[key]
+    row = MappingLike({"container_id": "c-1", "name": "bench"})
+    # _get should hit the __getitem__ branch when attribute access fails.
+    # Note: agent_view doesn't help here because it expects agent fields;
+    # use container_view which only needs container_id + name.
+    out = vm.container_view(row)
+    # container_view's _get path goes attribute-first; for this fake
+    # object getattr raises AttributeError so __getitem__ fires.
+    assert out["container_id"] == "c-1"
+    assert out["name"] == "bench"
+
+
+def test_log_attachment_view_coerce_int_handles_non_int() -> None:
+    """_coerce_int handles strings, None, and weird values gracefully."""
+    out = vm.log_attachment_view({
+        "agent_id": "a",
+        "status": "active",
+        "bytes_written": "not-an-int",
+    })
+    assert out["bytes_written"] == 0
+
+
+def test_log_attachment_view_coerce_int_handles_none() -> None:
+    out = vm.log_attachment_view({
+        "agent_id": "a",
+        "status": "active",
+        "bytes_written": None,
+    })
+    assert out["bytes_written"] == 0
+
+
+def test_log_attachment_view_coerce_int_handles_numeric_string() -> None:
+    out = vm.log_attachment_view({
+        "agent_id": "a",
+        "status": "active",
+        "bytes_written": "4096",
+    })
+    assert out["bytes_written"] == 4096
+
+
+def test_container_view_derived_state_only_when_provided() -> None:
+    row = {"container_id": "c-1", "state": "inactive"}
+    out = vm.container_view(row)
+    assert out["state"] == "inactive"
+
+
+def test_pane_view_full_shape_with_all_optional_kwargs() -> None:
+    row = {
+        "pane_id": "p-1",
+        "container_id": "c-1",
+        "tmux_socket": "/tmp/tmux/default",
+        "session_name": "main",
+        "window_index": 0,
+        "pane_index": 1,
+        "discovered_at": 1000,
+        "last_seen_at": 2000,
+    }
+    out = vm.pane_view(row, linked_agent_id="a-1", container_name="bench")
+    assert out["pane_id"] == "p-1"
+    assert out["container_name"] == "bench"
+    assert out["agent_id"] == "a-1"
+    assert out["registered"] is True
+
+
+def test_event_view_with_non_dict_payload_normalizes_to_empty() -> None:
+    """payload must always serialize as a dict — strings/ints/None reset to {}."""
+    out = vm.event_view({"event_id": 1, "event_type": "t", "payload": None})
+    assert out["payload"] == {}
+
+    out2 = vm.event_view({"event_id": 1, "event_type": "t", "payload": 42})
+    assert out2["payload"] == {}
+
+
+def test_queue_view_with_non_dict_payload_normalizes_to_empty() -> None:
+    out = vm.queue_view({"message_id": "m", "state": "pending", "payload": "string"})
+    assert out["payload"] == {}
+
+
+def test_route_view_optional_target_template_defaults() -> None:
+    """When source_scope/template/target are absent, defaults to {}."""
+    out = vm.route_view({"route_id": "r-1", "enabled": True})
+    assert out["source_scope"] == {}
+    assert out["template"] == {}
+    assert out["target"] == {}

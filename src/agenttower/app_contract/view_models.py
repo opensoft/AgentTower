@@ -245,11 +245,19 @@ def compact_route(row: Any) -> dict[str, Any]:
 
 def _get(row: Any, name: str, *, default: Any = None) -> Any:
     """Robust attribute / mapping access. Works for dataclasses, plain
-    objects, ``dict``, and ``sqlite3.Row``."""
+    objects, ``dict``, and ``sqlite3.Row``.
+
+    A stored ``None`` is treated as "no value" and the ``default`` is
+    returned in its place, consistent across the dict path
+    (``row.get(name, default)`` only fires on missing keys, so we
+    additionally normalize ``None`` → ``default`` here) and the
+    getattr path.
+    """
     if row is None:
         return default
     if isinstance(row, dict):
-        return row.get(name, default)
+        value = row.get(name, default)
+        return value if value is not None else default
     try:
         value = getattr(row, name)
         return value if value is not None else default

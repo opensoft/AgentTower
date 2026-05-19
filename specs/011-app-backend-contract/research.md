@@ -22,9 +22,11 @@ This phase resolves the open implementation questions surfaced by the technical 
 
 ## R-002: macOS SO_PEERCRED variant choice
 
-**Decision**: Use Python's `socket.getsockopt(socket.SOL_LOCAL, socket.LOCAL_PEERCRED)` (macOS) and `socket.SO_PEERCRED` (Linux). Wrap both behind `host_only.get_peer_pid_uid(conn)` returning `(pid, uid)`. The host-vs-container check runs against `pid`; the UID check (FR-041) runs against `uid`.
+**Decision (implemented)**: Reuse FEAT-002's existing peer-credential implementation in `socket_api/server.py` + `socket_api/methods.py::_peer_is_host_process`. The current path uses Linux `SO_PEERCRED` + `/proc/<pid>/cgroup` markers. The FEAT-011 helper `app_contract/host_only.py::is_host_peer(peer_uid)` calls into those existing primitives — it does **not** add a new macOS code path.
 
-**Rationale**: This matches what FEAT-009's existing implementation uses (per code inspection of `src/agenttower/routing/permissions.py`). On macOS, `LOCAL_PEERCRED` returns `(uid, gid)` and `LOCAL_PEERPID` returns the pid; both are needed. On Linux, `SO_PEERCRED` returns `(pid, uid, gid)` in one call.
+**Platform status**: Linux is fully supported. macOS callers will fall through to the sentinel `_NO_PEER_PID` / non-host classification under the current implementation; implementing the macOS `LOCAL_PEERCRED` + `LOCAL_PEERPID` path is **deferred** to a separate slice (likely FEAT-013 host-runtime work when a non-Linux desktop client first ships). The original R-002 decision below assumed a unified `host_only.get_peer_pid_uid(conn)` helper; that helper was **not** built — implementation instead reused FEAT-009's per-platform path verbatim per Round-4 Block I Q59 (reuse byte-for-byte, no new macOS support in FEAT-011).
+
+**Rationale (original, retained for context)**: This matches what FEAT-009's existing implementation uses (per code inspection of `src/agenttower/routing/permissions.py`). On macOS, `LOCAL_PEERCRED` returns `(uid, gid)` and `LOCAL_PEERPID` returns the pid; both are needed. On Linux, `SO_PEERCRED` returns `(pid, uid, gid)` in one call.
 
 **Alternatives considered**:
 - *`psutil` cross-platform abstraction*: rejected — adds a runtime dependency for a one-liner.
@@ -34,9 +36,11 @@ This phase resolves the open implementation questions surfaced by the technical 
 
 ## R-003: Async vs threading model alignment with existing dispatcher
 
-**Decision**: Reuse the existing dispatcher model (threaded — one OS thread per accepted connection, per FEAT-002). The `app_contract.dispatcher` registers method handlers with the same `Dispatcher` instance the legacy methods use, so `app.*` and legacy methods share the same per-connection thread. App-session state is keyed by `connection_id` (the dispatcher's existing handle) which gives us free cleanup on disconnect.
+**Decision (implemented)**: Reuse the existing dispatcher model (threaded — one OS thread per accepted connection, per FEAT-002). The `app_contract.dispatcher` exposes `APP_DISPATCH` which `socket_api/methods.py` merges into the legacy `DISPATCH` dict at module-load time, so `app.*` and legacy methods share the same per-connection thread.
 
-**Rationale**: The existing daemon is threaded, not asyncio-based. FEAT-008 event subscription (deferred) would re-evaluate this, but FEAT-011 is request/response only, so threads work fine. Sharing the dispatcher avoids a parallel I/O loop.
+**Session-lifecycle correction (T097, 2026-05-19)**: The original R-003 wording below proposed keying app-session state by `connection_id` (the dispatcher's existing handle) for "free cleanup on disconnect". This was unreachable: FEAT-002's dispatcher is **one-request-per-connection** (`socket_api/server.py` reads one NDJSON line, dispatches, writes one line, closes). The implemented model keys sessions by `app_session_token` in a process-wide `SessionRegistry` and accepts that sessions are not connection-bound — they're invalidated only by daemon process exit or explicit `invalidate()`, with a hard cap of 8 concurrent sessions (FR-008b). See spec.md FR-008/008a/008b for the resulting contract.
+
+**Rationale (original, retained for context)**: The existing daemon is threaded, not asyncio-based. FEAT-008 event subscription (deferred) would re-evaluate this, but FEAT-011 is request/response only, so threads work fine. Sharing the dispatcher avoids a parallel I/O loop.
 
 **Alternatives considered**:
 - *Asyncio dispatcher for `app.*`*: rejected — would need a bridge to the threaded service layer; adds complexity for no measurable benefit at FEAT-011 scale.
