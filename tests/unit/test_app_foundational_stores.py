@@ -290,53 +290,62 @@ def test_audit_no_events_file_is_noop(session: AppSession) -> None:
     assert ok is False
 
 
+def _force_jsonl_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Monkeypatch the underlying events writer to raise OSError every
+    time. Simulates a JSONL outage deterministically across CI runner
+    privilege levels — relying on directory-mode-based unwritability
+    is unreliable because some CI runners run as root and ignore mode
+    bits.
+    """
+    from agenttower.app_contract import audit as _audit_mod
+
+    def _always_raise(*_args, **_kwargs):
+        raise OSError(28, "No space left on device (simulated outage)")
+
+    monkeypatch.setattr(_audit_mod._events_writer, "append_event", _always_raise)
+
+
 def test_audit_jsonl_outage_does_not_raise(
-    session: AppSession, tmp_path: Path, capsys
+    session: AppSession,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR-044b: JSONL outage → mutation still succeeds; row dropped;
     one stderr warning per outage window."""
     audit_mod._reset_outage_warn_state()
+    _force_jsonl_outage(monkeypatch)
 
-    # Point the audit writer at a path inside a read-only parent.
-    readonly_parent = tmp_path / "ro"
-    readonly_parent.mkdir(mode=0o500)
-    events_file = readonly_parent / "events.jsonl"
+    events_file = tmp_path / "events.jsonl"
+    ok = audit_mod.emit_app_mutation(
+        events_file,
+        event_type="agent_registered",
+        payload={"agent_id": "agt-1"},
+        session=session,
+    )
+    assert ok is False, "audit emit must return False on JSONL outage"
+    captured = capsys.readouterr()
+    assert "JSONL audit write failed" in captured.err
 
-    try:
-        ok = audit_mod.emit_app_mutation(
+
+def test_audit_outage_warning_is_rate_limited(
+    session: AppSession,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-044b: one stderr warning per outage window (not per row)."""
+    audit_mod._reset_outage_warn_state()
+    _force_jsonl_outage(monkeypatch)
+
+    events_file = tmp_path / "events.jsonl"
+    for _ in range(5):
+        audit_mod.emit_app_mutation(
             events_file,
             event_type="agent_registered",
             payload={"agent_id": "agt-1"},
             session=session,
         )
-        assert ok is False, "audit emit must return False on JSONL outage"
-        captured = capsys.readouterr()
-        assert "JSONL audit write failed" in captured.err
-    finally:
-        # Restore mode so tmp_path cleanup can recurse in.
-        readonly_parent.chmod(0o700)
-
-
-def test_audit_outage_warning_is_rate_limited(
-    session: AppSession, tmp_path: Path, capsys
-) -> None:
-    """FR-044b: one stderr warning per outage window (not per row)."""
-    audit_mod._reset_outage_warn_state()
-
-    readonly_parent = tmp_path / "ro"
-    readonly_parent.mkdir(mode=0o500)
-    events_file = readonly_parent / "events.jsonl"
-
-    try:
-        for _ in range(5):
-            audit_mod.emit_app_mutation(
-                events_file,
-                event_type="agent_registered",
-                payload={"agent_id": "agt-1"},
-                session=session,
-            )
-        captured = capsys.readouterr()
-        # Exactly one warning across 5 attempts.
-        assert captured.err.count("JSONL audit write failed") == 1
-    finally:
-        readonly_parent.chmod(0o700)
+    captured = capsys.readouterr()
+    # Exactly one warning across 5 attempts.
+    assert captured.err.count("JSONL audit write failed") == 1
