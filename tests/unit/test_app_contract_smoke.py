@@ -75,6 +75,19 @@ def host_peer(monkeypatch: pytest.MonkeyPatch):
         _clear_request_peer_context()
 
 
+@pytest.fixture
+def host_session(daemon_ctx, host_peer):
+    """Host peer + a freshly-minted app.hello session token.
+
+    Returns ``(uid, token)``. Used by every readiness/dashboard test that
+    wants a valid session-gated request — keeps the test bodies tight by
+    not having to call app.hello inline every time.
+    """
+    env = hello_mod.app_hello(daemon_ctx, {}, peer_uid=host_peer)
+    assert env["ok"] is True, f"host_session setup failed: {env}"
+    return host_peer, env["result"]["app_session_token"]
+
+
 # ─── Dispatcher merge (FR-001, FR-002) ───────────────────────────────────
 
 
@@ -366,29 +379,74 @@ def daemon_ctx_with_db(tmp_path: Path) -> "DaemonContext":
     )
 
 
-def _readiness_call(ctx, host_uid):
+def _readiness_call(ctx, host_uid, token=None):
     from agenttower.app_contract import readiness as r
-    return r.app_readiness(ctx, {}, peer_uid=host_uid)
+    params: dict = {}
+    if token is not None:
+        params["app_session_token"] = token
+    return r.app_readiness(ctx, params, peer_uid=host_uid)
 
 
-def _dashboard_call(ctx, host_uid, recent_limit=None):
+def _dashboard_call(ctx, host_uid, recent_limit=None, token=None):
     from agenttower.app_contract import dashboard as d
-    params = {} if recent_limit is None else {"recent_limit": recent_limit}
+    params: dict = {}
+    if token is not None:
+        params["app_session_token"] = token
+    if recent_limit is not None:
+        params["recent_limit"] = recent_limit
     return d.app_dashboard(ctx, params, peer_uid=host_uid)
 
 
 def test_readiness_host_only_gate(daemon_ctx_with_db) -> None:
-    """FR-042: readiness rejects no-credentials peer with host_only."""
+    """FR-042: readiness rejects no-credentials peer with host_only.
+
+    Host-only fires BEFORE the session gate (FR-042 + FR-007 ordering),
+    so a container peer gets ``host_only`` even when no token is supplied.
+    """
     env = _readiness_call(daemon_ctx_with_db, -1)
     assert env["ok"] is False
     assert env["error"]["code"] == app_errors.HOST_ONLY
 
 
-def test_readiness_envelope_shape(
+def test_readiness_session_required_when_token_missing(
     daemon_ctx_with_db, host_peer: int
 ) -> None:
+    """FR-007: host peer without a token → app_session_required."""
+    env = _readiness_call(daemon_ctx_with_db, host_peer)  # no token
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.APP_SESSION_REQUIRED
+    assert env["error"]["details"] == {}
+
+
+def test_readiness_session_expired_when_token_invalid(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-007: host peer with an unknown token → app_session_expired."""
+    env = _readiness_call(daemon_ctx_with_db, host_peer, token="not-a-real-token")
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.APP_SESSION_EXPIRED
+
+
+def test_readiness_session_required_on_non_string_token(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-007: malformed (non-string) token → app_session_required."""
+    from agenttower.app_contract import readiness as r
+    env = r.app_readiness(
+        daemon_ctx_with_db,
+        {"app_session_token": 12345},  # int, not a string
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.APP_SESSION_REQUIRED
+
+
+def test_readiness_envelope_shape(
+    daemon_ctx_with_db, host_session
+) -> None:
     """FR-012, FR-013, FR-014a: state + 6 subsystems + hints array."""
-    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _readiness_call(daemon_ctx_with_db, host_peer, token=token)
     assert env["ok"] is True
     r = env["result"]
     # FR-012: state is from the closed set.
@@ -408,20 +466,22 @@ def test_readiness_envelope_shape(
 
 
 def test_readiness_sqlite_probe_ok(
-    daemon_ctx_with_db, host_peer: int
+    daemon_ctx_with_db, host_session
 ) -> None:
     """SQLite probe is ``ok`` against a freshly-opened registry."""
-    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _readiness_call(daemon_ctx_with_db, host_peer, token=token)
     by_name = {s["name"]: s for s in env["result"]["subsystems"]}
     assert by_name["sqlite"]["status"] == "ok"
 
 
 def test_readiness_unwired_services_are_unavailable(
-    daemon_ctx_with_db, host_peer: int
+    daemon_ctx_with_db, host_session
 ) -> None:
     """Unwired services produce subsystem rows with status=unavailable +
     a non-empty reason."""
-    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _readiness_call(daemon_ctx_with_db, host_peer, token=token)
     by_name = {s["name"]: s for s in env["result"]["subsystems"]}
     for name in (
         "docker",
@@ -436,10 +496,11 @@ def test_readiness_unwired_services_are_unavailable(
 
 
 def test_readiness_emits_docker_unavailable_hint(
-    daemon_ctx_with_db, host_peer: int
+    daemon_ctx_with_db, host_session
 ) -> None:
     """FR-014a: docker unwired → docker_unavailable_hint with action_required."""
-    env = _readiness_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _readiness_call(daemon_ctx_with_db, host_peer, token=token)
     codes = {h["code"] for h in env["result"]["hints"]}
     assert "docker_unavailable_hint" in codes
     # Severity check
@@ -447,21 +508,80 @@ def test_readiness_emits_docker_unavailable_hint(
     assert by_code["docker_unavailable_hint"]["severity"] == "action_required"
 
 
+def test_readiness_jsonl_probe_degraded_when_parent_unwritable(
+    daemon_ctx_with_db, host_session, tmp_path: Path, monkeypatch
+) -> None:
+    """probe_jsonl returns degraded when parent dir lacks write permission."""
+    host_peer, token = host_session
+    # Point events_file at a read-only directory to trigger the writability check.
+    ro_dir = tmp_path / "readonly"
+    ro_dir.mkdir()
+    ro_dir.chmod(0o555)  # r-x permissions only — no write
+    try:
+        monkeypatch.setattr(
+            daemon_ctx_with_db, "events_file", ro_dir / "events.jsonl"
+        )
+        env = _readiness_call(daemon_ctx_with_db, host_peer, token=token)
+        by_name = {s["name"]: s for s in env["result"]["subsystems"]}
+        # On most filesystems a non-writable parent → degraded.
+        # On exotic mounts where the writability check is satisfied anyway
+        # (e.g., user is root), we skip the strict assertion.
+        if os.geteuid() != 0:
+            assert by_name["jsonl"]["status"] == "degraded"
+            assert "not writable" in by_name["jsonl"]["reason"]
+    finally:
+        ro_dir.chmod(0o755)  # restore so pytest can clean up
+
+
 # ─── app.dashboard (FR-015, FR-016, FR-017, FR-018, FR-045) ──────────────
 
 
 def test_dashboard_host_only_gate(daemon_ctx_with_db) -> None:
-    """FR-042: dashboard rejects container peer with host_only."""
+    """FR-042: dashboard rejects container peer with host_only.
+
+    Host-only fires BEFORE the session gate (FR-042 + FR-007 ordering),
+    so a container peer gets ``host_only`` even when a token is supplied.
+    """
     env = _dashboard_call(daemon_ctx_with_db, -1)
     assert env["ok"] is False
     assert env["error"]["code"] == app_errors.HOST_ONLY
 
 
-def test_dashboard_envelope_shape(
+def test_dashboard_session_required_when_token_missing(
     daemon_ctx_with_db, host_peer: int
 ) -> None:
+    """FR-007: host peer without a token → app_session_required."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer)  # no token
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.APP_SESSION_REQUIRED
+
+
+def test_dashboard_session_expired_when_token_invalid(
+    daemon_ctx_with_db, host_peer: int
+) -> None:
+    """FR-007: host peer with an unknown token → app_session_expired."""
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token="not-a-real-token")
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.APP_SESSION_EXPIRED
+
+
+def test_dashboard_host_only_beats_session_gate(daemon_ctx_with_db) -> None:
+    """FR-042 + FR-007 ordering: container peer with a valid-looking token
+    still gets ``host_only``, never ``app_session_required`` / ``app_session_expired``
+    (would leak session-existence info to a non-host peer)."""
+    env = _dashboard_call(
+        daemon_ctx_with_db, -1, token="any-token-value-at-all"
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.HOST_ONLY
+
+
+def test_dashboard_envelope_shape(
+    daemon_ctx_with_db, host_session
+) -> None:
     """FR-015, FR-016, FR-017, FR-014a: counts + recents + hints all present."""
-    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     assert env["ok"] is True
     r = env["result"]
     # All 7 count surfaces present (FR-016).
@@ -495,10 +615,11 @@ def test_dashboard_envelope_shape(
 
 
 def test_dashboard_empty_system_returns_zero_counts(
-    daemon_ctx_with_db, host_peer: int
+    daemon_ctx_with_db, host_session
 ) -> None:
     """Coverage: an empty system returns all-zero counts and empty recents."""
-    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     r = env["result"]
     for bucket in ("active", "inactive", "degraded_scan"):
         assert r["counts"]["containers"][bucket] == 0
@@ -514,21 +635,25 @@ def test_dashboard_empty_system_returns_zero_counts(
 
 
 def test_dashboard_recent_limit_default_is_10(
-    daemon_ctx_with_db, host_peer: int
+    daemon_ctx_with_db, host_session
 ) -> None:
     """FR-017: default recent_limit is 10."""
     # With an empty system the recent arrays are empty; the assertion is on
     # request acceptance, not row count.
-    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     assert env["ok"] is True
 
 
 @pytest.mark.parametrize("limit", [0, 51, 100, -1])
 def test_dashboard_recent_limit_out_of_bounds_returns_validation_failed(
-    daemon_ctx_with_db, host_peer: int, limit: int
+    daemon_ctx_with_db, host_session, limit: int
 ) -> None:
     """FR-017: recent_limit out of bounds → validation_failed.details.field."""
-    env = _dashboard_call(daemon_ctx_with_db, host_peer, recent_limit=limit)
+    host_peer, token = host_session
+    env = _dashboard_call(
+        daemon_ctx_with_db, host_peer, recent_limit=limit, token=token
+    )
     assert env["ok"] is False
     assert env["error"]["code"] == app_errors.VALIDATION_FAILED
     assert env["error"]["details"]["field"] == "recent_limit"
@@ -536,20 +661,24 @@ def test_dashboard_recent_limit_out_of_bounds_returns_validation_failed(
 
 @pytest.mark.parametrize("bad", ["10", 10.0, True, [10]])
 def test_dashboard_recent_limit_wrong_type_returns_validation_failed(
-    daemon_ctx_with_db, host_peer: int, bad
+    daemon_ctx_with_db, host_session, bad
 ) -> None:
     """FR-017: recent_limit must be an integer (not str/float/bool/list)."""
-    env = _dashboard_call(daemon_ctx_with_db, host_peer, recent_limit=bad)
+    host_peer, token = host_session
+    env = _dashboard_call(
+        daemon_ctx_with_db, host_peer, recent_limit=bad, token=token
+    )
     assert env["ok"] is False
     assert env["error"]["code"] == app_errors.VALIDATION_FAILED
 
 
 def test_dashboard_emits_start_bench_container_hint_when_empty(
-    daemon_ctx_with_db, host_peer: int
+    daemon_ctx_with_db, host_session
 ) -> None:
     """FR-014a: zero containers and docker unwired → docker hint, not
     start_bench_container (the latter only fires if docker is reachable)."""
-    env = _dashboard_call(daemon_ctx_with_db, host_peer)
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     codes = {h["code"] for h in env["result"]["hints"]}
     # docker_unavailable_hint should be emitted (docker unwired)
     assert "docker_unavailable_hint" in codes
@@ -559,15 +688,27 @@ def test_dashboard_emits_start_bench_container_hint_when_empty(
 
 
 def test_dashboard_no_audit_side_effect(
-    daemon_ctx_with_db, host_peer: int, tmp_path: Path
+    daemon_ctx_with_db, host_session, tmp_path: Path
 ) -> None:
     """FR-045: dashboard MUST be side-effect-free (no audit row written)."""
+    host_peer, token = host_session
     events_file = daemon_ctx_with_db.events_file
     # Confirm the events file either doesn't exist or is empty before.
     before_size = events_file.stat().st_size if events_file.exists() else 0
-    _dashboard_call(daemon_ctx_with_db, host_peer)
+    _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     after_size = events_file.stat().st_size if events_file.exists() else 0
     assert after_size == before_size, (
         "app.dashboard wrote to the audit JSONL — violates FR-045 "
         "side-effect-free guarantee"
     )
+
+
+# ─── Session gate ordering check that doesn't fit cleanly elsewhere ──────
+
+
+def test_readiness_host_only_beats_session_gate(daemon_ctx_with_db) -> None:
+    """FR-042 + FR-007 ordering: container peer with a token still gets
+    host_only (would leak session-existence info to non-host peer)."""
+    env = _readiness_call(daemon_ctx_with_db, -1, token="any-token-value-at-all")
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.HOST_ONLY

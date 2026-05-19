@@ -16,13 +16,13 @@ The host-only gate (FR-042) applies to ``app.readiness``.
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import envelope
-from .errors import HOST_ONLY
 from .versioning import (
     HINT_SEVERITY_ACTION_REQUIRED,
     HINT_SEVERITY_INFO,
@@ -149,7 +149,12 @@ def probe_sqlite(ctx: "DaemonContext") -> SubsystemRow:
 
 
 def probe_jsonl(ctx: "DaemonContext") -> SubsystemRow:
-    """JSONL audit-stream reachability via path stat + write permission."""
+    """JSONL audit-stream reachability via path stat + write permission.
+
+    Checks both that the parent directory exists / is writable AND that
+    the events file itself (if present) is writable. A read-only events
+    file would silently swallow audit emissions otherwise.
+    """
     events_file = getattr(ctx, "events_file", None)
     if events_file is None:
         return SubsystemRow(
@@ -168,10 +173,26 @@ def probe_jsonl(ctx: "DaemonContext") -> SubsystemRow:
                 reason=f"events_file parent {parent} does not exist",
                 hint=None,
             )
-        # If the file exists, ensure we can stat it; if it doesn't,
-        # the writer creates on first append, which is acceptable.
+        if not os.access(parent, os.W_OK):
+            return SubsystemRow(
+                name="jsonl",
+                status=SUBSYSTEM_STATUS_DEGRADED,
+                reason=f"events_file parent {parent} is not writable",
+                hint=None,
+            )
+        # If the file exists, ensure we can stat AND write to it; if it
+        # doesn't, the writer creates on first append, which is acceptable
+        # because the parent directory writability check above covers
+        # the create-on-write path.
         if p.exists():
             p.stat()
+            if not os.access(p, os.W_OK):
+                return SubsystemRow(
+                    name="jsonl",
+                    status=SUBSYSTEM_STATUS_DEGRADED,
+                    reason=f"events_file {p} is not writable",
+                    hint=None,
+                )
     except Exception as exc:  # noqa: BLE001
         return SubsystemRow(
             name="jsonl",
@@ -347,15 +368,15 @@ def app_readiness(
     params: dict[str, Any],
     peer_uid: int = _NO_PEER_UID,
 ) -> dict[str, Any]:
-    """Handler for ``app.readiness`` (FR-012..FR-014a, FR-045)."""
-    from .host_only import is_host_peer  # lazy import (circular avoidance)
+    """Handler for ``app.readiness`` (FR-007, FR-012..FR-014a, FR-042, FR-045)."""
+    # FR-042 + FR-007: combined host-only + session-token gate.
+    from .sessions import gate_session_required  # lazy (circular avoidance)
 
-    if not is_host_peer(peer_uid):
-        return envelope.failure(
-            HOST_ONLY,
-            "app.* namespace is host-only; bench-container callers refused",
-            details={},
-        )
+    gate = gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
+    # gate is an AppSession; we don't need to bind it here because
+    # app.readiness is side-effect-free (FR-045) — no audit emission.
 
     # Run all probes in fixed order (FR-013).
     rows: list[SubsystemRow] = [

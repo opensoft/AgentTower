@@ -132,9 +132,70 @@ def set_registry(registry: SessionRegistry) -> None:
     _REGISTRY = registry
 
 
+def gate_session_required(
+    params: dict | None,
+    peer_uid: int,
+) -> "AppSession | dict":
+    """Combined FR-042 host-only + FR-007 session-token gate.
+
+    Every ``app.*`` method except ``app.preflight`` and ``app.hello`` calls
+    this at the top of its handler and either returns the failure envelope
+    dict (when either gate rejects) or continues with the resolved
+    ``AppSession``.
+
+    Gate order matters (FR-042 + FR-007):
+        1. ``host_only`` — container peers are rejected first, regardless
+           of token. This prevents leaking session-existence information
+           to a container caller that happens to have a valid token.
+        2. ``app_session_required`` — token missing / wrong type.
+        3. ``app_session_expired`` — token present but not in the registry.
+
+    The session token is read from ``params["app_session_token"]``. Per the
+    FEAT-002 dispatch loop (which only knows about ``{method, params}``),
+    keeping the token inside ``params`` avoids requiring any
+    ``socket_api`` modification.
+
+    Returns:
+        ``AppSession`` on success, or a failure-envelope ``dict`` on either
+        gate rejection. Callers do ``if isinstance(result, dict): return result``.
+    """
+    # Lazy imports to avoid module-load circular dependency.
+    from . import envelope as _envelope
+    from .errors import APP_SESSION_EXPIRED, APP_SESSION_REQUIRED, HOST_ONLY
+    from .host_only import is_host_peer
+
+    if not is_host_peer(peer_uid):
+        return _envelope.failure(
+            HOST_ONLY,
+            "app.* namespace is host-only; bench-container callers refused",
+            details={},
+        )
+
+    if not isinstance(params, dict):
+        params = {}
+    token = params.get("app_session_token")
+    if not token or not isinstance(token, str):
+        return _envelope.failure(
+            APP_SESSION_REQUIRED,
+            "missing or malformed app_session_token; call app.hello first",
+            details={},
+        )
+
+    session = get_registry().lookup(token)
+    if session is None:
+        return _envelope.failure(
+            APP_SESSION_EXPIRED,
+            "app_session_token is not valid; call app.hello to issue a new one",
+            details={},
+        )
+
+    return session
+
+
 __all__ = [
     "AppSession",
     "SessionRegistry",
     "get_registry",
     "set_registry",
+    "gate_session_required",
 ]

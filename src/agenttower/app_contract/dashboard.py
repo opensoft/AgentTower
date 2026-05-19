@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from . import envelope, view_models
-from .errors import HOST_ONLY, VALIDATION_FAILED
+from .errors import VALIDATION_FAILED
 from .readiness import (
     Hint,
     emit_hints,
@@ -314,15 +314,15 @@ def app_dashboard(
     params: dict[str, Any],
     peer_uid: int = _NO_PEER_UID,
 ) -> dict[str, Any]:
-    """Handler for ``app.dashboard`` (FR-015..FR-018, FR-045)."""
-    from .host_only import is_host_peer  # lazy (circular avoidance)
+    """Handler for ``app.dashboard`` (FR-007, FR-015..FR-018, FR-042, FR-045)."""
+    # FR-042 + FR-007: combined host-only + session-token gate.
+    from .sessions import gate_session_required  # lazy (circular avoidance)
 
-    if not is_host_peer(peer_uid):
-        return envelope.failure(
-            HOST_ONLY,
-            "app.* namespace is host-only; bench-container callers refused",
-            details={},
-        )
+    gate = gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
+    # gate is an AppSession; app.dashboard is side-effect-free (FR-045)
+    # so we don't bind it for audit attribution.
 
     if not isinstance(params, dict):
         params = {}

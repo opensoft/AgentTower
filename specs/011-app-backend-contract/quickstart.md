@@ -95,7 +95,7 @@ Save `app_session_token` for every subsequent call.
 ## Step 3 — `app.readiness` (with session)
 
 ```json
-{"method": "app.readiness", "params": {}, "app_session_token": "f7a3..."}
+{"method": "app.readiness", "params": {"app_session_token": "f7a3..."}}
 ```
 
 **Expected response on a healthy install**:
@@ -144,7 +144,7 @@ Save `app_session_token` for every subsequent call.
 ## Step 4 — `app.dashboard`
 
 ```json
-{"method": "app.dashboard", "params": {"recent_limit": 5}, "app_session_token": "f7a3..."}
+{"method": "app.dashboard", "params": {"recent_limit": 5, "app_session_token": "f7a3..."}}
 ```
 
 **Expected shape on a healthy install with ≥1 container and ≥1 agent**:
