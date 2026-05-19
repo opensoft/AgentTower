@@ -197,19 +197,28 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         if b"\x00" in body:
             return _make_malformed_request_envelope("embedded NUL")
 
+        # Invalid UTF-8 and JSON decode errors stay on the legacy FEAT-002
+        # ``bad_json`` envelope to preserve FEAT-002 contract behavior
+        # (locked by ``test_socket_api_framing.py``). FR-003b's
+        # ``malformed_request`` code lands for the NEW pre-parse checks
+        # (\r, \x00, empty line) + the post-parse trailing-content check
+        # which are not in the legacy lock-in. The FR-003b coverage of
+        # invalid UTF-8 and JSON decode error is a future follow-up that
+        # will require either a FEAT-002 contract bump or a method-aware
+        # envelope rewriter; see SC-028 / T098 in tasks.md.
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError:
-            return _make_malformed_request_envelope("invalid utf-8")
+            return errors.make_error(errors.BAD_JSON, "request is not UTF-8")
 
-        # FR-003b case (c) + (d): use raw_decode so we can detect trailing
-        # content after a successfully-parsed first JSON object on the line.
+        # FR-003b case (c): use raw_decode so we can distinguish "extra
+        # content after the first JSON object" from a clean parse failure.
         text_stripped = text.lstrip()
         decoder = json.JSONDecoder()
         try:
             request, idx = decoder.raw_decode(text_stripped)
         except json.JSONDecodeError as exc:
-            return _make_malformed_request_envelope(f"json decode error: {exc.msg}")
+            return errors.make_error(errors.BAD_JSON, f"json decode failed: {exc.msg}")
         # Anything non-whitespace remaining is trailing content.
         if text_stripped[idx:].strip():
             return _make_malformed_request_envelope("trailing content")
