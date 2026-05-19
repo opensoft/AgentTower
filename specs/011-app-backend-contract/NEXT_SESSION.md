@@ -1,9 +1,47 @@
 # FEAT-011 — Next Session Pickup
 
-**Last updated**: 2026-05-19 (commit `3577f5c`)
+**Last updated**: 2026-05-19 (commit pending; round-4 + Story-1 socket integration test)
 **Branch**: `011-app-backend-contract`
 **Worktree**: `/workspace/projects/AgentTower-worktrees/011-app-backend-contract/`
-**PR**: [#19](https://github.com/opensoft/AgentTower/pull/19) — OPEN, 5 commits
+**PR**: [#19](https://github.com/opensoft/AgentTower/pull/19) — OPEN, 7+ commits
+
+## Latest progress (2026-05-19 round 4 + T023)
+
+- **Round 4 clarifications encoded** (commit `5984d6b`): 70-question checklist
+  walkthrough block in spec.md; 27-code closed set (added `malformed_request`);
+  new FRs FR-003b (wire framing), FR-008a/b (hello idempotency + 8-session
+  cap), FR-028a-d (adopt full-identity match + attach_log/inactive rules +
+  parent_agent_id + label normalization), FR-030d/e (scan coalescing + 4-cap),
+  FR-031 (routing_disabled vs permission_denied split), FR-044a-c (audit
+  mutex + best-effort + ordering); new SCs SC-028..SC-038; all 668
+  checklist items ticked across 23 files.
+- **T023 done** — `tests/integration/test_story1_dashboard_bootstrap.py`
+  walks Story 1 over a real Unix socket, **10 tests passing**. Includes
+  SC-002 worst-of-5 ≤500ms and SC-008 token-redaction.
+- **T030 folded into T023** — Round-4 Block H Q52 changed SC-002 from
+  "p95 over 20 trials" to "worst across 5 trials"; that's what the test
+  asserts.
+- **errors.py bumped** to 27 codes (added `MALFORMED_REQUEST`); smoke
+  suite now 57 passed.
+
+### Drift discoveries (filed as T097, T098 in tasks.md)
+
+T023 surfaced two real spec/implementation mismatches:
+
+1. **T097**: FEAT-002 is one-request-per-connection, so FR-008 "invalidate
+   on connection close" and FR-008a "idempotent on same connection" are
+   unreachable as written. The implementation adapted (token-keyed
+   registry across connections, token in `params`); the spec text needs
+   updating to match. Recommended: spec fix, not code change.
+2. **T098**: The legacy FEAT-002 `unknown_method` envelope is missing the
+   FR-033-mandated `details: {}` field and `app_contract_version` stamp
+   for `app.*` method names. Add a wrapping rewriter at the FEAT-011
+   dispatcher.
+
+These do NOT block US1 merge; they should be triaged at the start of
+the next session.
+
+---
 
 This file exists so the next `/speckit.implement` session can pick up
 without re-reading every commit message. The `tasks.md` checklist is the
