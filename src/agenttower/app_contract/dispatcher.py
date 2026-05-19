@@ -23,6 +23,13 @@ Each handler is wrapped by ``_wrap_handler`` (below) so that:
 - Any other unexpected exception from a handler is similarly mapped to
   ``internal_error`` so the wire always sees a structurally-valid
   FEAT-011 envelope (FR-033 invariant).
+
+T098: ``is_app_method()`` and ``make_unknown_method_envelope()`` are
+exposed for the FEAT-002 dispatcher to call when a method name in the
+``app.*`` namespace misses the DISPATCH table. The default FEAT-002
+``unknown_method`` envelope is missing the FR-033 ``details: {}`` field
+and the FR-033 ``app_contract_version`` stamp; the rewriter emits the
+FEAT-011-compliant shape instead.
 """
 
 from __future__ import annotations
@@ -105,6 +112,41 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
 APP_DISPATCH: dict[str, _AppHandler] = _build_app_dispatch()
 
 
+_APP_NAMESPACE_PREFIX = "app."
+
+
+def is_app_method(name: str) -> bool:
+    """Return whether ``name`` belongs to the FEAT-011 ``app.*`` namespace.
+
+    Used by the FEAT-002 dispatcher (server.py) to decide whether an
+    unknown method name should get the FEAT-011 envelope shape instead
+    of the legacy FEAT-002 ``make_error`` shape. T098.
+    """
+    return isinstance(name, str) and name.startswith(_APP_NAMESPACE_PREFIX)
+
+
+def make_unknown_method_envelope(method: str) -> dict[str, Any]:
+    """Return the FR-033-compliant ``unknown_method`` envelope for an
+    ``app.*`` method name not present in DISPATCH.
+
+    Shape: ``{ok: false, app_contract_version, error: {code, message,
+    details: {}}}``. Per FR-034b the ``details`` are always empty for
+    ``unknown_method`` regardless of cause (typo vs future-minor vs
+    nonexistent). T098.
+    """
+    # Lazy import to avoid module-load cycle with envelope.py → errors.py.
+    from . import envelope as _envelope
+    from .errors import UNKNOWN_METHOD
+
+    return _envelope.failure(
+        UNKNOWN_METHOD,
+        f"unknown app.* method: {method}",
+        details={},
+    )
+
+
 __all__ = [
     "APP_DISPATCH",
+    "is_app_method",
+    "make_unknown_method_envelope",
 ]

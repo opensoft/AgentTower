@@ -67,6 +67,38 @@ def _peer_pid_from_socket(conn: _socket.socket) -> int:
 
 
 # ---------------------------------------------------------------------------
+# FEAT-011 envelope helpers (FR-003b, T098)
+# ---------------------------------------------------------------------------
+
+
+def _make_malformed_request_envelope(reason: str) -> dict[str, Any]:
+    """Build the FEAT-011 ``malformed_request`` envelope (FR-003b).
+
+    Lazy-imports ``app_contract.envelope`` to keep the module-load free
+    of a cycle (``socket_api/server.py`` imports ``methods.py``, which
+    imports ``app_contract/dispatcher.py``, which imports
+    ``app_contract/envelope.py``).
+    """
+    from ..app_contract import envelope as _app_envelope
+    from ..app_contract.errors import MALFORMED_REQUEST
+
+    return _app_envelope.failure(
+        MALFORMED_REQUEST,
+        f"malformed request line ({reason})",
+        details={"reason": reason},
+    )
+
+
+def _make_unknown_app_method_envelope(method: str) -> dict[str, Any]:
+    """Build the FR-033-compliant ``unknown_method`` envelope for ``app.*``
+    methods not present in DISPATCH (T098).
+    """
+    from ..app_contract import dispatcher as _app_dispatcher
+
+    return _app_dispatcher.make_unknown_method_envelope(method)
+
+
+# ---------------------------------------------------------------------------
 # Request handler
 # ---------------------------------------------------------------------------
 
@@ -136,11 +168,8 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         except OSError:
             return errors.make_error(errors.INTERNAL_ERROR, "read failed")
 
+        # Peer closed without writing.
         if not line:
-            # Peer closed without writing; we still need to write *something*
-            # so the connection has a deterministic close, but a no-data peer
-            # is not a protocol violation. Return an internal_error envelope
-            # only if the underlying state is broken; otherwise stay silent.
             return errors.make_error(errors.BAD_JSON, "empty request")
 
         if len(line) > MAX_REQUEST_BYTES or not line.endswith(b"\n"):
@@ -149,15 +178,41 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 f"request line exceeds {MAX_REQUEST_BYTES} bytes",
             )
 
+        # FR-003b wire-framing gate. Five cases are caught BEFORE handler
+        # dispatch and emitted in the FEAT-011 envelope with the
+        # ``malformed_request`` closed-set code and a short ``details.reason``:
+        # (a) stray ``\r`` byte, (b) embedded ``\x00`` byte, (e) empty line.
+        # Cases (c) trailing content + (d) JSON decode error are caught
+        # below post-decode. The FEAT-011 envelope is a strict superset of
+        # the legacy FEAT-002 shape (it adds ``app_contract_version`` and
+        # ``error.details``), so legacy clients still see ``ok: false`` +
+        # ``error.code/message`` they can parse; they just see an
+        # unfamiliar closed-set code, which is acceptable for inputs that
+        # were always malformed.
+        body = line[:-1]  # strip trailing \n for the byte checks below
+        if body == b"":
+            return _make_malformed_request_envelope("empty line")
+        if b"\r" in body:
+            return _make_malformed_request_envelope("stray CR")
+        if b"\x00" in body:
+            return _make_malformed_request_envelope("embedded NUL")
+
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError:
-            return errors.make_error(errors.BAD_JSON, "request is not UTF-8")
+            return _make_malformed_request_envelope("invalid utf-8")
 
+        # FR-003b case (c) + (d): use raw_decode so we can detect trailing
+        # content after a successfully-parsed first JSON object on the line.
+        text_stripped = text.lstrip()
+        decoder = json.JSONDecoder()
         try:
-            request = json.loads(text)
+            request, idx = decoder.raw_decode(text_stripped)
         except json.JSONDecodeError as exc:
-            return errors.make_error(errors.BAD_JSON, f"json decode failed: {exc.msg}")
+            return _make_malformed_request_envelope(f"json decode error: {exc.msg}")
+        # Anything non-whitespace remaining is trailing content.
+        if text_stripped[idx:].strip():
+            return _make_malformed_request_envelope("trailing content")
 
         if not isinstance(request, dict):
             return errors.make_error(errors.BAD_REQUEST, "request must be a JSON object")
@@ -174,6 +229,12 @@ class _RequestHandler(socketserver.StreamRequestHandler):
 
         handler = DISPATCH.get(method)
         if handler is None:
+            # T098: ``app.*`` methods get the FR-033-compliant FEAT-011
+            # envelope (with ``app_contract_version`` + ``details: {}``);
+            # legacy methods stay on the FEAT-002 envelope.
+            from ..app_contract.dispatcher import is_app_method
+            if is_app_method(method):
+                return _make_unknown_app_method_envelope(method)
             return errors.make_error(errors.UNKNOWN_METHOD, f"unknown method: {method}")
 
         # ``self.connection`` is set by ``StreamRequestHandler.setup``; tests

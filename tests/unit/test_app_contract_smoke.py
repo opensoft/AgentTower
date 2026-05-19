@@ -362,6 +362,59 @@ def test_hello_session_token_unique_per_call(
     assert e1["result"]["app_session_id"] < e2["result"]["app_session_id"]
 
 
+def test_t098_is_app_method_classifier() -> None:
+    """T098: is_app_method() identifies the app.* namespace for the
+    FEAT-002 unknown-method rewriter."""
+    from agenttower.app_contract.dispatcher import is_app_method
+
+    assert is_app_method("app.preflight") is True
+    assert is_app_method("app.foo.bar") is True
+    assert is_app_method("app.") is True  # weird but matches prefix
+    assert is_app_method("appfoo") is False
+    assert is_app_method("ping") is False
+    assert is_app_method("status") is False
+    assert is_app_method("") is False
+    assert is_app_method(None) is False  # type: ignore[arg-type]
+
+
+def test_t098_make_unknown_method_envelope_shape() -> None:
+    """T098: make_unknown_method_envelope() produces an FR-033-compliant
+    failure envelope with code=unknown_method and details={}."""
+    from agenttower.app_contract.dispatcher import make_unknown_method_envelope
+
+    env = make_unknown_method_envelope("app.foo.bar")
+    assert env["ok"] is False
+    assert env["app_contract_version"] == "1.0"
+    assert env["error"]["code"] == "unknown_method"
+    assert env["error"]["details"] == {}
+    assert "app.foo.bar" in env["error"]["message"]
+
+
+def test_hello_rejects_9th_concurrent_session(
+    daemon_ctx: DaemonContext, host_peer: int
+) -> None:
+    """FR-008b: 9th concurrent app.hello rejected with too_many_sessions."""
+    from agenttower.app_contract import sessions as sessions_mod
+
+    fresh = sessions_mod.SessionRegistry()
+    sessions_mod.set_registry(fresh)
+    try:
+        for i in range(sessions_mod.MAX_SESSIONS):
+            envelope = hello_mod.app_hello(daemon_ctx, {}, peer_uid=host_peer)
+            assert envelope["ok"], f"hello call #{i+1} should succeed"
+        assert fresh.size() == sessions_mod.MAX_SESSIONS
+        ninth = hello_mod.app_hello(daemon_ctx, {}, peer_uid=host_peer)
+        assert ninth["ok"] is False
+        assert ninth["error"]["code"] == "validation_failed"
+        assert ninth["error"]["details"] == {
+            "field": "app.hello",
+            "reason": "too_many_sessions",
+        }
+        assert fresh.size() == sessions_mod.MAX_SESSIONS
+    finally:
+        sessions_mod.set_registry(sessions_mod.SessionRegistry())
+
+
 # ─── Versioning helpers ──────────────────────────────────────────────────
 
 
@@ -832,3 +885,59 @@ def test_app_dispatch_handlers_are_wrapped(daemon_ctx) -> None:
             f"{name} dispatch entry is the raw handler; "
             f"_wrap_handler safety net is bypassed"
         )
+
+
+# ─── FR-003b wire framing + T098 unknown-method envelope rewriter ────────
+
+
+def test_malformed_request_envelope_shape() -> None:
+    """FR-003b: ``_make_malformed_request_envelope`` returns the FEAT-011
+    envelope with ``code == "malformed_request"`` and ``details.reason``."""
+    from agenttower.socket_api.server import _make_malformed_request_envelope
+
+    env = _make_malformed_request_envelope("stray CR")
+    assert env["ok"] is False
+    assert env["app_contract_version"] == APP_CONTRACT_VERSION
+    assert env["error"]["code"] == app_errors.MALFORMED_REQUEST
+    assert env["error"]["details"] == {"reason": "stray CR"}
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "stray CR",
+        "embedded NUL",
+        "empty line",
+        "trailing content",
+        "invalid utf-8",
+        "json decode error: Expecting value: line 1 column 1 (char 0)",
+    ],
+)
+def test_malformed_request_envelope_reason_classes(reason: str) -> None:
+    """FR-003b: every one of the 6 wire-framing rejection classes builds
+    a structurally-valid FEAT-011 envelope."""
+    from agenttower.socket_api.server import _make_malformed_request_envelope
+
+    env = _make_malformed_request_envelope(reason)
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.MALFORMED_REQUEST
+    assert env["error"]["details"]["reason"] == reason
+
+
+def test_app_dispatcher_unknown_method_envelope_for_app_method() -> None:
+    """T098: ``app.*`` methods not in DISPATCH return the FR-033-compliant
+    FEAT-011 envelope (with ``app_contract_version`` + ``details: {}``)."""
+    from agenttower.app_contract import dispatcher as dispatcher_mod
+
+    assert dispatcher_mod.is_app_method("app.preflight") is True
+    assert dispatcher_mod.is_app_method("app.foo.bar") is True
+    assert dispatcher_mod.is_app_method("ping") is False
+    assert dispatcher_mod.is_app_method("routes.list") is False
+
+    env = dispatcher_mod.make_unknown_method_envelope("app.foo.bar")
+    assert env["ok"] is False
+    assert env["app_contract_version"] == APP_CONTRACT_VERSION
+    assert env["error"]["code"] == app_errors.UNKNOWN_METHOD
+    # FR-034b: details == {} regardless of cause (typo vs future-minor).
+    assert env["error"]["details"] == {}
+    assert "app.foo.bar" in env["error"]["message"]

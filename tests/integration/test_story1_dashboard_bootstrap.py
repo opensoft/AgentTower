@@ -236,16 +236,94 @@ def test_readiness_without_session_token_returns_app_session_required(
 def test_unknown_app_method_returns_unknown_method(socket_path: Path) -> None:
     """FR-034b: app.foo.bar (nonexistent) → unknown_method, no state change.
 
-    The FEAT-002 dispatcher emits `unknown_method` for any unknown name in
-    the legacy or app.* namespace. Note: the dispatcher's unknown-method
-    envelope does NOT carry the FR-033 mandatory `details: {}` field
-    today — this is a known FEAT-002 contract drift the FEAT-011 facade
-    needs to address with a wrapping layer in a follow-up task. For now
-    the test asserts the code, not the full FR-033 shape.
+    T098: the FEAT-002 dispatcher detects `app.*` method names that miss
+    DISPATCH and emits the FEAT-011 envelope shape (with
+    ``app_contract_version`` stamp and ``error.details = {}``) instead
+    of the legacy `make_error` shape.
     """
     envelope = _one_shot_call(socket_path, "app.foo.bar")
     assert envelope["ok"] is False, envelope
     assert envelope["error"]["code"] == "unknown_method"
+    # T098: FR-033 envelope shape on app.* unknown-method failures.
+    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["error"]["details"] == {}
+
+
+def test_fr003b_wire_framing_stray_cr_returns_malformed_request(
+    socket_path: Path,
+) -> None:
+    """FR-003b case (a): a stray `\\r` byte → malformed_request."""
+    sock = _open_socket(socket_path)
+    try:
+        sock.sendall(b'{"method":\r"app.preflight"}\n')
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        sock.close()
+    envelope = json.loads(buf.decode("utf-8"))
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "malformed_request"
+    assert envelope["error"]["details"]["reason"] == "stray CR"
+    assert envelope["app_contract_version"] == "1.0"
+
+
+def test_fr003b_wire_framing_embedded_nul_returns_malformed_request(
+    socket_path: Path,
+) -> None:
+    """FR-003b case (b): an embedded `\\x00` byte → malformed_request."""
+    sock = _open_socket(socket_path)
+    try:
+        sock.sendall(b'{"method":"app.\x00preflight"}\n')
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        sock.close()
+    envelope = json.loads(buf.decode("utf-8"))
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "malformed_request"
+    assert envelope["error"]["details"]["reason"] == "embedded NUL"
+
+
+def test_fr003b_wire_framing_trailing_content_returns_malformed_request(
+    socket_path: Path,
+) -> None:
+    """FR-003b case (c): trailing content after one JSON object →
+    malformed_request (Round-4 Block A Q3 override — reject whole line)."""
+    sock = _open_socket(socket_path)
+    try:
+        sock.sendall(b'{"method":"app.preflight"}  {"extra":true}\n')
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        sock.close()
+    envelope = json.loads(buf.decode("utf-8"))
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "malformed_request"
+    assert envelope["error"]["details"]["reason"] == "trailing content"
+
+
+def test_unknown_legacy_method_keeps_legacy_envelope(socket_path: Path) -> None:
+    """T098: methods outside the ``app.*`` namespace keep the FEAT-002
+    legacy envelope (no ``app_contract_version``, no ``details``). This
+    invariant protects FR-002 (legacy CLI surface unchanged)."""
+    envelope = _one_shot_call(socket_path, "frobnicate")
+    assert envelope["ok"] is False, envelope
+    assert envelope["error"]["code"] == "unknown_method"
+    # Legacy methods don't carry the FEAT-011 stamp.
+    assert "app_contract_version" not in envelope
+    assert "details" not in envelope["error"]
 
 
 # ─── SC-002 latency ──────────────────────────────────────────────────────

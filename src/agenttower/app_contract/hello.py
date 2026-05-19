@@ -145,12 +145,24 @@ def app_hello(
         )
 
     host_user_id = str(peer_uid) if peer_uid != _NO_PEER_UID else str(os.geteuid())
-    session = sessions.get_registry().create(
-        client_id=client_id or "",
-        client_version=client_version or "",
-        client_app_contract_major=client_major,
-        host_user_id=host_user_id,
-    )
+    try:
+        session = sessions.get_registry().create(
+            client_id=client_id or "",
+            client_version=client_version or "",
+            client_app_contract_major=client_major,
+            host_user_id=host_user_id,
+        )
+    except sessions.SessionCapExceeded:
+        # FR-008b: reject the 9th concurrent app.hello.
+        return envelope.failure(
+            VALIDATION_FAILED,
+            f"session cap reached ({sessions.MAX_SESSIONS} concurrent sessions); "
+            "wait for an existing session to be invalidated or restart the daemon",
+            details={
+                "field": "app.hello",
+                "reason": "too_many_sessions",
+            },
+        )
 
     # FR-010: enumerated success-envelope fields. Order chosen for readability;
     # JSON object field order is not normative.

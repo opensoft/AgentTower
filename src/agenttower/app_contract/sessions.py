@@ -1,21 +1,18 @@
-"""FEAT-011 app-session registry (FR-005..FR-010, FR-036).
+"""FEAT-011 app-session registry (FR-005..FR-010, FR-008a, FR-008b, FR-036).
 
-In-memory only. Per-connection sessions issued by ``app.hello``,
-invalidated when the underlying socket connection closes (FR-008).
-Never persisted across daemon restarts (FR-006).
+In-memory only. Process-wide. Sessions are keyed by ``app_session_token``
+and are NOT bound to the connection that issued them — FEAT-002's
+socket dispatcher is one-request-per-connection, so an app session's
+lifecycle cannot be tied to a connection (T097, 2026-05-19). Sessions
+are invalidated only by daemon process exit (in-memory state is lost)
+or explicit ``invalidate()`` calls.
 
-Note: in the current FEAT-002 daemon, every connection processes a
-single request and is then closed (FR-026 one-request-per-connection).
-That makes connection-scoped session lifetimes very short — every
-``app.*`` request that requires a session would, in practice, have
-its token presented over a fresh connection. The session table is
-still useful for audit attribution (``app_session_id`` flows to
-JSONL per FR-044) and for the major-mismatch guard from FR-036.
-
-For follow-up tightening, the dispatcher could maintain a session-token-
-indexed map that survives a connection close for a short TTL, but
-that is explicitly NOT FEAT-011 v1.0 behavior — the contract says
-"session invalidated on connection close" (FR-008).
+Concurrency cap (FR-008b): the registry holds at most ``MAX_SESSIONS``
+(8) concurrent sessions. The 9th ``create()`` attempt raises
+``SessionCapExceeded`` and the caller (``app.hello`` handler) translates
+this to a ``validation_failed.details = {"field": "app.hello", "reason":
+"too_many_sessions"}`` envelope. v1.0 implements the reject-not-evict
+mode of FR-008b; LRU eviction is reserved as an additive minor.
 """
 
 from __future__ import annotations
@@ -24,6 +21,19 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from typing import Final
+
+
+MAX_SESSIONS: Final[int] = 8
+"""FR-008b: hard cap on concurrent sessions per daemon process."""
+
+
+class SessionCapExceeded(Exception):
+    """Raised by ``SessionRegistry.create()`` when the registry already
+    holds ``MAX_SESSIONS`` (FR-008b). The ``app.hello`` handler catches
+    this and emits a ``validation_failed`` envelope with
+    ``details = {"field": "app.hello", "reason": "too_many_sessions"}``.
+    """
 
 
 _session_id_counter = 0
@@ -71,13 +81,14 @@ class AppSession:
 class SessionRegistry:
     """Thread-safe in-memory app session table.
 
-    Currently single-process scoped. Session tokens are keyed by
-    ``app_session_token``; lookup is O(1).
+    Process-wide singleton. Session tokens are keyed by
+    ``app_session_token``; lookup is O(1). Sessions are NOT
+    connection-bound (T097, 2026-05-19) — a token issued on one
+    connection authenticates calls on later fresh connections per
+    FR-008.
 
-    The registry is intentionally minimal at v1.0 because FEAT-002's
-    one-request-per-connection model means tokens are seldom re-presented
-    over the same connection; future tightening could add per-connection
-    binding and a short TTL on disconnect.
+    Hard cap of ``MAX_SESSIONS`` (FR-008b): a 9th ``create()`` raises
+    ``SessionCapExceeded``.
     """
 
     def __init__(self) -> None:
@@ -92,17 +103,25 @@ class SessionRegistry:
         client_app_contract_major: int,
         host_user_id: str,
     ) -> AppSession:
-        """Issue a new session and record it."""
-        session = AppSession(
-            app_session_token=_generate_token(),
-            app_session_id=_next_session_id(),
-            client_id=client_id,
-            client_version=client_version,
-            client_app_contract_major=client_app_contract_major,
-            host_user_id=host_user_id,
-            connection_started_at_ms=int(time.time() * 1000),
-        )
+        """Issue a new session and record it.
+
+        Raises ``SessionCapExceeded`` if the registry already holds
+        ``MAX_SESSIONS`` (FR-008b).
+        """
         with self._lock:
+            if len(self._sessions) >= MAX_SESSIONS:
+                raise SessionCapExceeded(
+                    f"session cap reached ({MAX_SESSIONS} concurrent sessions)"
+                )
+            session = AppSession(
+                app_session_token=_generate_token(),
+                app_session_id=_next_session_id(),
+                client_id=client_id,
+                client_version=client_version,
+                client_app_contract_major=client_app_contract_major,
+                host_user_id=host_user_id,
+                connection_started_at_ms=int(time.time() * 1000),
+            )
             self._sessions[session.app_session_token] = session
         return session
 
@@ -112,9 +131,17 @@ class SessionRegistry:
             return self._sessions.get(token)
 
     def invalidate(self, token: str) -> None:
-        """Remove a session (e.g., on connection close)."""
+        """Remove a session. Test seam and explicit-logout hook; FEAT-002's
+        connection-close path does NOT call this (T097 — sessions are not
+        connection-bound).
+        """
         with self._lock:
             self._sessions.pop(token, None)
+
+    def size(self) -> int:
+        """Current number of sessions held. For tests/diagnostics."""
+        with self._lock:
+            return len(self._sessions)
 
 
 # Module-level singleton wired into the dispatcher at daemon startup.
@@ -194,6 +221,8 @@ def gate_session_required(
 
 __all__ = [
     "AppSession",
+    "MAX_SESSIONS",
+    "SessionCapExceeded",
     "SessionRegistry",
     "get_registry",
     "set_registry",
