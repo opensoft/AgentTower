@@ -258,17 +258,10 @@ def _recent_events(ctx: "DaemonContext", limit: int) -> list[dict[str, Any]]:
         ).fetchall()
     except Exception:  # noqa: BLE001
         return []
-    return [
-        {
-            "id": row[0],
-            "type": row[1] or "",
-            "origin": row[2] or "",
-            "agent_id": row[3],
-            "timestamp": row[4],
-            "summary": (f"{row[1]} from {row[3]}" if row[3] else (row[1] or ""))[:256],
-        }
-        for row in rows
-    ]
+    return [view_models.compact_event(
+        {"event_id": r[0], "event_type": r[1], "origin": r[2],
+         "agent_id": r[3], "created_at": r[4]}
+    ) for r in rows]
 
 
 def _recent_queue(ctx: "DaemonContext", limit: int) -> list[dict[str, Any]]:

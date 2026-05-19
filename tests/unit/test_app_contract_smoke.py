@@ -155,6 +155,28 @@ def test_validate_details_rejects_non_object_details() -> None:
         app_errors.validate_details(app_errors.INTERNAL_ERROR, [])  # type: ignore[arg-type]
 
 
+def test_validate_details_rejects_extras_on_unregistered_code() -> None:
+    """FR-034a: codes NOT in DETAILS_REQUIRED_KEYS MUST carry details == {}.
+
+    Without this rule a handler could emit non-empty ``details`` for e.g.
+    ``host_only`` and the contract would drift silently.
+    """
+    # HOST_ONLY is not in the registry — extras must be rejected.
+    with pytest.raises(app_errors.ContractViolation):
+        app_errors.validate_details(app_errors.HOST_ONLY, {"surprise_key": 1})
+    # Empty details on an unregistered code is fine.
+    app_errors.validate_details(app_errors.HOST_ONLY, {})
+
+
+def test_validate_details_allows_extras_on_registered_code() -> None:
+    """FR-034a: codes IN the registry MAY carry additional keys beyond required."""
+    # validation_failed requires {field, reason}; extras are allowed.
+    app_errors.validate_details(
+        app_errors.VALIDATION_FAILED,
+        {"field": "x", "reason": "y", "additional_context": "z"},
+    )
+
+
 # ─── Envelope shape (FR-033) ─────────────────────────────────────────────
 
 
@@ -712,3 +734,95 @@ def test_readiness_host_only_beats_session_gate(daemon_ctx_with_db) -> None:
     env = _readiness_call(daemon_ctx_with_db, -1, token="any-token-value-at-all")
     assert env["ok"] is False
     assert env["error"]["code"] == app_errors.HOST_ONLY
+
+
+# ─── Dispatcher wrapper: FR-033 envelope-shape safety net ────────────────
+
+
+def test_dispatcher_wraps_contract_violation_into_internal_error(
+    daemon_ctx,
+) -> None:
+    """A handler that emits a malformed failure (raises ContractViolation)
+    MUST surface as the FEAT-011 ``internal_error`` envelope, never as a
+    raw exception or the legacy FEAT-002 INTERNAL_ERROR shape."""
+    from agenttower.app_contract import dispatcher as dispatcher_mod
+    from agenttower.app_contract.errors import ContractViolation
+
+    def buggy_handler(ctx, params, peer_uid=-1):
+        # Simulate a handler-level bug — would normally come from
+        # envelope.failure() emitting a non-existent code, etc.
+        raise ContractViolation("simulated malformed failure")
+
+    wrapped = dispatcher_mod._wrap_handler(buggy_handler)
+    env = wrapped(daemon_ctx, {})
+
+    assert env["ok"] is False
+    assert env["app_contract_version"] == APP_CONTRACT_VERSION
+    assert env["error"]["code"] == app_errors.INTERNAL_ERROR
+    assert env["error"]["details"] == {}
+    assert "malformed" in env["error"]["message"].lower()
+
+
+def test_dispatcher_wraps_unexpected_exception_into_internal_error(
+    daemon_ctx,
+) -> None:
+    """A handler that raises any other exception MUST also surface as
+    the FEAT-011 ``internal_error`` envelope (FR-033 invariant: the wire
+    always sees a structurally-valid envelope)."""
+    from agenttower.app_contract import dispatcher as dispatcher_mod
+
+    def crashing_handler(ctx, params, peer_uid=-1):
+        raise ValueError("simulated unexpected bug")
+
+    wrapped = dispatcher_mod._wrap_handler(crashing_handler)
+    env = wrapped(daemon_ctx, {})
+
+    assert env["ok"] is False
+    assert env["app_contract_version"] == APP_CONTRACT_VERSION
+    assert env["error"]["code"] == app_errors.INTERNAL_ERROR
+    assert env["error"]["details"] == {}
+    assert "ValueError" in env["error"]["message"]
+
+
+def test_dispatcher_wrapped_handler_passes_through_normal_returns(
+    daemon_ctx,
+) -> None:
+    """The wrapper MUST NOT alter a well-formed envelope returned by the
+    handler — only catch exceptions."""
+    from agenttower.app_contract import dispatcher as dispatcher_mod
+
+    def good_handler(ctx, params, peer_uid=-1):
+        return envelope.success({"hello": "world"})
+
+    wrapped = dispatcher_mod._wrap_handler(good_handler)
+    env = wrapped(daemon_ctx, {})
+
+    assert env["ok"] is True
+    assert env["result"] == {"hello": "world"}
+
+
+def test_app_dispatch_handlers_are_wrapped(daemon_ctx) -> None:
+    """Smoke check: the four real ``app.*`` handlers in DISPATCH go through
+    ``_wrap_handler`` — not the raw module-level functions."""
+    from agenttower.app_contract import dispatcher as dispatcher_mod
+
+    # The wrapped name is preserved on the wrapper, but a function-identity
+    # check confirms the dispatch entry is NOT the raw handler.
+    from agenttower.app_contract import (
+        dashboard as dashboard_mod,
+        hello as hello_mod_local,
+        preflight as preflight_mod_local,
+        readiness as readiness_mod,
+    )
+    raw_handlers = {
+        "app.preflight": preflight_mod_local.app_preflight,
+        "app.hello": hello_mod_local.app_hello,
+        "app.readiness": readiness_mod.app_readiness,
+        "app.dashboard": dashboard_mod.app_dashboard,
+    }
+    for name, raw in raw_handlers.items():
+        wrapped = dispatcher_mod.APP_DISPATCH[name]
+        assert wrapped is not raw, (
+            f"{name} dispatch entry is the raw handler; "
+            f"_wrap_handler safety net is bypassed"
+        )

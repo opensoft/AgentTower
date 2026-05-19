@@ -117,17 +117,21 @@ class ContractViolation(Exception):
 
 
 def validate_details(code: str, details: dict) -> None:
-    """Assert that ``details`` carries every required key for ``code``.
+    """Assert ``details`` matches the per-code FR-034a registry.
 
     Raises ContractViolation if:
-    - ``code`` is not in the closed set, OR
+    - ``code`` is not in the closed set (FR-034), OR
     - ``code`` does not match the FR-034 regex, OR
-    - ``details`` is not a dict, OR
-    - a code with structured ``details`` is missing a required key.
+    - ``details`` is not a dict (FR-033), OR
+    - a code WITH structured ``details`` is missing a required key, OR
+    - a code WITHOUT structured ``details`` (i.e., not in
+      ``DETAILS_REQUIRED_KEYS``) carries any keys at all.
 
-    Codes not in ``DETAILS_REQUIRED_KEYS`` MUST carry ``details == {}``
-    or any superset that does not include reserved keys; FR-034a leaves
-    additional optional keys permitted across all codes.
+    The last rule enforces FR-034a's "Codes not listed MUST carry
+    ``error.details == {}``" — a handler emitting non-empty details
+    for e.g. ``host_only`` would otherwise drift the contract silently.
+    Codes IN the registry MAY carry additional keys beyond required
+    (additive minor evolution per FR-034a).
     """
     if not isinstance(code, str) or not CODE_REGEX.match(code):
         raise ContractViolation(
@@ -141,7 +145,16 @@ def validate_details(code: str, details: dict) -> None:
         raise ContractViolation(
             f"error.details must be a JSON object, got {type(details).__name__}"
         )
-    required = DETAILS_REQUIRED_KEYS.get(code, frozenset())
+    required = DETAILS_REQUIRED_KEYS.get(code)
+    if required is None:
+        # FR-034a: codes not in the registry MUST carry details == {}.
+        if details:
+            raise ContractViolation(
+                f"error.details for {code!r} must be empty {{}} "
+                f"(code is not in the FR-034a registry); "
+                f"got keys {sorted(details.keys())}"
+            )
+        return
     missing = required - set(details.keys())
     if missing:
         raise ContractViolation(

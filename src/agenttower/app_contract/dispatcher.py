@@ -12,6 +12,17 @@ mappings in ``DISPATCH`` are unchanged. The host-only gate (FR-042) is
 applied inside each ``app.*`` handler itself, not at the dispatcher
 boundary — this keeps the dispatcher merge mechanical and the gate
 visible at the per-handler entry point.
+
+Each handler is wrapped by ``_wrap_handler`` (below) so that:
+
+- A ``ContractViolation`` raised by a handler (e.g., the handler tried
+  to emit a malformed failure envelope) is caught and mapped to the
+  FEAT-011 ``internal_error`` envelope — NOT propagated up to the
+  FEAT-002 catch-all, which would return the legacy ``INTERNAL_ERROR``
+  envelope shape (missing ``app_contract_version``).
+- Any other unexpected exception from a handler is similarly mapped to
+  ``internal_error`` so the wire always sees a structurally-valid
+  FEAT-011 envelope (FR-033 invariant).
 """
 
 from __future__ import annotations
@@ -24,6 +35,49 @@ if TYPE_CHECKING:
 
 
 _AppHandler = Callable[["DaemonContext", dict[str, Any], int], dict[str, Any]]
+
+
+def _wrap_handler(handler: _AppHandler) -> _AppHandler:
+    """Wrap an ``app.*`` handler so it always returns a FEAT-011 envelope.
+
+    Catches:
+        - ``ContractViolation`` from ``envelope.failure()`` / ``validate_details``
+          (signals a daemon-side bug: the handler tried to emit a malformed
+          failure envelope). Mapped to ``internal_error`` with a message
+          carrying the violation reason — never leaks to the client as a
+          raw exception.
+        - Any other ``Exception`` — same treatment, with the exception
+          type name in the message. Ensures the wire always sees the
+          FEAT-011 envelope shape (``ok``, ``app_contract_version``,
+          ``error.{code,message,details}``), not the legacy FEAT-002
+          ``INTERNAL_ERROR`` shape from ``socket_api/methods.py``'s
+          top-level catch-all.
+
+    Lazy-imports ``envelope`` and ``errors`` inside the wrapper to keep
+    the dispatcher module-load free of cycles.
+    """
+    def wrapped(
+        ctx: "DaemonContext",
+        params: dict[str, Any],
+        peer_uid: int = -1,
+    ) -> dict[str, Any]:
+        from . import envelope as _envelope
+        from .errors import ContractViolation
+
+        try:
+            return handler(ctx, params, peer_uid)
+        except ContractViolation as exc:
+            return _envelope.internal_error(
+                f"app.* handler emitted malformed envelope: {exc}"
+            )
+        except Exception as exc:  # noqa: BLE001 — FR-033 envelope-shape safety net
+            return _envelope.internal_error(
+                f"app.* handler raised {type(exc).__name__}: {exc}"
+            )
+
+    wrapped.__name__ = getattr(handler, "__name__", "wrapped")
+    wrapped.__qualname__ = getattr(handler, "__qualname__", wrapped.__name__)
+    return wrapped
 
 
 def _build_app_dispatch() -> dict[str, _AppHandler]:
@@ -41,10 +95,10 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
     from . import readiness as _readiness
 
     return {
-        "app.preflight": _preflight.app_preflight,
-        "app.hello": _hello.app_hello,
-        "app.readiness": _readiness.app_readiness,
-        "app.dashboard": _dashboard.app_dashboard,
+        "app.preflight": _wrap_handler(_preflight.app_preflight),
+        "app.hello": _wrap_handler(_hello.app_hello),
+        "app.readiness": _wrap_handler(_readiness.app_readiness),
+        "app.dashboard": _wrap_handler(_dashboard.app_dashboard),
     }
 
 
