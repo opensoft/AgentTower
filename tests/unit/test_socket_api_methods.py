@@ -108,10 +108,21 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "routes.enable",
         "routes.disable",
         # FEAT-011 — app.* host-only namespace (T002 / FR-001 / FR-042).
+        # US1 + US2 ship 12 methods; US3 will add the remaining 18 to
+        # reach the 30-method v1.0 surface documented in
+        # ``contracts/app-methods.md``.
         "app.preflight",
         "app.hello",
         "app.readiness",
         "app.dashboard",
+        "app.scan.containers",
+        "app.scan.panes",
+        "app.scan.status",
+        "app.pane.list",
+        "app.pane.detail",
+        "app.agent.list",
+        "app.agent.detail",
+        "app.agent.register_from_pane",
     }
 
 

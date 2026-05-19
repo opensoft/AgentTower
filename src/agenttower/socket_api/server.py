@@ -271,8 +271,20 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 )
             return errors.make_error(errors.BAD_JSON, f"json decode failed: {exc.msg}")
         # Anything non-whitespace remaining is trailing content.
+        # FR-003b: app.* methods get malformed_request; legacy methods
+        # keep the FEAT-002 bad_request shape per FR-002. We detect via
+        # the parsed ``method`` since we now have the decoded request
+        # available (unlike the pre-decode malformed paths above).
         if text_stripped[idx:].strip():
-            return _make_malformed_request_envelope("trailing content")
+            method_val = (
+                request.get("method") if isinstance(request, dict) else None
+            )
+            if isinstance(method_val, str) and method_val.startswith("app."):
+                return _make_malformed_request_envelope("trailing content")
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                "request line has trailing content after the first JSON object",
+            )
 
         if not isinstance(request, dict):
             return errors.make_error(errors.BAD_REQUEST, "request must be a JSON object")

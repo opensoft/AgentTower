@@ -107,8 +107,15 @@ def emit_app_mutation(
         was a no-op (``events_file is None``) or if the writer raised
         (FR-044b best-effort path: caller's mutation is unaffected).
 
-    Never raises. FR-044b mandates that an audit-write failure MUST
-    NOT propagate to the caller — the mutation already committed.
+    Raises:
+        ``ValueError`` if ``payload`` includes any protected key
+        (``origin``, ``app_session_id``, or ``app_session_token``).
+        Those fields are owned by this helper; a caller supplying them
+        is a programmer error caught early rather than silently
+        overwritten. This is the **only** exception this function
+        raises — operational failures (JSONL outage, disk full,
+        permission lost) all map to the FR-044b best-effort path
+        and return ``False`` without raising.
     """
     if events_file is None:
         # No audit file configured — synthetic test or pre-FEAT-008
