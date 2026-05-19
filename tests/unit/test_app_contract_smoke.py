@@ -221,6 +221,30 @@ def test_failure_envelope_shape() -> None:
     }
 
 
+def test_internal_error_envelope_shape() -> None:
+    """envelope.internal_error() is the dispatcher's safety-net fallback.
+    It MUST emit the FR-033/FR-034a shape: ok=False, code=internal_error,
+    details={}. The message field is free-form (operator-facing prose);
+    the dispatcher sanitizes leak-prone content before passing it in.
+    """
+    env = envelope.internal_error("safety-net fallback")
+    assert env["ok"] is False
+    assert env["app_contract_version"] == APP_CONTRACT_VERSION
+    assert env["error"]["code"] == app_errors.INTERNAL_ERROR
+    assert env["error"]["details"] == {}
+    assert env["error"]["message"] == "safety-net fallback"
+
+
+def test_internal_error_envelope_default_message() -> None:
+    """envelope.internal_error() with no args still emits a valid envelope."""
+    env = envelope.internal_error()
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.INTERNAL_ERROR
+    assert env["error"]["details"] == {}
+    assert isinstance(env["error"]["message"], str)
+    assert env["error"]["message"]  # non-empty
+
+
 def test_failure_envelope_unknown_code_raises() -> None:
     """FR-034a: emitting an unknown code surfaces ContractViolation to the daemon."""
     with pytest.raises(app_errors.ContractViolation):
@@ -823,15 +847,17 @@ def test_dispatcher_wraps_contract_violation_into_internal_error(
 
 
 def test_dispatcher_wraps_unexpected_exception_into_internal_error(
-    daemon_ctx,
+    daemon_ctx, capsys
 ) -> None:
-    """A handler that raises any other exception MUST also surface as
-    the FEAT-011 ``internal_error`` envelope (FR-033 invariant: the wire
-    always sees a structurally-valid envelope)."""
+    """A handler that raises any other exception MUST surface as the
+    FEAT-011 ``internal_error`` envelope (FR-033 invariant). The
+    exception details MUST be logged to stderr but MUST NOT leak into
+    the wire envelope (security tightening from PR-19 review).
+    """
     from agenttower.app_contract import dispatcher as dispatcher_mod
 
     def crashing_handler(ctx, params, peer_uid=-1):
-        raise ValueError("simulated unexpected bug")
+        raise ValueError("simulated unexpected bug with /secret/path")
 
     wrapped = dispatcher_mod._wrap_handler(crashing_handler)
     env = wrapped(daemon_ctx, {})
@@ -840,7 +866,15 @@ def test_dispatcher_wraps_unexpected_exception_into_internal_error(
     assert env["app_contract_version"] == APP_CONTRACT_VERSION
     assert env["error"]["code"] == app_errors.INTERNAL_ERROR
     assert env["error"]["details"] == {}
-    assert "ValueError" in env["error"]["message"]
+    # Wire envelope must NOT leak the exception type name, message, or
+    # any payload-derived content.
+    assert "ValueError" not in env["error"]["message"]
+    assert "secret" not in env["error"]["message"]
+    assert "simulated" not in env["error"]["message"]
+    # But operators MUST be able to debug via stderr.
+    captured = capsys.readouterr()
+    assert "ValueError" in captured.err
+    assert "simulated unexpected bug" in captured.err
 
 
 def test_dispatcher_wrapped_handler_passes_through_normal_returns(

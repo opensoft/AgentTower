@@ -68,18 +68,40 @@ def _wrap_handler(handler: _AppHandler) -> _AppHandler:
         params: dict[str, Any],
         peer_uid: int = -1,
     ) -> dict[str, Any]:
+        import sys as _sys
+        import traceback as _traceback
+
         from . import envelope as _envelope
         from .errors import ContractViolation
+
+        handler_name = getattr(handler, "__qualname__", "app.*-handler")
 
         try:
             return handler(ctx, params, peer_uid)
         except ContractViolation as exc:
+            # Log the full violation to stderr for operator debugging,
+            # but return a generic message to the wire so we don't leak
+            # internal detail (paths, SQL, secrets in request payloads).
+            print(
+                f"FEAT-011: contract violation in {handler_name}: "
+                f"{type(exc).__name__}: {exc}",
+                file=_sys.stderr,
+                flush=True,
+            )
             return _envelope.internal_error(
-                f"app.* handler emitted malformed envelope: {exc}"
+                "handler emitted a malformed envelope; see daemon stderr"
             )
         except Exception as exc:  # noqa: BLE001 — FR-033 envelope-shape safety net
+            # Full traceback to stderr; generic-class label only to the
+            # wire. Operators correlate by handler name + timestamp.
+            print(
+                f"FEAT-011: {handler_name} raised {type(exc).__name__}: {exc}",
+                file=_sys.stderr,
+                flush=True,
+            )
+            _traceback.print_exc(file=_sys.stderr)
             return _envelope.internal_error(
-                f"app.* handler raised {type(exc).__name__}: {exc}"
+                f"{handler_name} raised an unexpected error; see daemon stderr"
             )
 
     wrapped.__name__ = getattr(handler, "__name__", "wrapped")

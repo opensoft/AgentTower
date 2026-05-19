@@ -98,6 +98,44 @@ def _make_unknown_app_method_envelope(method: str) -> dict[str, Any]:
     return _app_dispatcher.make_unknown_method_envelope(method)
 
 
+def _make_payload_too_large_envelope(actual_size_bytes: int) -> dict[str, Any]:
+    """Build the FR-003a / FR-034a ``payload_too_large`` envelope for an
+    oversized ``app.*`` request line. Carries the FEAT-011 required
+    keys ``size_limit_bytes`` and ``actual_size_bytes`` so clients can
+    surface the limit precisely.
+    """
+    from ..app_contract import envelope as _app_envelope
+    from ..app_contract.errors import PAYLOAD_TOO_LARGE
+
+    return _app_envelope.failure(
+        PAYLOAD_TOO_LARGE,
+        f"request line exceeds {MAX_REQUEST_BYTES} bytes",
+        details={
+            "size_limit_bytes": MAX_REQUEST_BYTES,
+            "actual_size_bytes": actual_size_bytes,
+        },
+    )
+
+
+def _line_looks_like_app_method(line_bytes: bytes) -> bool:
+    """Peek-detect whether an unparseable / oversized request line names
+    an ``app.*`` method. Heuristic — we can't json.loads the line (it's
+    either too big or malformed), so we substring-scan the first ~1 KB
+    for ``"method":"app.``.
+
+    False positives are bounded to lines that genuinely contain that
+    literal string in a non-method field (e.g., a payload value), which
+    is acceptable: surfacing a FEAT-011 envelope to such a peer is a
+    strict superset of the legacy envelope (adds version + details),
+    and legacy clients can still parse ``ok: false`` + ``error.code``.
+    """
+    # Bound the scan to keep this cheap even on a 1 MiB line.
+    head = line_bytes[:2048]
+    # Strip whitespace tolerant matches: ``"method":"app.`` and
+    # ``"method": "app.`` (with optional space).
+    return b'"method":"app.' in head or b'"method": "app.' in head
+
+
 # ---------------------------------------------------------------------------
 # Request handler
 # ---------------------------------------------------------------------------
@@ -173,6 +211,14 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             return errors.make_error(errors.BAD_JSON, "empty request")
 
         if len(line) > MAX_REQUEST_BYTES or not line.endswith(b"\n"):
+            # FR-003a / FR-034a: ``app.*`` oversized lines emit the
+            # FEAT-011 ``payload_too_large`` envelope (carries
+            # ``size_limit_bytes`` + ``actual_size_bytes``). Legacy
+            # methods keep the FEAT-002 ``request_too_large`` shape per
+            # FR-002. Detection is best-effort substring peek since the
+            # line is too big to JSON-decode reliably.
+            if _line_looks_like_app_method(line):
+                return _make_payload_too_large_envelope(len(line))
             return errors.make_error(
                 errors.REQUEST_TOO_LARGE,
                 f"request line exceeds {MAX_REQUEST_BYTES} bytes",
@@ -197,27 +243,32 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         if b"\x00" in body:
             return _make_malformed_request_envelope("embedded NUL")
 
-        # Invalid UTF-8 and JSON decode errors stay on the legacy FEAT-002
-        # ``bad_json`` envelope to preserve FEAT-002 contract behavior
-        # (locked by ``test_socket_api_framing.py``). FR-003b's
-        # ``malformed_request`` code lands for the NEW pre-parse checks
-        # (\r, \x00, empty line) + the post-parse trailing-content check
-        # which are not in the legacy lock-in. The FR-003b coverage of
-        # invalid UTF-8 and JSON decode error is a future follow-up that
-        # will require either a FEAT-002 contract bump or a method-aware
-        # envelope rewriter; see SC-028 / T098 in tasks.md.
+        # Invalid UTF-8 and JSON decode errors:
+        # - ``app.*`` requests (detected via substring peek per
+        #   ``_line_looks_like_app_method``) get the FR-003b
+        #   ``malformed_request`` envelope so SC-028 is fully satisfied.
+        # - Legacy requests stay on the FEAT-002 ``bad_json`` envelope
+        #   to preserve the lock-in in ``test_socket_api_framing.py``
+        #   (FR-002: legacy CLI surface unchanged).
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError:
+            if _line_looks_like_app_method(line):
+                return _make_malformed_request_envelope("invalid utf-8")
             return errors.make_error(errors.BAD_JSON, "request is not UTF-8")
 
-        # FR-003b case (c): use raw_decode so we can distinguish "extra
-        # content after the first JSON object" from a clean parse failure.
+        # FR-003b case (c)/(d): use raw_decode so we can distinguish
+        # "extra content after the first JSON object" from a clean
+        # parse failure.
         text_stripped = text.lstrip()
         decoder = json.JSONDecoder()
         try:
             request, idx = decoder.raw_decode(text_stripped)
         except json.JSONDecodeError as exc:
+            if _line_looks_like_app_method(line):
+                return _make_malformed_request_envelope(
+                    f"json decode error: {exc.msg}"
+                )
             return errors.make_error(errors.BAD_JSON, f"json decode failed: {exc.msg}")
         # Anything non-whitespace remaining is trailing content.
         if text_stripped[idx:].strip():

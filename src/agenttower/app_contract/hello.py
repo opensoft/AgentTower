@@ -167,15 +167,21 @@ def app_hello(
     # FR-010: enumerated success-envelope fields. Order chosen for readability;
     # JSON object field order is not normative.
     schema_version = ctx.schema_version if ctx.schema_version is not None else 0
+    # Defensive copy: ``SUPPORTED_MINOR_RANGE`` and ``CAPABILITY_FLAGS_V1_0``
+    # are module-level dict singletons. Returning them by reference means
+    # any in-process caller (or test) that mutates the returned dict would
+    # corrupt every subsequent ``app.hello`` response — and would also
+    # silently change the module constants for everyone. ``dict(...)``
+    # gives each call its own shallow copy.
     return envelope.success({
         "app_session_token": session.app_session_token,
         "app_session_id": session.app_session_id,
         "daemon_version": ctx.daemon_version,
         "schema_version": schema_version,
         "app_contract_version": versioning.APP_CONTRACT_VERSION,
-        "supported_minor_range": versioning.SUPPORTED_MINOR_RANGE,
+        "supported_minor_range": dict(versioning.SUPPORTED_MINOR_RANGE),
         "host_user_id": host_user_id,
-        "capability_flags": versioning.CAPABILITY_FLAGS_V1_0,
+        "capability_flags": dict(versioning.CAPABILITY_FLAGS_V1_0),
         "state": "ok",
     })
 
