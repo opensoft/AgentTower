@@ -98,6 +98,7 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
     """
     from . import dashboard as _dashboard
     from . import hello as _hello
+    from . import mutations as _mutations
     from . import preflight as _preflight
     from . import readiness as _readiness
     from . import reads as _reads
@@ -115,6 +116,9 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
         "app.pane.detail": _wrap_handler(_reads.app_pane_detail),
         "app.agent.list": _wrap_handler(_reads.app_agent_list),
         "app.agent.detail": _wrap_handler(_reads.app_agent_detail),
+        "app.agent.register_from_pane": _wrap_handler(
+            _mutations.app_agent_register_from_pane
+        ),
     }
 
 
