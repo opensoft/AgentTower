@@ -121,9 +121,15 @@ def test_error_codes_match_regex() -> None:
         assert pattern.match(code), f"code {code!r} violates FR-034 regex"
 
 
-def test_error_codes_count_is_26() -> None:
-    """FR-034 v1.0: exactly 26 closed-set codes."""
-    assert len(app_errors.ERROR_CODES) == 26
+def test_error_codes_count_is_27() -> None:
+    """FR-034 v1.0: exactly 27 closed-set codes (Round-4 added malformed_request)."""
+    assert len(app_errors.ERROR_CODES) == 27
+    assert "malformed_request" in app_errors.ERROR_CODES
+
+
+def test_malformed_request_requires_reason() -> None:
+    """FR-034a: malformed_request → details must carry {reason: str}."""
+    assert app_errors.DETAILS_REQUIRED_KEYS[app_errors.MALFORMED_REQUEST] == frozenset({"reason"})
 
 
 def test_details_registry_codes_are_in_closed_set() -> None:

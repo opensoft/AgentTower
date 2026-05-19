@@ -1,10 +1,13 @@
 """FEAT-011 closed-set error codes and per-code ``details`` registry.
 
 Implements:
-- FR-034: 26-entry closed code set; ``error.code`` MUST match ``^[a-z][a-z0-9_]*$``.
+- FR-034: 27-entry closed code set; ``error.code`` MUST match ``^[a-z][a-z0-9_]*$``.
 - FR-034a: per-code ``details`` registry of required keys. Codes not in the
   registry MUST carry ``error.details == {}``.
 - FR-033: ``error.details`` is always a JSON object (never null/array/primitive).
+- FR-003b: ``malformed_request`` is emitted at the wire-framing layer for
+  invalid JSON, stray ``\\r``, embedded ``\\x00``, trailing content after
+  one JSON object, or empty lines.
 
 This module does NOT depend on any other ``app_contract`` module — the
 envelope builders in ``envelope.py`` consume it.
@@ -22,6 +25,7 @@ APP_SESSION_REQUIRED: Final[str] = "app_session_required"
 APP_SESSION_EXPIRED: Final[str] = "app_session_expired"
 APP_CONTRACT_MAJOR_UNSUPPORTED: Final[str] = "app_contract_major_unsupported"
 UNKNOWN_METHOD: Final[str] = "unknown_method"
+MALFORMED_REQUEST: Final[str] = "malformed_request"
 VALIDATION_FAILED: Final[str] = "validation_failed"
 NOT_FOUND: Final[str] = "not_found"
 STALE_OBJECT: Final[str] = "stale_object"
@@ -45,14 +49,15 @@ HOST_ONLY: Final[str] = "host_only"
 PAYLOAD_TOO_LARGE: Final[str] = "payload_too_large"
 INTERNAL_ERROR: Final[str] = "internal_error"
 
-# Authoritative closed set — 26 entries at v1.0. Adding a code is an additive
-# minor change (FR-034, FR-035); removing or renaming a code requires a major
-# bump (FR-035).
+# Authoritative closed set — 27 entries at v1.0 (Round-4 added MALFORMED_REQUEST).
+# Adding a code is an additive minor change (FR-034, FR-035); removing or
+# renaming a code requires a major bump (FR-035).
 ERROR_CODES: Final[frozenset[str]] = frozenset({
     APP_SESSION_REQUIRED,
     APP_SESSION_EXPIRED,
     APP_CONTRACT_MAJOR_UNSUPPORTED,
     UNKNOWN_METHOD,
+    MALFORMED_REQUEST,
     VALIDATION_FAILED,
     NOT_FOUND,
     STALE_OBJECT,
@@ -89,6 +94,7 @@ CODE_REGEX: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_]*$")
 # ``error.details == {}``. Extra keys are allowed and additive across
 # minors; removing a required key requires a major bump (FR-034a).
 DETAILS_REQUIRED_KEYS: Final[dict[str, frozenset[str]]] = {
+    MALFORMED_REQUEST: frozenset({"reason"}),
     VALIDATION_FAILED: frozenset({"field", "reason"}),
     APP_CONTRACT_MAJOR_UNSUPPORTED: frozenset({
         "daemon_app_contract_version",
@@ -168,6 +174,7 @@ __all__ = [
     "APP_SESSION_EXPIRED",
     "APP_CONTRACT_MAJOR_UNSUPPORTED",
     "UNKNOWN_METHOD",
+    "MALFORMED_REQUEST",
     "VALIDATION_FAILED",
     "NOT_FOUND",
     "STALE_OBJECT",

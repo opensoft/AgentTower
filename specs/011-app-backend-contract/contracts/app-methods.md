@@ -25,6 +25,10 @@ Where `details` is always an object (possibly empty `{}`).
 
 **Payload size gate** (FR-003a): every `app.*` request is bounded at **1 MiB per NDJSON line**. Overflow is rejected with `payload_too_large` (`details = {size_limit_bytes: 1048576, actual_size_bytes}`) before any handler executes — it is therefore a possible failure code for every method below (including `app.preflight` and `app.hello`), even though the per-method failure-code lists omit it for brevity. Responses are similarly bounded at **8 MiB per NDJSON line** as a daemon-side invariant guarded by the FR-020a pagination cap.
 
+**Wire-framing gate** (FR-003b): every `app.*` request line MUST be valid UTF-8, terminated by a single `\n`, contain no `\r` or `\x00` bytes, and contain exactly one JSON object with no trailing content. Violations are rejected with `malformed_request` and `details.reason` before dispatch. This is a possible failure code for every method below (omitted from per-method lists for brevity).
+
+**Concurrency caps**: ≤ 8 concurrent app sessions process-wide (FR-008b), ≤ 4 in-flight scans across all sessions (FR-030e), same-kind scan coalescing enabled (FR-030d). Cap-exceeded responses are `validation_failed` with `details.field ∈ {"app.hello", "scan_kind"}` and `details.reason ∈ {"too_many_sessions", "too_many_scans_in_flight"}`.
+
 **Unknown-method gate** (FR-034b): any method name in the `app.*` namespace that the daemon does not implement at its current minor returns `unknown_method` with `details == {}`, regardless of cause (typo, future-minor method, nonexistent name). The daemon MUST NOT mutate state on this path. Clients differentiate future-minor methods by reading `capability_flags` from `app.hello` (FR-039) before invoking optional methods. Method names outside the `app.*` namespace are handled by the legacy FEAT-002 dispatcher and are not subject to this rule.
 
 **Cursor opacity** (FR-020b): `cursor_next` is opaque to clients, ≤ 512 characters, daemon-chosen encoding. Clients pass it back verbatim. Malformed, oversized, or order/filter-mismatched cursors → `validation_failed.details.field == "cursor_next"`.
@@ -80,7 +84,9 @@ Handshake; issues a session.
 }
 ```
 
-**Failure codes**: `host_only`, `app_contract_major_unsupported`, `internal_error`. On `app_contract_major_unsupported`, `details = {daemon_app_contract_version, client_app_contract_major}` and no session is issued (FR-036).
+**Failure codes**: `host_only`, `app_contract_major_unsupported`, `validation_failed` (incl. `details = {field: "client_app_contract_major", reason: "<...>"}` for malformed major, and `details = {field: "app.hello", reason: "too_many_sessions"}` when the 8-session cap is hit per FR-008b), `internal_error`. On `app_contract_major_unsupported`, `details = {daemon_app_contract_version, client_app_contract_major}` and no session is issued (FR-036).
+
+**Idempotent on same connection** (FR-008a): a second `app.hello` on the same socket connection returns the **same** `app_session_token` and `app_session_id` issued by the first call. No new session row; no audit row.
 
 ---
 
@@ -241,9 +247,17 @@ The only path the app uses to promote a discovered tmux pane to a registered age
 
 **Success result**: full `AgentViewModel` for the new agent.
 
-**Failure codes**: `app_session_required`, `app_session_expired`, `host_only`, `validation_failed` (with `details.field`, e.g., `role`, `label`, `capability`), `pane_not_found` (with `details.pane_id`), `pane_already_registered` (with `details.agent_id` = the existing agent), `internal_error`.
+**Identity-match rule** (FR-028a, Round-4 Block C Q12 override): all six pane-identity fields (`container_id`, `tmux_socket`, `session_name`, `window_index`, `pane_index`, `pane_id`) MUST match the currently-discovered pane row byte-for-byte. Any single-field mismatch returns `pane_not_found` with `details = {pane_id, mismatch_field: "<first offending field>"}`.
 
-Audit: emits an `agent_registered` JSONL row with `origin == "app"` and `app_session_id` set (FR-044).
+**`attach_log: true` + inactive container rule** (FR-028b, Round-4 Block C Q13 override): if `attach_log: true` is requested and the target container is inactive at adopt time, the whole adopt fails with `container_inactive` and `details.container_id`. No `agents` row is created. Adopt with `attach_log: false` or omitted against an inactive container MAY proceed iff FEAT-006's existing rules permit it.
+
+**`parent_agent_id` rule** (FR-028c, Round-4 Block C Q14 override): a `parent_agent_id` not matching any registered agent row returns `agent_not_found` with `details.agent_id = <parent_agent_id>`. Malformed `parent_agent_id` (wrong type) returns `validation_failed.details.field == "parent_agent_id"`.
+
+**Label normalization** (FR-028d): `label` is trimmed; trimmed values with embedded `\n`/`\r` are rejected; ≤ 256 chars after trim. Same rule applies to `app.agent.update.label`.
+
+**Failure codes**: `app_session_required`, `app_session_expired`, `host_only`, `validation_failed` (with `details.field`, e.g., `role`, `label`, `capability`, `parent_agent_id`), `pane_not_found` (with `details.pane_id` and optionally `details.mismatch_field`), `pane_already_registered` (with `details.agent_id` = the existing agent), `agent_not_found` (when `parent_agent_id` references a missing row — FR-028c), `container_inactive` (when the target container is inactive, or when `attach_log: true` against an inactive container per FR-028b), `internal_error`.
+
+Audit: emits an `agent_registered` JSONL row with `origin == "app"` and `app_session_id` set (FR-044). The audit event name is the upstream FEAT-006 name byte-for-byte (Round-4 Block G Q44).
 
 ---
 
@@ -309,7 +323,12 @@ Routes a structured payload to a target agent via the FEAT-009 queue. Respects t
 
 On a duplicate `idempotency_key` retry within the session, returns the original `message_id` and `deduplicated: true` (FR-031a). No second queue row; no duplicate audit row.
 
-**Failure codes**: `app_session_required`, `app_session_expired`, `host_only`, `validation_failed`, `agent_not_found`, `routing_disabled`, `permission_denied`, `internal_error`.
+**`routing_disabled` vs `permission_denied`** (FR-031, Round-4 Block B Q7 override):
+- **Global kill switch off** → `routing_disabled` with `details == {}`.
+- **Per-message permission gate refused** → `permission_denied` with `details = {reason: "feat009_permission_gate"}`.
+- **Peer-UID rejection** (FR-041) → `permission_denied` with `details == {}` (this path is never reached on `app.send_input` because the dispatcher rejects at the host-only gate first; documented for completeness).
+
+**Failure codes**: `app_session_required`, `app_session_expired`, `host_only`, `validation_failed`, `agent_not_found` (when `target_agent_id` is not a registered agent), `routing_disabled` (global kill switch), `permission_denied` (per-message permission gate), `internal_error`.
 
 ### `app.queue.approve` / `app.queue.delay` / `app.queue.cancel`
 
@@ -375,7 +394,11 @@ Trigger a FEAT-003 / FEAT-004 discovery scan.
 
 The scan continues server-side; the same `scan_id` is reachable via `app.scan.status` once terminal.
 
-**Failure codes**: `app_session_required`, `app_session_expired`, `host_only`, `docker_unavailable`, `tmux_unavailable`, `scan_timeout`, `internal_error`.
+**Coalescing** (FR-030d): two or more concurrent `app.scan.<kind>` calls for the same `scan_kind` MUST receive the **same** in-flight `scan_id`. Independent same-kind scans do not run in parallel.
+
+**Concurrency cap** (FR-030e): ≤ 4 in-flight scans across all sessions and kinds. 5th request → `validation_failed.details = {field: "scan_kind", reason: "too_many_scans_in_flight"}`.
+
+**Failure codes**: `app_session_required`, `app_session_expired`, `host_only`, `validation_failed` (incl. `details = {field: "scan_kind", reason: "too_many_scans_in_flight"}` when the cap is exceeded), `docker_unavailable`, `tmux_unavailable`, `scan_timeout`, `internal_error`.
 
 ### `app.scan.status`
 

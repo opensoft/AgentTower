@@ -282,6 +282,65 @@ Response overflow is a daemon-side invariant — at v1.0 the pagination cap (`li
 
 ---
 
+## Wire Framing (FR-003b)
+
+NDJSON request line strictness (Round-4 Block A):
+
+```text
+line_terminator:        \n only (LF)
+encoding:               UTF-8
+forbidden_bytes:        \r anywhere, \x00 anywhere
+trailing_content_rule:  exactly one JSON object per line; no whitespace/garbage after
+empty_line:             rejected (no implicit "no-op")
+```
+
+Any violation → `malformed_request` with `details.reason ∈ {"stray CR", "embedded NUL", "trailing content", "json decode error", "empty line"}`.
+
+The daemon emits `\n` only on response lines.
+
+---
+
+## Concurrency Caps (FR-008b, FR-030d, FR-030e)
+
+```text
+max_concurrent_app_sessions:   8 process-wide   (FR-008b, Round-4 Block D Q29)
+max_concurrent_in_flight_scans: 4 across all sessions (FR-030e, Round-4 Block D Q25)
+same_kind_scan_coalescing:     enabled — second caller joins existing scan_id (FR-030d, Round-4 Block D Q24)
+scan_record_retention:         100 records per daemon process, FIFO eviction (FR-030c)
+```
+
+Cap-exceeded responses:
+
+- 9th `app.hello` on a fresh connection → `validation_failed.details = {field: "app.hello", reason: "too_many_sessions"}`.
+- 5th in-flight `app.scan.<kind>` → `validation_failed.details = {field: "scan_kind", reason: "too_many_scans_in_flight"}`.
+
+---
+
+## Audit Writer (FR-044, FR-044a, FR-044b, FR-044c)
+
+```text
+event_names:              upstream FEAT names byte-for-byte (queue_approved, route_created, agent_registered, …)
+origin_marker:            "app" added to existing open-string field
+serialization:            process-wide mutex around JSONL writer (FR-044a)
+ordering:                 SQLite commit → JSONL write → response envelope sent (FR-044c)
+failure_mode:             best-effort; on JSONL unwritable, drop row + stderr warning + readiness flag, mutation still commits (FR-044b)
+preflight_hello_audited:  no (Round-4 Block G Q49)
+client_id_in_audit:       no (Round-4 Block G Q50)
+schema_version_bump:      no — `origin` field is already an open string (Round-4 Block G Q51)
+```
+
+---
+
+## Capability Flags Cap (Round-4 Block J Q70)
+
+```text
+max_capability_flag_keys: 64
+```
+
+Daemon-side invariant. v1.0 ships with `{}` (0 keys), so the cap is forward-looking. Future minors adding flags MUST stay within this cap.
+
+---
+
 ## Order-By Direction Syntax (FR-021b)
 
 ```text
