@@ -130,7 +130,18 @@ def _scan_dispatch(
     if isinstance(session, dict):
         return session  # gate failure envelope
 
-    wait = bool(params.get("wait", True))
+    # FR-030 / app-methods.md: ``wait`` is a strict boolean. Reject
+    # non-bool values rather than silently coercing — strings ("false"),
+    # non-zero ints, etc. all coerce to True via ``bool()`` which would
+    # surprise callers.
+    wait_raw = params.get("wait", True) if isinstance(params, dict) else True
+    if not isinstance(wait_raw, bool):
+        return _envelope.failure(
+            VALIDATION_FAILED,
+            "wait must be a boolean",
+            details={"field": "wait", "reason": "wrong type"},
+        )
+    wait = wait_raw
 
     service = getattr(ctx, scan_service_attr, None)
     if service is None or not hasattr(service, "scan"):

@@ -9,7 +9,7 @@ FEAT-011 turns `agenttowerd` into a stable **local-only application backend** fo
 
 The work splits into **seven additive layers** under a new sub-package `src/agenttower/app_contract/`:
 
-1. **App-session layer** — in-memory per-connection sessions (`app_session_token` uuid v4, monotonic `app_session_id`), invalidated on socket close. No persistence.
+1. **App-session layer** — in-memory sessions (`app_session_token` uuid v4, monotonic `app_session_id`) held in a process-wide `SessionRegistry` keyed by token. **Not connection-bound** (T097): FEAT-002's socket dispatcher is one-request-per-connection, so the session lifecycle cannot be tied to a connection. Sessions are invalidated only by daemon process exit or explicit `invalidate()`. Hard cap of **8 concurrent sessions** (FR-008b) — 9th `app.hello` rejected with `validation_failed.too_many_sessions`. No persistence across daemon restarts.
 2. **Host-only peer gate** — reuses the FEAT-009 host-vs-container peer detection (already required for the routing-toggle host-only rule). Every `app.*` call rejects bench-container peers with the closed-set code `host_only`.
 3. **Bootstrap surface** — `app.preflight` (no session required, diagnostic codes only) and `app.hello` (issues the session, returns daemon/schema/contract versions, capability_flags as `{}` at v1.0).
 4. **Readiness + dashboard surface** — `app.readiness` (probes docker, tmux_discovery, sqlite, jsonl, routing_worker, log_attachment_workers + structured `hints[]`) and `app.dashboard` (counts + recents + `hints[]`). Both read-only, side-effect-free, no global lock.

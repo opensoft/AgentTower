@@ -110,6 +110,18 @@ DETAILS_REQUIRED_KEYS: Final[dict[str, frozenset[str]]] = {
     CONTAINER_INACTIVE: frozenset({"container_id"}),
     LOG_ATTACH_BLOCKED: frozenset({"agent_id", "reason"}),
     PAYLOAD_TOO_LARGE: frozenset({"size_limit_bytes", "actual_size_bytes"}),
+    # No required keys, but the spec documents optional details:
+    # - PERMISSION_DENIED: spec FR-031 / Block B Q7 — MAY carry
+    #   ``{reason: "feat009_permission_gate"}`` for app.send_input
+    #   permission-gate refusals; absent for peer-UID rejections.
+    # - INTERNAL_ERROR: Block B Q9 — MAY carry
+    #   ``{reason: "shutting_down"}`` during graceful daemon shutdown.
+    # Registry membership with empty required set ⇒ optional details
+    # accepted without ContractViolation. (The strict "extras only on
+    # registered codes" rule of FR-034a still applies — keeps the
+    # closed surface tight while permitting documented optionals.)
+    PERMISSION_DENIED: frozenset(),
+    INTERNAL_ERROR: frozenset(),
 }
 
 

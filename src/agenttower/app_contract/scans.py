@@ -218,13 +218,35 @@ class ScanRegistry:
     def _evict_if_over_cap(self) -> None:
         """FR-030c: keep at most ``MAX_RECORDS`` records; FIFO eviction.
 
-        Caller MUST hold ``self._lock``. We evict the **oldest** record
-        regardless of state — even a still-running record is evicted on
-        overflow, but that's vanishingly unlikely at the 4-in-flight cap
-        + 100-record retention.
+        Caller MUST hold ``self._lock``. Eviction policy:
+
+        * Prefer evicting the **oldest terminal** record (state in
+          ``{completed, failed}``). This is the common case at v1.0:
+          terminal records vastly outnumber in-flight ones (cap 4
+          in-flight + retain 100 terminals).
+        * Fall back to evicting the **oldest** record (which may be
+          running) only if every record is in-flight — vanishingly
+          unlikely with the 4-in-flight cap but possible in
+          pathological test fixtures.
+
+        When a running record IS evicted, we signal ``record.done`` to
+        wake any blocked waiters so they observe ``scan_not_found`` on
+        the subsequent registry lookup rather than blocking forever.
         """
         while len(self._records) > self._max_records:
-            self._records.popitem(last=False)
+            # First pass: find the oldest terminal record.
+            terminal_scan_id: str | None = None
+            for sid, rec in self._records.items():
+                if rec.state in (STATE_COMPLETED, STATE_FAILED):
+                    terminal_scan_id = sid
+                    break
+            if terminal_scan_id is not None:
+                self._records.pop(terminal_scan_id, None)
+                continue
+            # All records still running — fall back to oldest-first and
+            # signal the evicted record's done event so waiters wake.
+            oldest_id, oldest = self._records.popitem(last=False)
+            oldest.done.set()
 
 
 # ─── Module-level singleton ─────────────────────────────────────────────
