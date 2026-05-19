@@ -100,6 +100,7 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
     from . import hello as _hello
     from . import preflight as _preflight
     from . import readiness as _readiness
+    from . import reads as _reads
     from . import scan_handlers as _scan_handlers
 
     return {
@@ -110,6 +111,10 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
         "app.scan.containers": _wrap_handler(_scan_handlers.app_scan_containers),
         "app.scan.panes": _wrap_handler(_scan_handlers.app_scan_panes),
         "app.scan.status": _wrap_handler(_scan_handlers.app_scan_status),
+        "app.pane.list": _wrap_handler(_reads.app_pane_list),
+        "app.pane.detail": _wrap_handler(_reads.app_pane_detail),
+        "app.agent.list": _wrap_handler(_reads.app_agent_list),
+        "app.agent.detail": _wrap_handler(_reads.app_agent_detail),
     }
 
 
