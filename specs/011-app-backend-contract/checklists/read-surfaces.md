@@ -11,7 +11,7 @@
 - [X] CHK003 Is the `not_found` semantics on `app.<entity>.detail` defined consistently across all 7 entities? [Coverage, Spec §FR-034]
 - [X] CHK004 Are filter parameter sets enumerated per supported entity (events/queue/route — FR-024)? [Completeness, Spec §FR-024]
 - [X] CHK005 Is `since`/`until` time-range parameter format (ISO-8601 string, unix epoch int, both) defined? [Gap, Spec §FR-024]
-- [X] CHK006 Are derived fields beyond `registered`/`agent_id`/`log_attached`/`pane_active` enumerated where applicable (e.g., `log_attachment` derived `stale: bool`, `bytes_written`, `last_output_at`)? [Gap]
+- [X] CHK006 Are derived fields beyond `registered`/`agent_id`/`log_attached`/`pane_active` enumerated where applicable (Round-6: `log_attachment` exposes `status`/`source`/`last_status_at` from the FEAT-007 row — no `bytes_written`/`last_output_at` columns exist)? [Gap]
 - [X] CHK007 Is the `total_estimate` semantics defined (when is it used vs `total`, and how stale may the estimate be)? [Gap, Spec §FR-020]
 
 ## Requirement Clarity
@@ -48,7 +48,7 @@
 ## Ambiguities, Conflicts, Gaps
 
 - [X] CHK027 Is `registered_at` guaranteed to exist on every agent row (referenced by FR-021's agent ordering)? [Gap]
-- [X] CHK028 Is `last_output_at` guaranteed to exist on every `log_attachments` row (referenced by FR-021's ordering)? [Gap]
+- [X] CHK028 Is `last_status_at` guaranteed to exist on every `log_attachments` row (Round-6: FR-021 orders log_attachments by `last_status_at`, the shipped FEAT-007 column)? [Gap]
 - [X] CHK029 Is `event_id` monotonicity within the daemon guaranteed (referenced by FR-021's event ordering)? [Gap]
 - [X] CHK030 Is the rule defined for whether `app.<entity>.list` MAY return rows that no longer exist as of response time (snapshot vs. live read)? [Gap, Spec §FR-018]
 - [X] CHK031 Is the `agent_id` field's nullability on `app.pane.list` rows (FR-022) reflected in `app.agent.detail`'s response shape (must `null` map to a defined absent-agent state)? [Coverage]

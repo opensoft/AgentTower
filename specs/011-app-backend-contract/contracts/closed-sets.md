@@ -238,13 +238,13 @@ Each list method accepts an optional `order_by` from a per-surface closed set. T
 
 | List method | `order_by` closed set |
 |---|---|
-| `app.container.list` | `name`, `created_at`, `last_seen_at` |
+| `app.container.list` | `name`, `first_seen_at`, `last_scanned_at` |
 | `app.pane.list` | `default` (the FR-021 composite), `discovered_at`, `last_seen_at` |
 | `app.agent.list` | `default` (FR-021/021a composite), `registered_at`, `role` |
-| `app.log_attachment.list` | `last_output_at`, `attached_at`, `bytes_written` |
-| `app.event.list` | `event_id`, `created_at` |
+| `app.log_attachment.list` | `attached_at`, `last_status_at`, `status` |
+| `app.event.list` | `event_id`, `observed_at` |
 | `app.queue.list` | `default` (FR-021/021a composite), `enqueued_at`, `last_updated_at` |
-| `app.route.list` | `default` (FR-021 composite), `created_at`, `last_used_at` |
+| `app.route.list` | `default` (FR-021 composite), `created_at`, `updated_at` |
 
 Each surface's `order_by` accepts an optional direction suffix `:asc` or `:desc` (e.g., `created_at:desc`). Default direction matches the FR-021 default (see plan.md / app-methods.md per-entity table).
 

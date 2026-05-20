@@ -197,10 +197,15 @@ Exactly one of `total` / `total_estimate` is non-null per response.
 | `container` | `name ASC` | `state ∈ {active, inactive, degraded_scan}` |
 | `pane` | `(container_name, session_name, window_index, pane_index) ASC` | `container_id`, `registered: bool` |
 | `agent` | `(role_priority, registered_at) ASC` | `role`, `capability`, `container_id`, `log_attached: bool` |
-| `log_attachment` | `last_output_at DESC` | `agent_id`, `status` |
-| `event` | `event_id DESC` | `event_type`, `origin`, `agent_id`, `since`, `until` |
+| `log_attachment` | `last_status_at DESC` | `agent_id`, `status` |
+| `event` | `event_id DESC` | `event_type`, `agent_id`, `since`, `until` |
 | `queue` | `(state_priority, enqueued_at) ASC` | `state`, `sender_agent_id`, `target_agent_id`, `since`, `until` |
 | `route` | `(created_at, route_id) ASC` | `enabled: bool` |
+
+(Round-6 correction: `log_attachment` orders by `last_status_at` — the
+shipped FEAT-007 column, not the non-existent `last_output_at`; the
+`event` filter set drops `origin` — the FEAT-008 `events` row has no
+`origin` column.)
 
 `since` / `until` are unix-ms ints. `since > until` → `validation_failed.details = {field: "since", reason: "after until"}`.
 

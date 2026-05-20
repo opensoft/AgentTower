@@ -50,9 +50,11 @@ def container_view(
         "container_id": _get(row, "container_id"),
         "name": _get(row, "name", default=""),
         "state": derived_state if derived_state is not None else _get(row, "state", default=""),
-        "created_at": _get(row, "created_at"),
-        "last_seen_at": _get(row, "last_seen_at"),
         "image": _get(row, "image", default=""),
+        # Round-6: FEAT-003 containers row has first_seen_at /
+        # last_scanned_at — not created_at / last_seen_at.
+        "first_seen_at": _get(row, "first_seen_at"),
+        "last_scanned_at": _get(row, "last_scanned_at"),
         "pane_count": _coerce_int(pane_count) if pane_count is not None else _get(row, "pane_count", default=0),
         "registered_agent_count": (
             _coerce_int(registered_agent_count)
@@ -133,32 +135,40 @@ def agent_view(
 
 
 def log_attachment_view(row: Any) -> dict[str, Any]:
-    """LogAttachmentViewModel (data-model.md)."""
+    """LogAttachmentViewModel (data-model.md — Round-6 corrected).
+
+    Projects the shipped FEAT-007 ``log_attachments`` columns. The row
+    has no ``last_output_at`` or ``bytes_written`` (byte offsets live
+    in the separate ``log_offsets`` table); its status set is
+    ``{active, superseded, stale, detached}``.
+    """
     return {
+        "attachment_id": _get(row, "attachment_id"),
         "agent_id": _get(row, "agent_id"),
-        "attached_at": _get(row, "attached_at"),
-        "last_output_at": _get(row, "last_output_at"),
-        "bytes_written": _coerce_int(_get(row, "bytes_written", default=0)),
+        "container_id": _get(row, "container_id"),
+        "log_path": _get(row, "log_path", default=""),
         "status": _get(row, "status", default=""),
+        "source": _get(row, "source", default=""),
+        "attached_at": _get(row, "attached_at"),
+        "last_status_at": _get(row, "last_status_at"),
     }
 
 
 def event_view(row: Any) -> dict[str, Any]:
-    """EventViewModel (data-model.md).
+    """EventViewModel (data-model.md — Round-6 corrected).
 
-    Full event projection for ``app.event.list/.detail``. Includes the
-    raw payload (subject to the response cap; the list-handler MUST
-    apply FR-020a pagination so an unbounded payload doesn't blow the
-    8 MiB response cap from FR-003a).
+    Projects the shipped FEAT-008 ``events`` columns. The row has no
+    ``origin`` column and no structured ``payload``; the human-readable
+    content is ``excerpt`` (already redacted by FEAT-008) and the
+    timestamp is ``observed_at``.
     """
-    payload = _get(row, "payload", default={})
     return {
         "event_id": _get(row, "event_id"),
         "event_type": _get(row, "event_type", default=""),
-        "origin": _get(row, "origin", default=""),
-        "created_at": _get(row, "created_at"),
         "agent_id": _get(row, "agent_id"),
-        "payload": payload if isinstance(payload, dict) else {},
+        "observed_at": _get(row, "observed_at"),
+        "excerpt": _get(row, "excerpt", default=""),
+        "classifier_rule_id": _get(row, "classifier_rule_id", default=""),
         "summary": _summarize_event(row),
     }
 
@@ -191,16 +201,36 @@ def queue_view(row: Any) -> dict[str, Any]:
 
 
 def route_view(row: Any) -> dict[str, Any]:
-    """RouteViewModel (data-model.md)."""
+    """RouteViewModel (data-model.md — Round-6 corrected).
+
+    Projects the shipped FEAT-010 ``routes`` columns. Source-scope,
+    target, and master are stored as **paired** ``*_kind``/``*_rule`` +
+    ``*_value`` columns and are composed here into nested objects. The
+    route's last-change timestamp is ``updated_at`` (there is no
+    ``last_used_at`` column).
+    """
     return {
         "route_id": _get(row, "route_id"),
         "enabled": bool(_get(row, "enabled", default=False)),
-        "source_scope": _get(row, "source_scope", default={}),
-        "template": _get(row, "template", default={}),
-        "target": _get(row, "target", default={}),
-        "last_consumed_event_id": _get(row, "last_consumed_event_id"),
+        "event_type": _get(row, "event_type", default=""),
+        "source_scope": {
+            "kind": _get(row, "source_scope_kind", default=""),
+            "value": _get(row, "source_scope_value"),
+        },
+        "target": {
+            "rule": _get(row, "target_rule", default=""),
+            "value": _get(row, "target_value"),
+        },
+        "master": {
+            "rule": _get(row, "master_rule", default=""),
+            "value": _get(row, "master_value"),
+        },
+        "template": _get(row, "template", default=""),
+        "last_consumed_event_id": _coerce_int(
+            _get(row, "last_consumed_event_id", default=0)
+        ),
         "created_at": _get(row, "created_at"),
-        "last_used_at": _get(row, "last_used_at"),
+        "updated_at": _get(row, "updated_at"),
     }
 
 

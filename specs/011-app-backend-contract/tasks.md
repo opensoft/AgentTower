@@ -127,7 +127,7 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 ### Tests for User Story 3 (read surfaces)
 
 - [ ] T043 [P] [US3] Contract test `app.container.list` / `.detail` in `tests/contract/test_app_containers.py`. Default ordering by `name ASC`, filter by `state ∈ {active, inactive, degraded_scan}`, `degraded_scan` semantics per FR-016a (SC-026), `not_found` on detail miss
-- [ ] T044 [P] [US3] Contract test `app.log_attachment.list` / `.detail` in `tests/contract/test_app_log_attachments.py`. Default ordering by `last_output_at DESC`, filter by `agent_id`, `status`
+- [ ] T044 [P] [US3] Contract test `app.log_attachment.list` / `.detail` in `tests/contract/test_app_log_attachments.py`. Default ordering by `last_status_at DESC` (Round-6: FEAT-007 column — no `last_output_at`), filter by `agent_id`, `status`
 - [ ] T045 [P] [US3] Contract test `app.event.list` / `.detail` in `tests/contract/test_app_events.py`. Default ordering by `event_id DESC` (relies on FEAT-008 monotonicity assumption from spec.md Assumptions), filter by `event_type`, `origin`, `agent_id`, `since`/`until` (FR-024); exact-match filter enforcement per FR-024a (SC-018)
 - [ ] T046 [P] [US3] Contract test `app.queue.list` / `.detail` in `tests/contract/test_app_queue.py`. Default ordering `(state_priority, created_at) ASC` per FR-021a (SC-016 normative mapping); filter by `state`, `origin`, `route_id`, `target_agent_id`, `since`/`until`; `queue_message_not_found` on detail miss
 - [ ] T047 [P] [US3] Contract test `app.route.list` / `.detail` in `tests/contract/test_app_routes.py`. Default ordering `(created_at, route_id) ASC`; filter by `enabled: bool`; `route_not_found` on detail miss
@@ -144,7 +144,7 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 ### Implementation for User Story 3 (read surfaces)
 
 - [ ] T054 [US3] `app.container.list` and `app.container.detail` in `src/agenttower/app_contract/reads.py`. Composes `ContainerViewModel` (T015) per row; default ordering `name ASC`; filter by `state ∈ {active, inactive, degraded_scan}` with the FR-016a-defined `degraded_scan` semantics
-- [ ] T055 [US3] `app.log_attachment.list` and `app.log_attachment.detail` in `src/agenttower/app_contract/reads.py`. Default ordering `last_output_at DESC`; filter by `agent_id`, `status`
+- [ ] T055 [US3] `app.log_attachment.list` and `app.log_attachment.detail` in `src/agenttower/app_contract/reads.py`. Default ordering `last_status_at DESC` (Round-6 corrected); filter by `agent_id`, `status`
 - [ ] T056 [US3] `app.event.list` and `app.event.detail` in `src/agenttower/app_contract/reads.py`. Default ordering `event_id DESC`; filter fields from FR-024 (`event_type`, `origin`, `agent_id`, `since`, `until`); exact-match-only enforcement (FR-024a) — any operator-like syntax in a filter value → `validation_failed.details.field`
 - [ ] T057 [US3] `app.queue.list` and `app.queue.detail` in `src/agenttower/app_contract/reads.py`. Default ordering `(state_priority, created_at) ASC` using `state_priority` integer map from T006/FR-021a
 - [ ] T058 [US3] `app.route.list` and `app.route.detail` in `src/agenttower/app_contract/reads.py`. Default ordering `(created_at, route_id) ASC`; filter by `enabled: bool`

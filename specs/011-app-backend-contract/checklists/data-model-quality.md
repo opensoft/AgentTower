@@ -21,7 +21,7 @@
 - [X] CHK010 Does **AgentViewModel** derive both `log_attached: bool` AND `pane_active: bool` (FR-023)? [Completeness, DataModel §AgentViewModel, Spec §FR-023]
 - [X] CHK011 Does **QueueViewModel** include `state_priority: int 1..6` consistent with FR-021a? [Consistency, DataModel §QueueViewModel, Spec §FR-021a]
 - [X] CHK012 Does **EventViewModel** include a `summary` field for "Recent activity" rendering (FR-017)? [Completeness, DataModel §EventViewModel, Spec §FR-017]
-- [X] CHK013 Does **RouteViewModel** include `last_consumed_event_id` and `last_used_at` for activity displays? [Completeness, DataModel §RouteViewModel]
+- [X] CHK013 Does **RouteViewModel** include `last_consumed_event_id` and `updated_at` for activity displays (Round-6: `updated_at`, not `last_used_at`)? [Completeness, DataModel §RouteViewModel]
 - [X] CHK014 Are **summary field length caps** specified (e.g., EventViewModel.summary ≤ 256 chars)? [Clarity, DataModel §EventViewModel]
 
 ## Closed-Set Inventory

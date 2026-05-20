@@ -70,18 +70,21 @@ These are **response shapes** assembled from existing service-layer DAOs at read
 
 ### ContainerViewModel
 
-Source: FEAT-003 `containers` rows.
+Source: FEAT-003 `containers` rows. Timestamp field names corrected in
+Round-6 (2026-05-20) to match the shipped FEAT-003 schema — the
+`containers` table has `first_seen_at` / `last_scanned_at`, not
+`created_at` / `last_seen_at`.
 
 | Field | Type | Derived? | Description |
 |---|---|---|---|
 | `container_id` | `str` | no | Docker container ID prefix as stored |
-| `name` | `str` | no | Container name |
-| `state` | `enum {"active", "inactive", "degraded_scan"}` | yes | FR-016 bucket; computed from FEAT-003 row + last-scan health |
-| `created_at` | `int (unix ms)` | no | From row |
-| `last_seen_at` | `int (unix ms)` | no | From row |
-| `image` | `str` | no | From row |
+| `name` | `str` | no | `containers.name` |
+| `state` | `enum {"active", "inactive", "degraded_scan"}` | yes | FR-016 bucket; computed from FEAT-003 row `active` flag + last-scan health (FR-016a) |
+| `image` | `str` | no | `containers.image` |
+| `first_seen_at` | `str (ISO-8601)` | no | `containers.first_seen_at` |
+| `last_scanned_at` | `str (ISO-8601)` | no | `containers.last_scanned_at` |
 | `pane_count` | `int` | yes | Count of `panes` rows where `container_id` matches |
-| `registered_agent_count` | `int` | yes | Count of `agents` rows matching panes in this container |
+| `registered_agent_count` | `int` | yes | Count of active `agents` rows matching panes in this container |
 
 ### PaneViewModel
 
@@ -121,29 +124,41 @@ Source: FEAT-006 `agents` rows + FEAT-007 `log_attachments` rows + FEAT-004 `pan
 
 ### LogAttachmentViewModel
 
-Source: FEAT-007 `log_attachments` rows.
+Source: FEAT-007 `log_attachments` rows. Field list corrected in
+Round-6 (2026-05-20) — the shipped `log_attachments` table has no
+`last_output_at` or `bytes_written` columns (byte offsets live in the
+separate FEAT-007 `log_offsets` table, out of scope for this view
+model), and its `status` closed set is `{active, superseded, stale,
+detached}`, not `{active, degraded, stopped}`.
 
 | Field | Type | Derived? | Description |
 |---|---|---|---|
+| `attachment_id` | `str` | no | `log_attachments.attachment_id` (PK) |
 | `agent_id` | `str` | no | Owning agent |
-| `attached_at` | `int (unix ms)` | no | From row |
-| `last_output_at` | `int (unix ms) \| null` | no | From row |
-| `bytes_written` | `int` | no | From row |
-| `status` | `enum {"active", "degraded", "stopped"}` | no | From row |
+| `container_id` | `str` | no | `log_attachments.container_id` |
+| `log_path` | `str` | no | `log_attachments.log_path` |
+| `status` | `enum {"active", "superseded", "stale", "detached"}` | no | FEAT-007 `log_attachments.status` closed set |
+| `source` | `enum {"explicit", "register_self"}` | no | `log_attachments.source` |
+| `attached_at` | `str (ISO-8601)` | no | `log_attachments.attached_at` |
+| `last_status_at` | `str (ISO-8601)` | no | `log_attachments.last_status_at` (when `status` last changed) |
 
 ### EventViewModel
 
-Source: FEAT-008 `events` rows (JSONL-backed or SQLite mirror, per FEAT-008).
+Source: FEAT-008 `events` rows. Field list corrected in Round-6
+(2026-05-20) — the shipped `events` table has **no** `origin` column
+and **no** structured `payload`; its timestamp is `observed_at` (not
+`created_at`), and the human-readable content is `excerpt` (the
+classified text slice).
 
 | Field | Type | Description |
 |---|---|---|
-| `event_id` | `int` | Monotonic |
-| `event_type` | `str` | From FEAT-008 closed set |
-| `origin` | `str` | From row (now includes `"app"` as a permitted value) |
-| `created_at` | `int (unix ms)` | From row |
-| `agent_id` | `str \| null` | Subject agent |
-| `payload` | `object` | Full payload as stored |
-| `summary` | `str` | Short rendering for "Recent activity" rows (≤ 256 chars) |
+| `event_id` | `int` | `events.event_id` — monotonic within a daemon process |
+| `event_type` | `str` | `events.event_type` (FEAT-008 closed set) |
+| `agent_id` | `str` | `events.agent_id` — subject agent |
+| `observed_at` | `str (ISO-8601)` | `events.observed_at` |
+| `excerpt` | `str` | `events.excerpt` — the classified text slice (already redacted by FEAT-008) |
+| `classifier_rule_id` | `str` | `events.classifier_rule_id` — which FEAT-008 rule fired |
+| `summary` | `str` | Derived: short rendering for "Recent activity" rows (≤ 256 chars), composed from `event_type` + `agent_id` |
 
 ### QueueViewModel
 
@@ -175,18 +190,25 @@ object) → `payload_preview` (redacted string, since the row stores raw
 
 ### RouteViewModel
 
-Source: FEAT-010 `routes` rows.
+Source: FEAT-010 `routes` rows. Field list corrected in Round-6
+(2026-05-20) — the shipped `routes` table stores source-scope and
+target as **paired** columns (`source_scope_kind` + `source_scope_value`,
+`target_rule` + `target_value`, `master_rule` + `master_value`), not
+single `object` columns; the route's "last activity" timestamp is
+`updated_at`, not `last_used_at`.
 
 | Field | Type | Description |
 |---|---|---|
-| `route_id` | `str` | From row |
-| `enabled` | `bool` | From row |
-| `source_scope` | `object` | FEAT-010 source-scope dict |
-| `template` | `object` | FEAT-010 template dict |
-| `target` | `object` | FEAT-010 target dict |
-| `last_consumed_event_id` | `int \| null` | From row |
-| `created_at` | `int (unix ms)` | From row |
-| `last_used_at` | `int (unix ms) \| null` | From row |
+| `route_id` | `str` | `routes.route_id` |
+| `enabled` | `bool` | `routes.enabled` |
+| `event_type` | `str` | `routes.event_type` — the FEAT-008 event type this route triggers on |
+| `source_scope` | `object {kind, value}` | Composed from `routes.source_scope_kind` (`any` \| `agent_id` \| `role`) + `routes.source_scope_value` (null when `kind == "any"`) |
+| `target` | `object {rule, value}` | Composed from `routes.target_rule` (`explicit` \| `source` \| `role`) + `routes.target_value` (null when `rule == "source"`) |
+| `master` | `object {rule, value}` | Composed from `routes.master_rule` (`auto` \| `explicit`) + `routes.master_value` |
+| `template` | `str` | `routes.template` — the message template |
+| `last_consumed_event_id` | `int` | `routes.last_consumed_event_id` (0 when none consumed yet) |
+| `created_at` | `str (ISO-8601)` | `routes.created_at` |
+| `updated_at` | `str (ISO-8601)` | `routes.updated_at` — last time the route row changed |
 
 ---
 
