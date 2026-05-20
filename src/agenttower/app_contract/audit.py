@@ -54,9 +54,18 @@ if TYPE_CHECKING:
 # window" rule. The "window" is bounded by ``_OUTAGE_WARN_INTERVAL_MS``
 # — we throttle repeated warnings to prevent stderr spam during a
 # sustained JSONL outage.
+#
+# The "last warned" sentinel is ``-inf`` (not ``0.0``) so the very
+# first warning always fires regardless of the absolute value of
+# ``time.monotonic()``. ``time.monotonic()`` is only meaningful as a
+# delta; on a freshly-booted host it can return a value below
+# ``_OUTAGE_WARN_INTERVAL_MS / 1000``, and a ``0.0`` sentinel would
+# then suppress the first warning (``now - 0.0 < interval``). ``-inf``
+# makes ``now - sentinel`` infinite, so the gate always opens first.
 _OUTAGE_WARN_INTERVAL_MS: Final[int] = 60_000  # one warning per minute
 _warn_lock = threading.Lock()
-_last_outage_warn_ms: float = 0.0
+_NEVER_WARNED: Final[float] = float("-inf")
+_last_outage_warn_ms: float = _NEVER_WARNED
 
 
 def _maybe_warn_outage(reason: str) -> None:
@@ -167,10 +176,15 @@ def emit_app_mutation(
 # Test seam: reset the outage-warning throttle so unit tests don't
 # silently miss expected warnings.
 def _reset_outage_warn_state() -> None:
-    """Test seam — reset module-level outage-warn throttle."""
+    """Test seam — reset module-level outage-warn throttle.
+
+    Resets to ``-inf`` (the never-warned sentinel) so the next
+    ``_maybe_warn_outage`` call is guaranteed to fire regardless of
+    the host's ``time.monotonic()`` epoch.
+    """
     global _last_outage_warn_ms
     with _warn_lock:
-        _last_outage_warn_ms = 0.0
+        _last_outage_warn_ms = _NEVER_WARNED
 
 
 __all__ = [
