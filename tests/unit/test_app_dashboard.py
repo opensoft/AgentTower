@@ -480,9 +480,8 @@ def test_dashboard_counts_with_seeded_data(
     _seed_event(conn, event_type="activity", agent_id="agt-1")
     _seed_event(conn, event_type="error", agent_id="agt-2")
 
-    # Queue: 'blocked' + 'delivered' are in QUEUE_STATES; 'queued' is
-    # a valid CHECK value but NOT in QUEUE_STATES (exercises the
-    # ``state in by_state`` False branch).
+    # Queue: 3 rows across 3 of the 5 FEAT-009 states (Round-5
+    # corrected vocabulary — queued/blocked/delivered/canceled/failed).
     _seed_queue_message(conn, message_id="m-1", state="blocked")
     _seed_queue_message(conn, message_id="m-2", state="delivered")
     _seed_queue_message(conn, message_id="m-3", state="queued")
@@ -510,10 +509,14 @@ def test_dashboard_counts_with_seeded_data(
     # 3 agents - 1 active - 0 degraded = 2 with "none".
     assert c["log_attachments"]["none"] == 2
     assert c["events"]["total"] == 2
-    assert c["queue"]["blocked"] == 1
-    assert c["queue"]["delivered"] == 1
-    # 'queued' is not a QUEUE_STATES key → not surfaced.
-    assert "queued" not in c["queue"]
+    # All 5 FEAT-009 states are surfaced; 3 are populated, 2 are zero.
+    assert c["queue"] == {
+        "queued": 1,
+        "blocked": 1,
+        "delivered": 1,
+        "canceled": 0,
+        "failed": 0,
+    }
     assert c["routes"] == {"enabled": 1, "disabled": 1}
 
 

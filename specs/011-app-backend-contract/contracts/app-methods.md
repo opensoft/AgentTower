@@ -138,7 +138,7 @@ Aggregate counts + recents + hints. Side-effect-free (FR-045). Best-effort consi
     "agents":          {"total": <int>, "by_role": {"master": <int>, "slave": <int>, "swarm": <int>, "test-runner": <int>, "shell": <int>, "unknown": <int>}},
     "log_attachments": {"active": <int>, "degraded": <int>, "none": <int>},
     "events":          {"total": <int>},
-    "queue":           {"pending": <int>, "in_flight": <int>, "blocked": <int>, "expired": <int>, "cancelled": <int>, "delivered": <int>},
+    "queue":           {"queued": <int>, "blocked": <int>, "delivered": <int>, "canceled": <int>, "failed": <int>},
     "routes":          {"enabled": <int>, "disabled": <int>}
   },
   "recent": {
@@ -199,7 +199,7 @@ Exactly one of `total` / `total_estimate` is non-null per response.
 | `agent` | `(role_priority, registered_at) ASC` | `role`, `capability`, `container_id`, `log_attached: bool` |
 | `log_attachment` | `last_output_at DESC` | `agent_id`, `status` |
 | `event` | `event_id DESC` | `event_type`, `origin`, `agent_id`, `since`, `until` |
-| `queue` | `(state_priority, created_at) ASC` | `state`, `origin`, `route_id`, `target_agent_id`, `since`, `until` |
+| `queue` | `(state_priority, enqueued_at) ASC` | `state`, `sender_agent_id`, `target_agent_id`, `since`, `until` |
 | `route` | `(created_at, route_id) ASC` | `enabled: bool` |
 
 `since` / `until` are unix-ms ints. `since > until` → `validation_failed.details = {field: "since", reason: "after until"}`.
@@ -337,6 +337,13 @@ On a duplicate `idempotency_key` retry within the session, returns the original 
 - `approve`: `{message_id}` only.
 - `delay`: `{message_id, delay_ms: <int>}` — delay relative to now.
 - `cancel`: `{message_id, reason?: <str>}`.
+
+**State transitions** (FEAT-009 `message_queue.state`, Round-5):
+
+- `approve` — a `blocked` row → `queued`. Emits `queue_message_approved`.
+- `delay` — a `queued` row → `blocked` (`block_reason == "operator_delayed"`). Emits `queue_message_delayed`.
+- `cancel` — a non-terminal (`queued` or `blocked`) row → `canceled`. Emits `queue_message_canceled`.
+- Any of the three against a **terminal** row (`delivered`, `canceled`, `failed`) → `stale_object` (FR-030a terminal-state guard).
 
 **Success result**: full post-mutation `QueueViewModel`.
 

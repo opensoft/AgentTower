@@ -147,21 +147,31 @@ Source: FEAT-008 `events` rows (JSONL-backed or SQLite mirror, per FEAT-008).
 
 ### QueueViewModel
 
-Source: FEAT-009 `message_queue` rows.
+Source: FEAT-009 `message_queue` rows. Field list corrected in Round-5
+(2026-05-20) to match the shipped FEAT-009 schema — the earlier model
+named `origin` / `route_id` / `event_id` columns that do not exist on
+`message_queue`, used a wrong `state` vocabulary, and used
+`source_agent_id` / `created_at` names that the row spells
+`sender_agent_id` / `enqueued_at`.
 
 | Field | Type | Description |
 |---|---|---|
 | `message_id` | `str` | From row |
-| `state` | `enum {"pending","in_flight","blocked","expired","cancelled","delivered"}` | FEAT-009 closed set |
-| `state_priority` | `int (1..6)` | Derived per FR-021a |
-| `origin` | `enum {"direct","route","app"}` | From row (FEAT-009 origin + new `app` value) |
-| `route_id` | `str \| null` | From row |
-| `event_id` | `int \| null` | From row |
-| `source_agent_id` | `str \| null` | From row |
+| `state` | `enum {"queued","blocked","delivered","canceled","failed"}` | FEAT-009 `message_queue.state` closed set |
+| `state_priority` | `int (1..5)` | Derived per FR-021a (`queued=1, blocked=2, failed=3, delivered=4, canceled=5`) |
+| `block_reason` | `str \| null` | From row; non-null only when `state == "blocked"` |
+| `failure_reason` | `str \| null` | From row; non-null only when `state == "failed"` |
+| `sender_agent_id` | `str` | From row |
 | `target_agent_id` | `str` | From row |
-| `payload` | `object` | From row |
-| `created_at` | `int (unix ms)` | From row |
+| `payload_preview` | `str` | Redacted preview of `envelope_body` (FEAT-009 redaction rules); the raw body bytes are NOT exposed |
+| `enqueued_at` | `int (unix ms)` | From row |
 | `last_updated_at` | `int (unix ms)` | From row |
+
+Dropped vs. the pre-Round-5 model: `origin`, `route_id`, `event_id`
+(no such columns on `message_queue`). Renamed: `source_agent_id` →
+`sender_agent_id`; `created_at` → `enqueued_at`; `payload` (structured
+object) → `payload_preview` (redacted string, since the row stores raw
+`envelope_body` bytes).
 
 ### RouteViewModel
 
@@ -233,21 +243,25 @@ shell = 5
 unknown = 6
 ```
 
-### Queue state (FEAT-009, reused)
+### Queue state (FEAT-009, reused — Round-5 corrected)
 
 ```text
-pending | in_flight | blocked | expired | cancelled | delivered
+queued | blocked | delivered | canceled | failed
 ```
+
+The shipped FEAT-009 `message_queue.state` CHECK set. There is no
+`pending` (it is `queued`), no `in_flight` state (in-flight is a
+derived condition — a `queued` row with `delivery_attempt_started_at`
+set), and no `expired` state.
 
 ### `state_priority` (FR-021a normative)
 
 ```text
-pending = 1
-in_flight = 2
-blocked = 3
-expired = 4
-cancelled = 5
-delivered = 6
+queued    = 1
+blocked   = 2
+failed    = 3
+delivered = 4
+canceled  = 5
 ```
 
 ### Scan state (FR-030c)

@@ -202,36 +202,41 @@ def test_event_view_payload_defaults_to_empty_object() -> None:
 
 
 def test_queue_view_state_priority_derived() -> None:
-    """FR-021a: state_priority comes from the normative mapping."""
+    """FR-021a: state_priority comes from the normative mapping
+    (Round-5 corrected FEAT-009 vocabulary)."""
     row = {
         "message_id": "msg-1",
-        "state": "pending",
-        "origin": "direct",
+        "state": "queued",
+        "sender_agent_id": "agt-0",
         "target_agent_id": "agt-1",
-        "payload": {"text": "hi"},
-        "created_at": 1000,
+        "enqueued_at": 1000,
         "last_updated_at": 1500,
     }
     out = vm.queue_view(row)
-    assert out["state"] == "pending"
-    assert out["state_priority"] == 1  # FR-021a: pending = 1
+    assert out["state"] == "queued"
+    assert out["state_priority"] == 1  # FR-021a: queued = 1
+    # Round-5 QueueViewModel field set.
+    assert out["sender_agent_id"] == "agt-0"
+    assert out["enqueued_at"] == 1000
+    assert "origin" not in out
+    assert "route_id" not in out
+    assert "created_at" not in out
 
 
 @pytest.mark.parametrize(
     "state,expected_priority",
     [
-        ("pending", 1),
-        ("in_flight", 2),
-        ("blocked", 3),
-        ("expired", 4),
-        ("cancelled", 5),
-        ("delivered", 6),
+        ("queued", 1),
+        ("blocked", 2),
+        ("failed", 3),
+        ("delivered", 4),
+        ("canceled", 5),
     ],
 )
 def test_queue_view_state_priority_normative_mapping(
     state: str, expected_priority: int
 ) -> None:
-    """FR-021a: state_priority mapping is normative."""
+    """FR-021a: state_priority mapping is normative (FEAT-009 states)."""
     out = vm.queue_view({"state": state})
     assert out["state_priority"] == expected_priority
 
@@ -292,18 +297,16 @@ def test_compact_event_summary_blank_when_no_type_or_agent() -> None:
 def test_compact_queue_full_shape() -> None:
     out = vm.compact_queue({
         "message_id": "msg-1",
-        "state": "pending",
-        "origin": "route",
+        "state": "queued",
         "target_agent_id": "agt-1",
         "created_at": 1000,
     })
     assert out["id"] == "msg-1"
-    assert out["state"] == "pending"
-    assert out["state_priority"] == 1
-    assert out["type"] == "route"
+    assert out["state"] == "queued"
+    assert out["state_priority"] == 1  # FR-021a: queued = 1
     assert out["target_agent_id"] == "agt-1"
     assert out["timestamp"] == 1000
-    assert "pending" in out["summary"]
+    assert "queued" in out["summary"]
     assert "agt-1" in out["summary"]
 
 
@@ -445,9 +448,23 @@ def test_event_view_with_non_dict_payload_normalizes_to_empty() -> None:
     assert out2["payload"] == {}
 
 
-def test_queue_view_with_non_dict_payload_normalizes_to_empty() -> None:
-    out = vm.queue_view({"message_id": "m", "state": "pending", "payload": "string"})
-    assert out["payload"] == {}
+def test_queue_view_payload_preview_and_reason_fields() -> None:
+    """Round-5 QueueViewModel: payload surfaces as a redacted
+    ``payload_preview`` string; block_reason / failure_reason are
+    nullable and projected from the row."""
+    out = vm.queue_view({
+        "message_id": "m",
+        "state": "blocked",
+        "block_reason": "operator_delayed",
+        "payload_preview": "send build status…",
+    })
+    assert out["state"] == "blocked"
+    assert out["state_priority"] == 2
+    assert out["block_reason"] == "operator_delayed"
+    assert out["failure_reason"] is None
+    assert out["payload_preview"] == "send build status…"
+    # Dropped fields must not reappear.
+    assert "payload" not in out
 
 
 def test_route_view_optional_target_template_defaults() -> None:

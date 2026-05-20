@@ -151,24 +151,44 @@ Used by `app.agent.list` default ordering `(role_priority, registered_at) ASC` (
 
 ---
 
-## Queue State (FEAT-009, reused)
+## Queue State (FEAT-009, reused — Round-5 corrected)
+
+The shipped FEAT-009 `message_queue.state` CHECK set (`state/schema.py`)
+is exactly these **five** values:
 
 ```text
-pending | in_flight | blocked | expired | cancelled | delivered
+queued | blocked | delivered | canceled | failed
 ```
+
+- `queued` — enqueued and deliverable; the delivery worker will pick it up.
+- `blocked` — held; carries a `block_reason` (permission violation,
+  kill-switch off, or operator `delay`).
+- `delivered` — terminal: the envelope reached the target pane.
+- `canceled` — terminal: operator-cancelled (note the single-`l`
+  FEAT-009 spelling).
+- `failed` — terminal: delivery failed; carries a `failure_reason`.
+
+There is **no** `pending` (it is `queued`), no `in_flight` state
+(in-flight is a derived condition — a `queued` row whose
+`delivery_attempt_started_at` is set), and no `expired` state.
+(Round-5 correction — the earlier `pending/in_flight/expired/cancelled`
+vocabulary was wrong; see spec.md Clarifications Session 2026-05-20.)
 
 ### `state_priority` (FR-021a normative)
 
 ```text
-pending     = 1
-in_flight   = 2
-blocked     = 3
-expired     = 4
-cancelled   = 5
-delivered   = 6
+queued     = 1
+blocked    = 2
+failed     = 3
+delivered  = 4
+canceled   = 5
 ```
 
-Used by `app.queue.list` default ordering `(state_priority, created_at) ASC` (FR-021).
+Operational-first: a live row (`queued`) and an operator-decision row
+(`blocked`) sort ahead of terminal rows; among terminal rows `failed`
+precedes `delivered` precedes `canceled`.
+
+Used by `app.queue.list` default ordering `(state_priority, enqueued_at) ASC` (FR-021).
 
 ---
 
@@ -223,7 +243,7 @@ Each list method accepts an optional `order_by` from a per-surface closed set. T
 | `app.agent.list` | `default` (FR-021/021a composite), `registered_at`, `role` |
 | `app.log_attachment.list` | `last_output_at`, `attached_at`, `bytes_written` |
 | `app.event.list` | `event_id`, `created_at` |
-| `app.queue.list` | `default` (FR-021/021a composite), `created_at`, `last_updated_at` |
+| `app.queue.list` | `default` (FR-021/021a composite), `enqueued_at`, `last_updated_at` |
 | `app.route.list` | `default` (FR-021 composite), `created_at`, `last_used_at` |
 
 Each surface's `order_by` accepts an optional direction suffix `:asc` or `:desc` (e.g., `created_at:desc`). Default direction matches the FR-021 default (see plan.md / app-methods.md per-entity table).

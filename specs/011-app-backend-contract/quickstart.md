@@ -160,7 +160,7 @@ Save `app_session_token` for every subsequent call.
       "agents":          {"total": 1, "by_role": {"master": 1, "slave": 0, "swarm": 0, "test-runner": 0, "shell": 0, "unknown": 0}},
       "log_attachments": {"active": 1, "degraded": 0, "none": 0},
       "events":          {"total": 47},
-      "queue":           {"pending": 0, "in_flight": 0, "blocked": 0, "expired": 0, "cancelled": 0, "delivered": 47},
+      "queue":           {"queued": 0, "blocked": 0, "delivered": 47, "canceled": 0, "failed": 0},
       "routes":          {"enabled": 0, "disabled": 0}
     },
     "recent": {

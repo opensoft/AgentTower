@@ -20,7 +20,7 @@
 - [X] CHK009 Is the `total` vs `total_estimate` selection rule clear (when does the daemon return one vs. the other)? [Clarity, Spec §FR-020]
 - [X] CHK010 Is `order_by`'s "closed set defined per surface" (FR-021) actually enumerated for any surface? [Gap, Spec §FR-021]
 - [X] CHK011 Is "default ordering" overridable in both directions (ASC and DESC) per surface? [Gap, Spec §FR-021]
-- [X] CHK012 Is the meaning of `state_priority` (used in queue ordering) defined as a specific ordering of `{pending, in_flight, delivered, cancelled, expired}`? [Gap, Spec §FR-021]
+- [X] CHK012 Is the meaning of `state_priority` (used in queue ordering) defined as a specific ordering of `{queued, blocked, failed, delivered, canceled}` (Round-5 corrected FEAT-009 states)? [Gap, Spec §FR-021]
 - [X] CHK013 Is the meaning of `role_priority` (used in agent ordering) defined as a specific ordering across the FEAT-006 role set? [Gap, Spec §FR-021]
 
 ## Requirement Consistency

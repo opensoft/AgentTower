@@ -23,7 +23,7 @@
 ## Requirement Consistency
 
 - [X] CHK011 Are FR-017's `recent_limit` bounds `[1, 50]` distinct from and reconciled with FR-020a's pagination bounds `[1, 200]`? [Consistency, Spec §FR-017, §FR-020a]
-- [X] CHK012 Do FR-016's queue count buckets `{pending, in_flight, delivered, cancelled, expired}` match the FEAT-009 closed set referenced elsewhere? [Consistency, Spec §FR-016]
+- [X] CHK012 Do FR-016's queue count buckets `{queued, blocked, delivered, canceled, failed}` match the shipped FEAT-009 `message_queue.state` closed set (Round-5 corrected)? [Consistency, Spec §FR-016]
 - [X] CHK013 Are FR-016's agent role buckets `{master, slave, swarm, test-runner, shell, unknown}` consistent with FEAT-006's role closed set? [Consistency, Spec §FR-016]
 - [X] CHK014 Is the `degraded_scan` container-count bucket consistent with the FEAT-003 container discovery state vocabulary? [Consistency, Spec §FR-016]
 

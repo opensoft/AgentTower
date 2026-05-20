@@ -164,24 +164,28 @@ def event_view(row: Any) -> dict[str, Any]:
 
 
 def queue_view(row: Any) -> dict[str, Any]:
-    """QueueViewModel (data-model.md).
+    """QueueViewModel (data-model.md — Round-5 corrected).
 
-    Full queue-row projection. ``state_priority`` is the FR-021a
+    Full queue-row projection over the shipped FEAT-009
+    ``message_queue`` columns. ``state_priority`` is the FR-021a
     normative mapping, used by ``app.queue.list`` default ordering.
+
+    The FEAT-009 row has no ``origin`` / ``route_id`` / ``event_id``
+    columns; the parties are ``sender_agent_id`` / ``target_agent_id``;
+    the enqueue timestamp is ``enqueued_at``; the payload is raw
+    ``envelope_body`` bytes surfaced as a redacted ``payload_preview``.
     """
     state = _get(row, "state", default="")
-    payload = _get(row, "payload", default={})
     return {
         "message_id": _get(row, "message_id"),
         "state": state,
         "state_priority": STATE_PRIORITY.get(state, 99),
-        "origin": _get(row, "origin", default=""),
-        "route_id": _get(row, "route_id"),
-        "event_id": _get(row, "event_id"),
-        "source_agent_id": _get(row, "source_agent_id"),
+        "block_reason": _get(row, "block_reason"),
+        "failure_reason": _get(row, "failure_reason"),
+        "sender_agent_id": _get(row, "sender_agent_id"),
         "target_agent_id": _get(row, "target_agent_id"),
-        "payload": payload if isinstance(payload, dict) else {},
-        "created_at": _get(row, "created_at"),
+        "payload_preview": _get(row, "payload_preview", default=""),
+        "enqueued_at": _get(row, "enqueued_at"),
         "last_updated_at": _get(row, "last_updated_at"),
     }
 

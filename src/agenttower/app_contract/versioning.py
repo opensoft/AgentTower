@@ -151,23 +151,31 @@ ROLE_PRIORITY: Final[dict[str, int]] = {
 
 # ─── Queue state and state_priority (FEAT-009 + FR-021a) ──────────────────
 
+# The shipped FEAT-009 ``message_queue.state`` CHECK set (state/schema.py).
+# Round-5 (2026-05-20) correction: the earlier
+# ``pending/in_flight/expired/cancelled`` vocabulary did not match
+# FEAT-009. There is no ``pending`` (it is ``queued``), no ``in_flight``
+# state (in-flight is a derived ``queued`` row with
+# ``delivery_attempt_started_at`` set), and no ``expired`` state;
+# ``canceled`` is the FEAT-009 single-``l`` spelling.
 QUEUE_STATES: Final[tuple[str, ...]] = (
-    "pending",
-    "in_flight",
+    "queued",
     "blocked",
-    "expired",
-    "cancelled",
     "delivered",
+    "canceled",
+    "failed",
 )
 
 # FR-021a normative integer mapping for default queue ordering.
+# Operational-first: live (queued) + operator-decision (blocked) sort
+# ahead of terminal rows; among terminal rows failed < delivered <
+# canceled.
 STATE_PRIORITY: Final[dict[str, int]] = {
-    "pending": 1,
-    "in_flight": 2,
-    "blocked": 3,
-    "expired": 4,
-    "cancelled": 5,
-    "delivered": 6,
+    "queued": 1,
+    "blocked": 2,
+    "failed": 3,
+    "delivered": 4,
+    "canceled": 5,
 }
 
 
