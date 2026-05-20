@@ -174,9 +174,15 @@ def _log_attachment_counts(ctx: "DaemonContext") -> dict[str, int]:
     except Exception:  # noqa: BLE001
         active = 0
     try:
+        # FEAT-007 ``log_attachments.status`` closed set is
+        # {active, superseded, stale, detached} — there is no
+        # ``degraded`` literal. The dashboard's "degraded" bucket
+        # maps to ``stale`` (attachment row exists but is no longer
+        # receiving output). ``superseded`` rows are bookkeeping for
+        # a newer active attachment; ``detached`` is "no attachment".
         degraded = int(
             conn.execute(
-                "SELECT COUNT(*) FROM log_attachments WHERE status = 'degraded'"
+                "SELECT COUNT(*) FROM log_attachments WHERE status = 'stale'"
             ).fetchone()[0]
         )
     except Exception:  # noqa: BLE001
@@ -247,38 +253,52 @@ def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
 
 
 def _recent_events(ctx: "DaemonContext", limit: int) -> list[dict[str, Any]]:
+    """Recent FEAT-008 ``events`` rows for the dashboard recents block.
+
+    Column note: the FEAT-008 ``events`` table (state/schema.py) has
+    ``observed_at`` (not ``created_at``) and has **no** ``origin``
+    column. We map ``observed_at`` → the view model's ``created_at``
+    and pass ``origin=""`` since events carry no origin attribution.
+    """
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
         return []
     try:
         rows = conn.execute(
-            "SELECT event_id, event_type, origin, agent_id, created_at "
+            "SELECT event_id, event_type, agent_id, observed_at "
             "FROM events ORDER BY event_id DESC LIMIT ?",
             (limit,),
         ).fetchall()
     except Exception:  # noqa: BLE001
         return []
     return [view_models.compact_event(
-        {"event_id": r[0], "event_type": r[1], "origin": r[2],
-         "agent_id": r[3], "created_at": r[4]}
+        {"event_id": r[0], "event_type": r[1], "origin": "",
+         "agent_id": r[2], "created_at": r[3]}
     ) for r in rows]
 
 
 def _recent_queue(ctx: "DaemonContext", limit: int) -> list[dict[str, Any]]:
+    """Recent FEAT-009 ``message_queue`` rows for the dashboard recents.
+
+    Column note: the FEAT-009 ``message_queue`` table (state/schema.py)
+    has ``enqueued_at`` (not ``created_at``) and **no** ``origin``
+    column. We map ``enqueued_at`` → the view model's ``created_at``
+    and pass ``origin=""``.
+    """
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
         return []
     try:
         rows = conn.execute(
-            "SELECT message_id, state, origin, target_agent_id, created_at "
-            "FROM message_queue ORDER BY created_at DESC LIMIT ?",
+            "SELECT message_id, state, target_agent_id, enqueued_at "
+            "FROM message_queue ORDER BY enqueued_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     except Exception:  # noqa: BLE001
         return []
     return [view_models.compact_queue(
-        {"message_id": r[0], "state": r[1], "origin": r[2],
-         "target_agent_id": r[3], "created_at": r[4]}
+        {"message_id": r[0], "state": r[1], "origin": "",
+         "target_agent_id": r[2], "created_at": r[3]}
     ) for r in rows]
 
 

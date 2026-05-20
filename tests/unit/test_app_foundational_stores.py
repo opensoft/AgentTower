@@ -223,6 +223,94 @@ def test_scan_registry_state_set_excludes_expired() -> None:
     assert "expired" not in valid
 
 
+def test_scan_registry_complete_unknown_id_returns_none() -> None:
+    """complete() on an id never registered (or already evicted) → None."""
+    reg = scans.ScanRegistry()
+    assert reg.complete("no-such-scan-id", {"panes_total": 0}) is None
+
+
+def test_scan_registry_fail_unknown_id_returns_none() -> None:
+    """fail() on an unknown id → None (tolerated, no exception)."""
+    reg = scans.ScanRegistry()
+    assert reg.fail("no-such-scan-id", {"error": "boom"}) is None
+
+
+def test_scan_registry_clear_drops_all_and_signals_done() -> None:
+    """clear() drops every record and sets each record's done event so
+    any blocked waiter wakes up."""
+    reg = scans.ScanRegistry()
+    rec_a, _ = reg.start(scan_kind="panes", issued_by_app_session_id=1)
+    rec_b, _ = reg.start(scan_kind="containers", issued_by_app_session_id=2)
+    assert reg.size() == 2
+    assert not rec_a.done.is_set()
+    assert not rec_b.done.is_set()
+
+    reg.clear()
+
+    assert reg.size() == 0
+    assert reg.lookup(rec_a.scan_id) is None
+    assert reg.lookup(rec_b.scan_id) is None
+    # done was signalled on every cleared record so waiters wake.
+    assert rec_a.done.is_set()
+    assert rec_b.done.is_set()
+
+
+def test_scan_registry_evicts_oldest_running_record_when_all_in_flight() -> None:
+    """_evict_if_over_cap fallback: when every record is still running and
+    the cap is exceeded, the oldest running record is evicted FIFO and its
+    done event is set so any blocked waiter wakes to observe scan_not_found.
+
+    v1.0 has exactly two scan kinds and same-kind calls coalesce, so the
+    only way to legitimately overfill an all-running registry through
+    start() is a cap of 1 with the two distinct kinds.
+    """
+    reg = scans.ScanRegistry(max_records=1, max_in_flight=10)
+    # Oldest record: panes, still running.
+    oldest, oldest_coalesced = reg.start(
+        scan_kind=scans.KIND_PANES, issued_by_app_session_id=1
+    )
+    assert oldest_coalesced is False
+    assert not oldest.done.is_set()
+
+    # Second record: a DIFFERENT kind so it does not coalesce; it pushes
+    # size to 2 > cap 1. No terminal records exist, so the running-record
+    # fallback evicts the oldest record (panes) and signals its done event.
+    newest, newest_coalesced = reg.start(
+        scan_kind=scans.KIND_CONTAINERS, issued_by_app_session_id=2
+    )
+    assert newest_coalesced is False
+
+    assert reg.size() == 1
+    # The oldest running record was evicted via the fallback path.
+    assert reg.lookup(oldest.scan_id) is None
+    # Its done event was signalled so any blocked waiter wakes up.
+    assert oldest.done.is_set()
+    # The newest record survives and is still running.
+    survivor = reg.lookup(newest.scan_id)
+    assert survivor is not None
+    assert survivor.state == scans.STATE_RUNNING
+
+
+def test_scan_registry_evicts_terminal_before_running() -> None:
+    """_evict_if_over_cap prefers evicting the oldest TERMINAL record over a
+    running one, even when the running record is older."""
+    reg = scans.ScanRegistry(max_records=1, max_in_flight=10)
+    # Oldest record: containers, completed (terminal).
+    terminal, _ = reg.start(
+        scan_kind=scans.KIND_CONTAINERS, issued_by_app_session_id=1
+    )
+    reg.complete(terminal.scan_id, {"i": 1})
+    # Second record: panes, still running. start() pushes size to 2 > cap 1.
+    # The oldest TERMINAL record (containers) is evicted, not the running one.
+    running, _ = reg.start(scan_kind=scans.KIND_PANES, issued_by_app_session_id=2)
+
+    assert reg.size() == 1
+    assert reg.lookup(terminal.scan_id) is None  # terminal evicted first
+    survivor = reg.lookup(running.scan_id)
+    assert survivor is not None  # running record kept
+    assert survivor.state == scans.STATE_RUNNING
+
+
 # ─── T013 audit.emit_app_mutation ────────────────────────────────────────
 
 

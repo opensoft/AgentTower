@@ -221,6 +221,15 @@ def test_failure_envelope_shape() -> None:
     }
 
 
+def test_failure_envelope_defaults_details_to_empty_object() -> None:
+    """FR-033: envelope.failure() called without a details arg defaults
+    details to {} (must never be None / absent)."""
+    env = envelope.failure(app_errors.HOST_ONLY, "host-only")
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.HOST_ONLY
+    assert env["error"]["details"] == {}
+
+
 def test_internal_error_envelope_shape() -> None:
     """envelope.internal_error() is the dispatcher's safety-net fallback.
     It MUST emit the FR-033/FR-034a shape: ok=False, code=internal_error,
@@ -372,7 +381,59 @@ def test_hello_container_peer_returns_host_only(
     env = hello_mod.app_hello(daemon_ctx, {}, peer_uid=-1)
     assert env["ok"] is False
     assert env["error"]["code"] == app_errors.HOST_ONLY
-    assert env["error"]["details"] == {}
+
+
+def test_hello_validation_failed_on_negative_major(
+    daemon_ctx: DaemonContext, host_peer: int
+) -> None:
+    """FR-036: client_app_contract_major < 1 → validation_failed."""
+    env = hello_mod.app_hello(
+        daemon_ctx,
+        {"client_app_contract_major": 0},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.VALIDATION_FAILED
+    assert env["error"]["details"]["field"] == "client_app_contract_major"
+
+
+def test_hello_validation_failed_on_non_string_client_id(
+    daemon_ctx: DaemonContext, host_peer: int
+) -> None:
+    """FR-010: a non-string client_id → validation_failed.field == client_id."""
+    env = hello_mod.app_hello(
+        daemon_ctx,
+        {"client_id": 12345},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.VALIDATION_FAILED
+    assert env["error"]["details"]["field"] == "client_id"
+
+
+def test_hello_validation_failed_on_oversized_client_version(
+    daemon_ctx: DaemonContext, host_peer: int
+) -> None:
+    """FR-010: client_version length cap (64) is enforced."""
+    env = hello_mod.app_hello(
+        daemon_ctx,
+        {"client_version": "v" * 65},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == app_errors.VALIDATION_FAILED
+    assert env["error"]["details"]["field"] == "client_version"
+
+
+def test_hello_tolerates_non_dict_params(
+    daemon_ctx: DaemonContext, host_peer: int
+) -> None:
+    """app.hello with a non-dict params (None / list) MUST NOT crash —
+    it normalizes to an empty dict and issues a session."""
+    for bad_params in (None, [1, 2, 3], "not-a-dict"):
+        env = hello_mod.app_hello(daemon_ctx, bad_params, peer_uid=host_peer)  # type: ignore[arg-type]
+        assert env["ok"] is True, (bad_params, env)
+        assert env["result"]["app_session_token"]
 
 
 def test_hello_session_token_unique_per_call(
