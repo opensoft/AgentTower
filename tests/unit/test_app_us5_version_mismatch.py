@@ -9,7 +9,7 @@ token then surfaces ``app_session_required``.
 
 Pure in-process tests — handlers called directly (SC-001).
 
-Fixtures are copied from ``test_app_contract_smoke.py``; pytest fixtures
+Fixtures are copied from ``test_app_contract_foundations.py``; pytest fixtures
 do not auto-share across files.
 """
 
@@ -33,7 +33,7 @@ from agenttower.socket_api.methods import (
 )
 
 
-# ─── Fixtures (copied from test_app_contract_smoke.py) ───────────────────
+# ─── Fixtures (copied from test_app_contract_foundations.py) ───────────────────
 
 
 @pytest.fixture

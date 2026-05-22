@@ -11,7 +11,7 @@ constructing a ``DaemonContext`` whose service is unwired (or whose
 path is bad) and calling the ``app.readiness`` handler end to end.
 
 Self-contained: all fixtures/helpers are copied in from
-``test_app_contract_smoke.py`` / ``test_app_readiness.py`` so there are
+``test_app_contract_foundations.py`` / ``test_app_readiness.py`` so there are
 no cross-file imports (pytest fixtures do not auto-share across files).
 """
 

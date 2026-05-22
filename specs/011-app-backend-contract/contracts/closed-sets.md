@@ -296,7 +296,11 @@ request_line_max_bytes:  1 MiB  =  1,048,576 bytes
 response_line_max_bytes: 8 MiB  =  8,388,608 bytes
 ```
 
-Request overflow → `payload_too_large` with `details = {size_limit_bytes: 1048576, actual_size_bytes: <int>}`. Daemon rejects before handler dispatch.
+Request overflow → `payload_too_large` with `details = {size_limit_bytes: <enforced limit>, actual_size_bytes: <int>}`. Daemon rejects before handler dispatch.
+
+> **Implementation note (T097):** FEAT-002's socket reader currently enforces an effective **64 KiB** per-line limit (`MAX_REQUEST_BYTES = 65536`), which binds before the 1 MiB contract cap. `size_limit_bytes` reports the value actually enforced (`65536`) until a separate FEAT-002 bump raises the read limit. The 1 MiB figure is the documented contract target. See spec.md FR-003a.
+
+> **`app.send_input` payload sub-cap:** the `payload` object of `app.send_input` carries an additional field-level cap of **16 KiB** (16,384 bytes) on its serialized form → `validation_failed.details = {field: "payload", reason: "too large"}`.
 
 Response overflow is a daemon-side invariant — at v1.0 the pagination cap (`limit ≤ 200`, FR-020a) and recent-limit cap (`recent_limit ≤ 50`, FR-017) keep responses well under 8 MiB. If a handler would build a larger response, the daemon emits `internal_error` rather than serialize an invalid envelope.
 

@@ -21,6 +21,7 @@ enforced by ``gate_session_required`` shared with the other handlers.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from dataclasses import asdict, is_dataclass
@@ -87,9 +88,18 @@ def _run_scan_in_background(
     try:
         result = scan_callable()
     except Exception as exc:  # noqa: BLE001 — never propagate to caller
+        # Full detail to stderr only; the scan result surfaced to the
+        # client carries the exception CLASS (a coarse failure category)
+        # but never str(exc), which can embed host paths (M1 / FR-033).
+        print(
+            f"FEAT-011: scan {record.scan_kind} ({record.scan_id}) failed: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
         registry.fail(
             record.scan_id,
-            {"error": f"{type(exc).__name__}: {exc}"},
+            {"error": type(exc).__name__},
         )
         return
     registry.complete(record.scan_id, _result_to_dict(result))

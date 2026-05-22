@@ -364,11 +364,7 @@ def app_pane_list(
         agent_lookup = _fetch_pane_agent_lookup(conn)
     except sqlite3.Error as exc:
         conn.close()
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -615,11 +611,7 @@ def app_agent_list(
         log_attached_ids = _fetch_log_attached_set(conn)
         active_pane_keys = _fetch_active_pane_keys(conn)
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -725,11 +717,7 @@ def app_agent_detail(
         log_attached_ids = _fetch_log_attached_set(conn)
         active_pane_keys = _fetch_active_pane_keys(conn)
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -946,11 +934,7 @@ def app_container_list(
 
         containers = state_containers.select_containers(conn, active_only=False)
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1000,11 +984,7 @@ def app_container_detail(
 
         containers = state_containers.select_containers(conn, active_only=False)
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1115,11 +1095,7 @@ def app_log_attachment_list(
             sql += " WHERE " + " AND ".join(where)
         db_rows = conn.execute(sql, tuple(sql_params)).fetchall()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1165,11 +1141,7 @@ def app_log_attachment_detail(
             (attachment_id,),
         ).fetchone()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1291,11 +1263,7 @@ def app_event_list(
             sql += " WHERE " + " AND ".join(where)
         db_rows = conn.execute(sql, tuple(sql_params)).fetchall()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1354,11 +1322,7 @@ def app_event_detail(
             (event_id,),
         ).fetchone()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1483,11 +1447,7 @@ def app_queue_list(
             sql += " WHERE " + " AND ".join(where)
         db_rows = conn.execute(sql, tuple(sql_params)).fetchall()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1540,11 +1500,7 @@ def app_queue_detail(
             (message_id,),
         ).fetchone()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1647,11 +1603,7 @@ def app_route_list(
             sql_params = (1 if enabled_filter else 0,)
         db_rows = conn.execute(sql, sql_params).fetchall()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()
@@ -1703,11 +1655,7 @@ def app_route_detail(
             (route_id,),
         ).fetchone()
     except sqlite3.Error as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"state-db query failed: {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("state-db query", exc)
     finally:
         try:
             conn.close()

@@ -227,6 +227,18 @@ def test_session_token_never_persisted_to_jsonl_or_logs(daemon: dict) -> None:
         f"file(s): {leaked_in!r}"
     )
 
+    # SC-008 (explicit, review finding L2): the daemon log file is where
+    # the daemon's stderr — including FEAT-011 `internal_error_logged`
+    # and scan-failure lines — is captured. It is already covered by the
+    # state-dir scan above, but assert it by name so the stderr-redaction
+    # guarantee is proven explicitly rather than incidentally.
+    log_file: Path = paths["log_file"]
+    if log_file.exists():
+        log_text = log_file.read_text(encoding="utf-8", errors="replace")
+        assert token not in log_text, (
+            "SC-008 violation: app_session_token leaked into the daemon log"
+        )
+
 
 def test_session_id_is_allowed_in_audit_output(daemon: dict) -> None:
     """SC-008 corollary: the numeric ``app_session_id`` is a non-secret

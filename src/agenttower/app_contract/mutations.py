@@ -294,10 +294,8 @@ def _map_registration_error(
         )
     # Anything else is a FEAT-006-internal failure; surface as
     # internal_error so the envelope shape is preserved.
-    return _envelope.failure(
-        INTERNAL_ERROR,
-        f"FEAT-006 register_agent raised unmapped code {code!r}: {message}",
-        details={},
+    return _envelope.internal_error_logged(
+        "FEAT-006 register_agent (unmapped upstream code)", f"{code}: {message}"
     )
 
 
@@ -454,11 +452,7 @@ def app_agent_register_from_pane(
             parent_agent_id=parent_agent_id,
         )
     except Exception as exc:  # noqa: BLE001 — envelope-shape safety net
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"agent_service.register_agent raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("agent_service.register_agent", exc)
 
     # 8. Project the post-state agent record → AgentViewModel.
     agent_payload = outcome.get("agent", outcome)
@@ -548,6 +542,11 @@ def app_agent_register_from_pane(
 
 _VALID_ROLES = ("master", "slave", "swarm", "test-runner", "shell", "unknown")
 _CAPABILITY_MAX_LEN = 128
+# M2: explicit cap on the serialized app.send_input payload (16 KiB).
+# Well under the 64 KiB NDJSON request-line cap so the field-attributed
+# validation_failed fires before the generic wire-level payload_too_large.
+# Documented in contracts/app-methods.md.
+_SEND_INPUT_PAYLOAD_MAX_BYTES = 16384
 
 
 # ─── Per-session idempotency store registry (FR-031a) ────────────────────
@@ -679,10 +678,8 @@ def _map_registration_error_generic(
         return _envelope.failure(
             VALIDATION_FAILED, message, details={"field": "params", "reason": code}
         )
-    return _envelope.failure(
-        INTERNAL_ERROR,
-        f"upstream service raised unmapped code {code!r}: {message}",
-        details={},
+    return _envelope.internal_error_logged(
+        "upstream agent/log service (unmapped code)", f"{code}: {message}"
     )
 
 
@@ -819,11 +816,7 @@ def app_agent_update(
             exc.code, exc.message, agent_id=agent_id
         )
     except Exception as exc:  # noqa: BLE001 — envelope-shape safety net
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"agent update raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("agent update", exc)
 
     # project_path — direct single-column UPDATE (no FEAT-006 service
     # method exists; see the module gap note above). Empty string clears
@@ -853,11 +846,7 @@ def app_agent_update(
                 conn.execute("ROLLBACK")
             except sqlite3.Error:
                 pass
-            return _envelope.failure(
-                INTERNAL_ERROR,
-                f"project_path update failed: {type(exc).__name__}: {exc}",
-                details={},
-            )
+            return _envelope.internal_error_logged("project_path update", exc)
         finally:
             try:
                 conn.close()
@@ -949,11 +938,7 @@ def app_log_attach(
             exc.code, exc.message, agent_id=agent_id
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"log_service.attach_log raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("log_service.attach_log", exc)
 
     agent_view = _agent_view_from_db(db_path, agent_id)
     if agent_view is None:
@@ -1025,11 +1010,7 @@ def app_log_detach(
                 exc.code, exc.message, agent_id=agent_id
             )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"log_service.detach_log raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("log_service.detach_log", exc)
 
     agent_view = _agent_view_from_db(db_path, agent_id)
     if agent_view is None:
@@ -1071,6 +1052,42 @@ def _queue_view_from_row(row: Any) -> dict[str, Any]:
             "enqueued_at": getattr(row, "enqueued_at", None),
             "last_updated_at": getattr(row, "last_updated_at", None),
         }
+    )
+
+
+def _host_operator_sender():
+    """Synthetic ``AgentRecord`` for the host operator (M4).
+
+    ``app.send_input`` originates from the host control panel, not a
+    bench-container pane, so no real ``agents`` row exists to act as
+    the FEAT-009 sender. This record attributes the queue row's
+    ``sender_agent_id`` to the ``HOST_OPERATOR_SENTINEL`` literal (kept
+    disjoint from real ``agt_<hex>`` ids by construction) and carries
+    ``role="master"`` so the FEAT-009 permission gate treats the
+    operator as a permitted sender — ``master`` is the sole member of
+    ``routing.permissions._PERMITTED_SENDER_ROLES``.
+    """
+    from ..agents.identifiers import HOST_OPERATOR_SENTINEL
+    from ..state.agents import AgentRecord
+
+    return AgentRecord(
+        agent_id=HOST_OPERATOR_SENTINEL,
+        container_id="",
+        tmux_socket_path="",
+        tmux_session_name="",
+        tmux_window_index=0,
+        tmux_pane_index=0,
+        tmux_pane_id="",
+        role="master",
+        capability="",
+        label="host-operator",
+        project_path="",
+        parent_agent_id=None,
+        effective_permissions={},
+        created_at="",
+        last_registered_at="",
+        last_seen_at=None,
+        active=True,
     )
 
 
@@ -1158,55 +1175,41 @@ def app_send_input(
             details={"agent_id": target_agent_id},
         )
     except QueueServiceError as exc:
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"target resolution raised {exc.code}: {exc.message}",
-            details={},
+        return _envelope.internal_error_logged(
+            "target resolution", f"{exc.code}: {exc.message}"
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"target resolution raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("target resolution", exc)
 
-    # Resolve the app's session into a sender record. The app is a
-    # host-side operator, not a bench agent — there is no sender pane.
-    # FEAT-009 ``send_input`` requires an ``AgentRecord``; we resolve the
-    # target's own row as a stand-in operator identity so the envelope is
-    # well-formed. (A dedicated host-operator sender identity is a
-    # FEAT-009 follow-up — see report.)
-    db_path, err = _state_db_or_error(ctx)
-    if err:
-        return err
-    from ..state import agents as state_agents
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        sender_record = state_agents.select_agent_by_id(
-            conn, agent_id=target_resolved
-        )
-    finally:
-        try:
-            conn.close()
-        except Exception:  # noqa: BLE001
-            pass
-    if sender_record is None:
-        return _envelope.failure(
-            AGENT_NOT_FOUND,
-            f"target_agent_id {target_agent_id!r} is not a registered agent",
-            details={"agent_id": target_agent_id},
-        )
+    # M4: the host operator is not a bench agent — there is no sender
+    # pane. FEAT-009 ``send_input`` requires an ``AgentRecord`` sender;
+    # build a synthetic host-operator record so (a) the queue row's
+    # ``sender_agent_id`` is correctly attributed to the host operator
+    # rather than mis-attributed to the target's own row, and (b) the
+    # FEAT-009 permission gate evaluates the operator as a permitted
+    # sender. Target existence was already validated by
+    # ``resolve_target_agent_id`` above.
+    sender_record = _host_operator_sender()
 
     import json as _json
 
     try:
         body_bytes = _json.dumps(payload, sort_keys=True).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError):
         return _envelope.failure(
             VALIDATION_FAILED,
-            f"payload is not JSON-serializable: {exc}",
+            "payload is not JSON-serializable",
             details={"field": "payload", "reason": "not serializable"},
+        )
+    # M2: explicit field-attributed cap on the serialized payload, so an
+    # oversized body fails as validation_failed(field="payload") rather
+    # than riding the incidental 64 KiB NDJSON line cap.
+    if len(body_bytes) > _SEND_INPUT_PAYLOAD_MAX_BYTES:
+        return _envelope.failure(
+            VALIDATION_FAILED,
+            f"payload exceeds the {_SEND_INPUT_PAYLOAD_MAX_BYTES}-byte "
+            f"app.send_input limit when serialized",
+            details={"field": "payload", "reason": "too large"},
         )
 
     try:
@@ -1233,17 +1236,11 @@ def app_send_input(
                 exc.message,
                 details={"agent_id": target_agent_id},
             )
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"send_input raised {exc.code}: {exc.message}",
-            details={},
+        return _envelope.internal_error_logged(
+            "send_input", f"{exc.code}: {exc.message}"
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"send_input raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("send_input", exc)
 
     row = getattr(outcome, "row", outcome)
     state = getattr(row, "state", "")
@@ -1334,10 +1331,8 @@ def _map_queue_action_error(
         )
     if code == "routing_disabled":
         return _envelope.failure(ROUTING_DISABLED, message, details={})
-    return _envelope.failure(
-        INTERNAL_ERROR,
-        f"queue action raised unmapped code {code!r}: {message}",
-        details={},
+    return _envelope.internal_error_logged(
+        "queue action (unmapped upstream code)", f"{code}: {message}"
     )
 
 
@@ -1390,11 +1385,7 @@ def _queue_action(
             exc.code, exc.message, message_id=message_id
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"queue.{action} raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged(f"queue.{action}", exc)
 
     queue_view = _queue_view_from_row(row)
     _audit.emit_app_mutation(
@@ -1548,11 +1539,7 @@ def app_route_add(
             details={"field": "params", "reason": getattr(exc, "code", "route_error")},
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"routes_service.add_route raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("routes_service.add_route", exc)
 
     route_view = _route_view_from_row(row)
     _audit.emit_app_mutation(
@@ -1619,11 +1606,7 @@ def app_route_remove(
             details={"field": "params", "reason": getattr(exc, "code", "route_error")},
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"routes_service.remove_route raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("routes_service.remove_route", exc)
 
     route_view = (
         _route_view_from_row(pre_row)
@@ -1704,11 +1687,7 @@ def app_route_update(
             details={"field": "params", "reason": getattr(exc, "code", "route_error")},
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"routes_service route update raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("routes_service route update", exc)
 
     # Project the post-update row (FR-030).
     try:
@@ -1720,11 +1699,7 @@ def app_route_update(
             details={"route_id": route_id},
         )
     except Exception as exc:  # noqa: BLE001
-        return _envelope.failure(
-            INTERNAL_ERROR,
-            f"routes_service.show_route raised {type(exc).__name__}: {exc}",
-            details={},
-        )
+        return _envelope.internal_error_logged("routes_service.show_route", exc)
 
     route_view = _route_view_from_row(row)
     _audit.emit_app_mutation(

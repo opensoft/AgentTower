@@ -1,12 +1,9 @@
-"""FEAT-011 smoke / unit tests for the foundational app_contract slice.
+"""FEAT-011 foundational unit tests for the app_contract slice.
 
 Covers the bootstrap handlers (``app.preflight``, ``app.hello``) and the
-closed-set / envelope invariants that every downstream handler will rely
-on. Pure in-process tests — no socket, no subprocess (SC-001).
-
-Larger contract and integration tests (per ``plan.md`` §Project Structure)
-are deferred to follow-up work; this file proves the foundational slice
-is callable and matches the contract envelopes.
+closed-set / envelope invariants that every downstream handler relies
+on, with full envelope-equality assertions. Pure in-process tests — no
+socket, no subprocess (SC-001).
 """
 
 from __future__ import annotations

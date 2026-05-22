@@ -329,7 +329,11 @@ def test_scan_worker_exception_records_failed_state(
     # scan IS a terminal result, not a wait failure.
     assert env["ok"] is True, env
     assert env["result"]["state"] == "failed"
-    assert "docker down" in str(env["result"]["result"])
+    # M1 redaction: the scan result carries the exception CLASS only —
+    # str(exc) ("docker down" here) can embed host paths, so it is logged
+    # to stderr and never surfaced in the client-visible result.
+    assert env["result"]["result"] == {"error": "RuntimeError"}
+    assert "docker down" not in str(env["result"]["result"])
 
 
 # ─── app.scan.status ─────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ the host-only + session gates, and the ``reason == ""`` invariant for
 ``ok`` rows.
 
 Self-contained: all fixtures/helpers are copied in from
-``test_app_contract_smoke.py`` so there are no cross-file imports.
+``test_app_contract_foundations.py`` so there are no cross-file imports.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from agenttower.socket_api.methods import (
 )
 
 
-# ─── Fixtures (copied from test_app_contract_smoke.py) ───────────────────
+# ─── Fixtures (copied from test_app_contract_foundations.py) ───────────────────
 
 
 @pytest.fixture(autouse=True)

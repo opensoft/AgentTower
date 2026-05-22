@@ -412,6 +412,7 @@ class _FakeQueueService:
         self.action_rows = action_rows or {}
         self.action_error = action_error
         self.send_calls = 0
+        self.last_sender = None
 
     def resolve_target_agent_id(self, target_input):
         if self.resolve_error is not None:
@@ -420,6 +421,7 @@ class _FakeQueueService:
 
     def send_input(self, *, sender, target_input, body_bytes, wait=True):
         self.send_calls += 1
+        self.last_sender = sender
         if self.send_error is not None:
             raise self.send_error
         return _FakeSendResult(self.send_row or _FakeQueueRow())
@@ -466,9 +468,13 @@ class _FakeRoutesService:
         self,
         *,
         add_error: Exception | None = None,
+        remove_error: Exception | None = None,
+        update_error: Exception | None = None,
         known_routes: dict | None = None,
     ) -> None:
         self.add_error = add_error
+        self.remove_error = remove_error
+        self.update_error = update_error
         # route_id → (_FakeRouteRow); the show/enable/disable/remove
         # paths consult this map.
         self.routes = known_routes or {}
@@ -496,12 +502,16 @@ class _FakeRoutesService:
     def remove_route(self, route_id, *, deleted_by_agent_id):
         if route_id not in self.routes:
             raise RouteIdNotFound(f"no route with route_id={route_id!r}")
+        if self.remove_error is not None:
+            raise self.remove_error
         del self.routes[route_id]
         self.removed.append(route_id)
 
     def enable_route(self, route_id, *, updated_by_agent_id):
         if route_id not in self.routes:
             raise RouteIdNotFound(f"no route with route_id={route_id!r}")
+        if self.update_error is not None:
+            raise self.update_error
         self.routes[route_id].enabled = True
         self.enabled_calls.append((route_id, True))
         return True
@@ -509,6 +519,8 @@ class _FakeRoutesService:
     def disable_route(self, route_id, *, updated_by_agent_id):
         if route_id not in self.routes:
             raise RouteIdNotFound(f"no route with route_id={route_id!r}")
+        if self.update_error is not None:
+            raise self.update_error
         self.routes[route_id].enabled = False
         self.enabled_calls.append((route_id, False))
         return True
@@ -1298,3 +1310,630 @@ def test_handlers_enforce_session_gate(
     env = handler(stub_ctx, params, peer_uid=host_peer)
     assert env["ok"] is False
     assert env["error"]["code"] == "app_session_required"
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Service-error-mapping coverage (review finding H1) + M1/M2/M4 regression
+# ════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize(
+    "upstream_code,expected",
+    [
+        ("agent_inactive", "agent_not_found"),
+        ("container_inactive", "container_inactive"),
+        ("target_container_inactive", "container_inactive"),
+        ("tmux_unavailable", "log_attach_blocked"),
+        ("pipe_pane_failed", "log_attach_blocked"),
+        ("value_out_of_set", "validation_failed"),
+        ("field_too_long", "validation_failed"),
+        ("project_path_invalid", "validation_failed"),
+        ("master_confirm_required", "validation_failed"),
+    ],
+)
+def test_log_attach_maps_registration_error_codes(
+    stub_ctx: DaemonContext, host_peer: int, upstream_code: str, expected: str
+) -> None:
+    """H1: every _map_registration_error_generic arm maps to its FEAT-011 code."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_map")
+    stub_ctx.log_service = _FakeLogService(
+        attach_error=RegistrationError(upstream_code, f"upstream: {upstream_code}")
+    )
+    env = mutations.app_log_attach(
+        stub_ctx,
+        {"app_session_token": token, "agent_id": "agt_map"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == expected
+
+
+def test_log_attach_unmapped_registration_code_internal_error(
+    stub_ctx: DaemonContext, host_peer: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H1 + M1: an unmapped RegistrationError code -> internal_error; the
+    upstream code is logged to stderr, not leaked into the wire message."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_unmap")
+    stub_ctx.log_service = _FakeLogService(
+        attach_error=RegistrationError("brand_new_upstream_code", "weird")
+    )
+    env = mutations.app_log_attach(
+        stub_ctx,
+        {"app_session_token": token, "agent_id": "agt_unmap"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+    assert "brand_new_upstream_code" not in env["error"]["message"]
+    assert "brand_new_upstream_code" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "upstream_code,expected,detail_key",
+    [
+        ("sender_role_not_permitted", "permission_denied", "reason"),
+        ("target_not_active", "permission_denied", "reason"),
+        ("agent_not_found", "agent_not_found", "agent_id"),
+        ("target_label_ambiguous", "agent_not_found", "agent_id"),
+    ],
+)
+def test_send_input_maps_raised_queue_service_errors(
+    stub_ctx: DaemonContext,
+    host_peer: int,
+    upstream_code: str,
+    expected: str,
+    detail_key: str,
+) -> None:
+    """H1: send_input's raised-QueueServiceError arms map to FEAT-011 codes."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_qse")
+    stub_ctx.queue_service = _FakeQueueService(
+        send_error=QueueServiceError(upstream_code, f"upstream {upstream_code}")
+    )
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_qse",
+            "payload": {"x": 1},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == expected
+    assert detail_key in env["error"]["details"]
+
+
+def test_send_input_unmapped_queue_service_error_internal_error(
+    stub_ctx: DaemonContext, host_peer: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H1 + M1: an unmapped QueueServiceError from send_input -> internal_error;
+    the upstream code/message is logged to stderr, not leaked to the wire."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_uqse")
+    stub_ctx.queue_service = _FakeQueueService(
+        send_error=QueueServiceError("weird_queue_code", "internal queue glitch")
+    )
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_uqse",
+            "payload": {"x": 1},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+    assert "internal queue glitch" not in env["error"]["message"]
+    assert "weird_queue_code" in capsys.readouterr().err
+
+
+def test_send_input_generic_exception_from_send_internal_error(
+    stub_ctx: DaemonContext, host_peer: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H1 + M1: a non-QueueServiceError exception from send_input ->
+    internal_error, with the raw exception string redacted from the wire."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_boom")
+    stub_ctx.queue_service = _FakeQueueService(
+        send_error=RuntimeError("queue crash at /home/secret/state.db")
+    )
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_boom",
+            "payload": {"x": 1},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+    assert "/home/secret/state.db" not in env["error"]["message"]
+    assert "RuntimeError" in capsys.readouterr().err
+
+
+def test_send_input_resolve_raises_queue_service_error_internal_error(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1: resolve_target_agent_id raising a QueueServiceError -> internal_error."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.queue_service = _FakeQueueService(
+        resolve_error=QueueServiceError("resolver_glitch", "resolver internal")
+    )
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_x",
+            "payload": {"x": 1},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+
+
+def test_send_input_resolve_raises_generic_exception_internal_error(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1: resolve_target_agent_id raising a generic exception -> internal_error."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.queue_service = _FakeQueueService(
+        resolve_error=RuntimeError("resolver crash")
+    )
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_x",
+            "payload": {"x": 1},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+
+
+def test_send_input_oversized_payload_rejected(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """M2: a payload serializing above the 16 KiB cap -> validation_failed(payload)."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_big")
+    stub_ctx.queue_service = _FakeQueueService()
+    big_payload = {"blob": "x" * 20000}  # > 16 KiB once serialized
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_big",
+            "payload": big_payload,
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "payload"
+    assert env["error"]["details"]["reason"] == "too large"
+
+
+def test_send_input_non_serializable_payload_rejected(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """M1: a payload carrying a non-JSON-serializable value ->
+    validation_failed(payload); no exception detail leaked into the message."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_nonser")
+    stub_ctx.queue_service = _FakeQueueService()
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_nonser",
+            "payload": {"bad": object()},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "payload"
+    assert env["error"]["message"] == "payload is not JSON-serializable"
+
+
+def test_send_input_uses_host_operator_sender(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """M4: send_input attributes the FEAT-009 sender to the synthetic host
+    operator (role 'master'), NOT to the target agent's own row — and works
+    even though no target agents row is seeded."""
+    token = _mint_session(stub_ctx, host_peer)
+    svc = _FakeQueueService(
+        send_row=_FakeQueueRow(message_id="m-ho", state="queued")
+    )
+    stub_ctx.queue_service = svc
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_target",
+            "payload": {"x": 1},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is True, env
+    assert svc.last_sender is not None
+    assert svc.last_sender.agent_id == "host-operator"
+    assert svc.last_sender.role == "master"
+    assert svc.last_sender.agent_id != "agt_target"
+
+
+def test_queue_action_routing_disabled_maps_correctly(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1: a queue action blocked by the kill switch -> routing_disabled."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.queue_service = _FakeQueueService(
+        action_error=QueueServiceError("routing_disabled", "kill switch off")
+    )
+    env = mutations.app_queue_approve(
+        stub_ctx,
+        {"app_session_token": token, "message_id": "m-rd"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "routing_disabled"
+
+
+def test_queue_action_unmapped_code_internal_error(
+    stub_ctx: DaemonContext, host_peer: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H1 + M1: an unmapped QueueServiceError from a queue action ->
+    internal_error, with the upstream code logged to stderr only."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.queue_service = _FakeQueueService(
+        action_error=QueueServiceError("weird_action_code", "glitch")
+    )
+    env = mutations.app_queue_cancel(
+        stub_ctx,
+        {"app_session_token": token, "message_id": "m-uc"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+    assert "weird_action_code" in capsys.readouterr().err
+
+
+def test_queue_action_generic_exception_internal_error(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1 + M1: a non-QueueServiceError exception from a queue action ->
+    internal_error."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.queue_service = _FakeQueueService(
+        action_error=RuntimeError("queue action crash")
+    )
+    env = mutations.app_queue_delay(
+        stub_ctx,
+        {"app_session_token": token, "message_id": "m-ge", "delay_ms": 1000},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+
+
+def test_route_remove_route_error_maps_to_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1: a non-RouteIdNotFound RouteError from remove_route -> validation_failed."""
+    from agenttower.routing.route_errors import RouteError
+
+    token = _mint_session(stub_ctx, host_peer)
+    svc = _FakeRoutesService(
+        known_routes={"route-re": _FakeRouteRow(route_id="route-re")},
+        remove_error=RouteError("route is referenced elsewhere"),
+    )
+    stub_ctx.routes_service = svc
+    env = mutations.app_route_remove(
+        stub_ctx,
+        {"app_session_token": token, "route_id": "route-re"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+
+
+def test_route_update_route_error_maps_to_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1: a non-RouteIdNotFound RouteError from enable/disable -> validation_failed."""
+    from agenttower.routing.route_errors import RouteError
+
+    token = _mint_session(stub_ctx, host_peer)
+    svc = _FakeRoutesService(
+        known_routes={"route-ue": _FakeRouteRow(route_id="route-ue")},
+        update_error=RouteError("route in an un-toggleable state"),
+    )
+    stub_ctx.routes_service = svc
+    env = mutations.app_route_update(
+        stub_ctx,
+        {"app_session_token": token, "route_id": "route-ue", "enabled": True},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+
+
+def test_route_add_generic_exception_internal_error(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """H1 + M1: a non-RouteError exception from add_route -> internal_error."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.routes_service = _FakeRoutesService(
+        add_error=RuntimeError("routes subsystem crash")
+    )
+    env = mutations.app_route_add(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "event_type": "agent_registered",
+            "template": "x",
+            "target": {"rule": "explicit", "value": "agt_t"},
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+
+
+def test_agent_update_generic_exception_internal_error(
+    agent_ctx: DaemonContext, host_peer: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H1 + M1: a non-RegistrationError exception from a set_* call ->
+    internal_error, with the raw exception logged to stderr only."""
+    token = _mint_session(agent_ctx, host_peer)
+    agent_id = _register_agent(agent_ctx, token, host_peer)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("set_role crash at /home/secret/state.db")
+
+    agent_ctx.agent_service.set_role = _boom
+    env = mutations.app_agent_update(
+        agent_ctx,
+        {"app_session_token": token, "agent_id": agent_id, "role": "test-runner"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "internal_error"
+    assert "/home/secret/state.db" not in env["error"]["message"]
+    assert "RuntimeError" in capsys.readouterr().err
+
+
+# ── Validation-branch + idempotency-store coverage (review finding H1) ───
+
+
+def test_agent_update_role_wrong_type_validation_failed(
+    agent_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(agent_ctx, host_peer)
+    agent_id = _register_agent(agent_ctx, token, host_peer)
+    env = mutations.app_agent_update(
+        agent_ctx,
+        {"app_session_token": token, "agent_id": agent_id, "role": 123},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "role"
+
+
+def test_agent_update_capability_wrong_type_validation_failed(
+    agent_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(agent_ctx, host_peer)
+    agent_id = _register_agent(agent_ctx, token, host_peer)
+    env = mutations.app_agent_update(
+        agent_ctx,
+        {"app_session_token": token, "agent_id": agent_id, "capability": 123},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "capability"
+
+
+def test_agent_update_project_path_wrong_type_validation_failed(
+    agent_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(agent_ctx, host_peer)
+    agent_id = _register_agent(agent_ctx, token, host_peer)
+    env = mutations.app_agent_update(
+        agent_ctx,
+        {"app_session_token": token, "agent_id": agent_id, "project_path": 123},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "project_path"
+
+
+def test_agent_update_label_wrong_type_validation_failed(
+    agent_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(agent_ctx, host_peer)
+    agent_id = _register_agent(agent_ctx, token, host_peer)
+    env = mutations.app_agent_update(
+        agent_ctx,
+        {"app_session_token": token, "agent_id": agent_id, "label": 123},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "label"
+
+
+def test_log_attach_missing_agent_id_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    env = mutations.app_log_attach(
+        stub_ctx, {"app_session_token": token}, peer_uid=host_peer
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "agent_id"
+
+
+def test_log_detach_missing_agent_id_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    env = mutations.app_log_detach(
+        stub_ctx, {"app_session_token": token}, peer_uid=host_peer
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "agent_id"
+
+
+def test_send_input_missing_target_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    env = mutations.app_send_input(
+        stub_ctx,
+        {"app_session_token": token, "payload": {"x": 1}},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "target_agent_id"
+
+
+def test_send_input_idempotency_key_wrong_type_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    env = mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_x",
+            "payload": {"x": 1},
+            "idempotency_key": 123,
+        },
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "idempotency_key"
+
+
+def test_route_add_missing_event_type_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.routes_service = _FakeRoutesService()
+    env = mutations.app_route_add(
+        stub_ctx,
+        {"app_session_token": token, "template": "x"},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "event_type"
+
+
+def test_route_add_non_string_template_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.routes_service = _FakeRoutesService()
+    env = mutations.app_route_add(
+        stub_ctx,
+        {"app_session_token": token, "event_type": "agent_registered",
+         "template": 123},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "template"
+
+
+@pytest.mark.parametrize("field", ["source_scope", "target", "master"])
+def test_route_add_non_dict_scope_fields_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int, field: str
+) -> None:
+    """H1: source_scope / target / master must each be objects."""
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.routes_service = _FakeRoutesService()
+    params = {
+        "app_session_token": token,
+        "event_type": "agent_registered",
+        "template": "x",
+        field: "not-a-dict",
+    }
+    env = mutations.app_route_add(stub_ctx, params, peer_uid=host_peer)
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == field
+
+
+def test_route_remove_missing_route_id_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.routes_service = _FakeRoutesService()
+    env = mutations.app_route_remove(
+        stub_ctx, {"app_session_token": token}, peer_uid=host_peer
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "route_id"
+
+
+def test_route_update_missing_route_id_validation_failed(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    token = _mint_session(stub_ctx, host_peer)
+    stub_ctx.routes_service = _FakeRoutesService()
+    env = mutations.app_route_update(
+        stub_ctx,
+        {"app_session_token": token, "enabled": True},
+        peer_uid=host_peer,
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "route_id"
+
+
+def test_session_invalidate_drops_idempotency_store(
+    stub_ctx: DaemonContext, host_peer: int
+) -> None:
+    """LOW finding: SessionRegistry.invalidate() drops the session's
+    per-session idempotency store so the process-wide registry does not
+    leak one stale store per invalidated session."""
+    token = _mint_session(stub_ctx, host_peer)
+    _seed_agent_row(stub_ctx, "agt_inv")
+    stub_ctx.queue_service = _FakeQueueService(
+        send_row=_FakeQueueRow(message_id="m-inv", state="queued")
+    )
+    session = sessions.get_registry().lookup(token)
+    # A send carrying an idempotency_key creates the per-session store.
+    mutations.app_send_input(
+        stub_ctx,
+        {
+            "app_session_token": token,
+            "target_agent_id": "agt_inv",
+            "payload": {"x": 1},
+            "idempotency_key": "k-inv",
+        },
+        peer_uid=host_peer,
+    )
+    assert session.app_session_id in mutations._idempotency_stores
+    # Invalidating the session must drop its store.
+    sessions.get_registry().invalidate(token)
+    assert session.app_session_id not in mutations._idempotency_stores

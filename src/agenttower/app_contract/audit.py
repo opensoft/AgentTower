@@ -25,9 +25,9 @@ Contract responsibilities (FEAT-011-specific):
   produce an audit row without a matching SQLite row.
 
 * **FR-044 reused upstream names** — Round-4 Block G Q44 fixed the
-  audit event-type vocabulary as the upstream FEAT names (``queue_approved``,
-  ``route_created``, ``agent_registered``, etc.); FEAT-011 does NOT
-  introduce ``app.*``-namespaced event names. The ``origin="app"`` +
+  audit event-type vocabulary as the upstream FEAT names
+  (``queue_message_approved``, ``route_created``, ``agent_registered``,
+  etc.); FEAT-011 does NOT introduce ``app.*``-namespaced event names. The ``origin="app"`` +
   ``app_session_id`` fields are the only FEAT-011 markers.
 * **FR-044 — failure rows** — only **successful** commits emit audit
   rows; failed mutations live in daemon stderr/logs only.

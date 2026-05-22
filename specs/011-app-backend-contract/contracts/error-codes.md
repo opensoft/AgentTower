@@ -38,7 +38,7 @@ The following codes are valid at `app_contract_version = "1.0"`. Adding a new co
 | 23 | `routing_disabled` | The FEAT-009 **global routing kill switch** is off, blocking the mutation. *Not* used for per-message permission-gate refusals — those are `permission_denied` (FR-031, Round-4 Block B Q7). |
 | 24 | `permission_denied` | Peer UID failed the FR-041 same-host-user check, **or** the FEAT-009 per-message permission gate refused `app.send_input` (`details.reason == "feat009_permission_gate"` in the second case). |
 | 25 | `host_only` | Peer is a bench-container caller; the entire `app.*` namespace is host-only (FR-042). |
-| 26 | `payload_too_large` | Single NDJSON request line exceeded the 1 MiB cap (FR-003a). Daemon refuses before handler dispatch. |
+| 26 | `payload_too_large` | Single NDJSON request line exceeded the request-line cap (FR-003a) — 1 MiB contract target, currently an effective 64 KiB (`MAX_REQUEST_BYTES`); `details.size_limit_bytes` reports the value enforced. Daemon refuses before handler dispatch. |
 | 27 | `internal_error` | Uncaught daemon-side exception (incl. `details.reason == "shutting_down"` during graceful daemon shutdown — Round-4 Block B Q9); safety-net code so the contract envelope shape is preserved. |
 
 ## Per-Code `details` Registry (FR-034a)

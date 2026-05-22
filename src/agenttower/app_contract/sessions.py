@@ -134,9 +134,18 @@ class SessionRegistry:
         """Remove a session. Test seam and explicit-logout hook; FEAT-002's
         connection-close path does NOT call this (T097 — sessions are not
         connection-bound).
+
+        Also drops the session's per-session idempotency store so the
+        process-wide store registry does not leak one stale store per
+        invalidated session over a long-lived daemon.
         """
         with self._lock:
-            self._sessions.pop(token, None)
+            session = self._sessions.pop(token, None)
+        if session is not None:
+            # Lazy import — mutations.py imports this module.
+            from . import mutations as _mutations
+
+            _mutations.drop_idempotency_store(session.app_session_id)
 
     def size(self) -> int:
         """Current number of sessions held. For tests/diagnostics."""

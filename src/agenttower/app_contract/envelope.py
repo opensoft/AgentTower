@@ -14,6 +14,7 @@ Every ``app.*`` response uses one of two shapes (FR-033):
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from . import errors as errors_mod
@@ -71,8 +72,32 @@ def internal_error(message: str = "internal daemon error") -> dict[str, Any]:
     return failure(errors_mod.INTERNAL_ERROR, message, {})
 
 
+def internal_error_logged(operation: str, detail: object) -> dict[str, Any]:
+    """Log full failure detail to stderr; return a generic ``internal_error``.
+
+    The wire ``message`` names only ``operation`` — never the exception
+    string or upstream service message, which can embed absolute host
+    paths, SQL text, or fragments of the client's request payload. This
+    mirrors the dispatcher ``_wrap_handler`` redaction policy (FR-033):
+    an operator correlates the wire error to the stderr line by the
+    ``operation`` label. ``detail`` may be an exception (formatted as
+    ``Type: message``) or any stringifiable value.
+    """
+    if isinstance(detail, BaseException):
+        detail_text = f"{type(detail).__name__}: {detail}"
+    else:
+        detail_text = str(detail)
+    print(
+        f"FEAT-011: {operation} failed: {detail_text}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return internal_error(f"{operation} failed; see daemon stderr")
+
+
 __all__ = [
     "success",
     "failure",
     "internal_error",
+    "internal_error_logged",
 ]

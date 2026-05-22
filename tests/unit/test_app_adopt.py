@@ -881,9 +881,11 @@ def test_map_unknown_code_becomes_internal_error(
     adopt_ctx: DaemonContext,
     host_session: tuple[int, str],
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """An unmapped FEAT-006 code falls through to internal_error so the
-    envelope shape is preserved."""
+    envelope shape is preserved. The unmapped code + message are logged
+    to stderr, NOT leaked into the wire message (M1 / FR-033 redaction)."""
     uid, token = host_session
     env = _adopt_with_register_error(
         adopt_ctx, token, uid, monkeypatch,
@@ -892,16 +894,23 @@ def test_map_unknown_code_becomes_internal_error(
     )
     assert env["ok"] is False
     assert env["error"]["code"] == "internal_error"
-    assert "some_brand_new_code" in env["error"]["message"]
+    # Redaction: neither the upstream code nor message reaches the client.
+    assert "some_brand_new_code" not in env["error"]["message"]
+    assert "unexpected upstream failure" not in env["error"]["message"]
+    assert "see daemon stderr" in env["error"]["message"]
+    # … but the operator gets the full detail on stderr.
+    assert "some_brand_new_code" in capsys.readouterr().err
 
 
 def test_adopt_register_agent_generic_exception_returns_internal_error(
     adopt_ctx: DaemonContext,
     host_session: tuple[int, str],
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A non-RegistrationError exception from register_agent → internal_error
-    (envelope-shape safety net)."""
+    (envelope-shape safety net). The raw exception is logged to stderr, not
+    leaked into the wire message (M1 / FR-033 redaction)."""
     uid, token = host_session
 
     def _boom(*_args, **_kwargs):
@@ -921,7 +930,11 @@ def test_adopt_register_agent_generic_exception_returns_internal_error(
     )
     assert env["ok"] is False
     assert env["error"]["code"] == "internal_error"
-    assert "RuntimeError" in env["error"]["message"]
+    # Redaction: the raw exception string never reaches the client.
+    assert "unexpected service crash" not in env["error"]["message"]
+    assert "see daemon stderr" in env["error"]["message"]
+    # … the operator gets the full detail on stderr.
+    assert "RuntimeError" in capsys.readouterr().err
 
 
 def test_adopt_outcome_without_resolvable_agent_falls_back_to_payload(

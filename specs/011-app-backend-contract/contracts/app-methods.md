@@ -25,6 +25,8 @@ Where `details` is always an object (possibly empty `{}`).
 
 **Payload size gate** (FR-003a): every `app.*` request is bounded at **1 MiB per NDJSON line**. Overflow is rejected with `payload_too_large` (`details = {size_limit_bytes: 1048576, actual_size_bytes}`) before any handler executes — it is therefore a possible failure code for every method below (including `app.preflight` and `app.hello`), even though the per-method failure-code lists omit it for brevity. Responses are similarly bounded at **8 MiB per NDJSON line** as a daemon-side invariant guarded by the FR-020a pagination cap.
 
+> **Implementation note (T097):** FEAT-002's socket reader currently enforces an effective **64 KiB** per-line read limit (`MAX_REQUEST_BYTES = 65536`), which binds before the 1 MiB contract cap can be observed. Until a separate FEAT-002 bump raises that limit, `payload_too_large.details.size_limit_bytes` reports the value actually enforced (`65536`). The 1 MiB figure remains the documented contract target. See spec.md FR-003a.
+
 **Wire-framing gate** (FR-003b): every `app.*` request line MUST be valid UTF-8, terminated by a single `\n`, contain no `\r` or `\x00` bytes, and contain exactly one JSON object with no trailing content. Violations are rejected with `malformed_request` and `details.reason` before dispatch. This is a possible failure code for every method below (omitted from per-method lists for brevity).
 
 **Concurrency caps**: ≤ 8 concurrent app sessions process-wide (FR-008b), ≤ 4 in-flight scans across all sessions (FR-030e), same-kind scan coalescing enabled (FR-030d). Cap-exceeded responses are `validation_failed` with `details.field ∈ {"app.hello", "scan_kind"}` and `details.reason ∈ {"too_many_sessions", "too_many_scans_in_flight"}`.
@@ -326,6 +328,8 @@ Routes a structured payload to a target agent via the FEAT-009 queue. Respects t
 }
 ```
 
+The `payload` object MUST serialize (canonical JSON) to ≤ **16 KiB** (16,384 bytes). An oversized payload is rejected with `validation_failed` and `details = {field: "payload", reason: "too large"}`. This field-level cap is well below the 64 KiB NDJSON line cap so the rejection is attributed to `payload` rather than surfacing as the generic wire-level `payload_too_large`.
+
 On a duplicate `idempotency_key` retry within the session, returns the original `message_id` and `deduplicated: true` (FR-031a). No second queue row; no duplicate audit row.
 
 **`routing_disabled` vs `permission_denied`** (FR-031, Round-4 Block B Q7 override):
@@ -381,14 +385,20 @@ Trigger a FEAT-003 / FEAT-004 discovery scan.
 {"wait": <bool, default true>}
 ```
 
-**Success result when `wait == true` and scan completes within 30 s** (FR-030b):
+**Success result when `wait == true` and the scan reaches a terminal state within 30 s** (FR-030b):
 ```json
 {
   "scan_id": "<str>",
-  "state": "completed",
+  "state": "completed | failed",
   "result": { ... post-scan summary ... }
 }
 ```
+`state` is `completed` when the discovery scan succeeded and `failed` when the
+underlying FEAT-003/FEAT-004 scan raised. **Both are `ok: true` success
+envelopes** — the *call* completed and `result` carries the outcome (a `failed`
+scan's `result` carries `{error: "<exception class>"}`). This mirrors
+`app.scan.status`, which reports the same `running | completed | failed` closed
+set. Only a 30 s wall-clock timeout produces a failure envelope (below).
 
 **Success result when `wait == false`**:
 ```json

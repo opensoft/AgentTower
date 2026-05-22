@@ -30,7 +30,7 @@ from agenttower.socket_api.methods import (
 )
 
 
-# ─── Fixtures (copied from test_app_contract_smoke.py) ───────────────────
+# ─── Fixtures (copied from test_app_contract_foundations.py) ───────────────────
 
 
 @pytest.fixture

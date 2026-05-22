@@ -413,7 +413,12 @@ def app_readiness(
 
 
 def _summary_counts(ctx: "DaemonContext") -> dict[str, int]:
-    """Cheap top-line counts for hint emission. Failures degrade to 0."""
+    """Cheap top-line counts for hint emission. Failures degrade to 0.
+
+    ``containers`` counts only ACTIVE containers — the "no containers"
+    hint must fire when nothing is running, even if stale inactive rows
+    linger in the table.
+    """
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
         return {
@@ -424,7 +429,9 @@ def _summary_counts(ctx: "DaemonContext") -> dict[str, int]:
             "log_attachments": 0,
         }
     try:
-        containers = conn.execute("SELECT COUNT(*) FROM containers").fetchone()[0]
+        containers = conn.execute(
+            "SELECT COUNT(*) FROM containers WHERE active = 1"
+        ).fetchone()[0]
     except Exception:  # noqa: BLE001
         containers = 0
     try:
