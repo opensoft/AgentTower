@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from agenttower.agents.errors import RegistrationError
-from agenttower.app_contract import mutations, sessions
+from agenttower.app_contract import mutations, reads, sessions
 from agenttower.routing.errors import QueueServiceError
 from agenttower.routing.route_errors import (
     RouteEventTypeInvalid,
@@ -280,6 +280,70 @@ def test_agent_update_never_returns_stale_object(
     )
     assert first["ok"] is True and second["ok"] is True
     assert second["result"]["row"]["label"] == "second"
+
+
+def test_agent_update_concurrent_last_write_wins(
+    agent_ctx: DaemonContext, host_peer: int
+) -> None:
+    """FR-030a / SC-024: two CONCURRENT app.agent.update calls on the same
+    agent both succeed, neither returns stale_object, and the final
+    persisted label is exactly one clean value (last-write-wins).
+
+    This is the real-threading counterpart to
+    test_agent_update_never_returns_stale_object, which is sequential and
+    therefore cannot exercise the concurrency contract SC-024 actually
+    states (paired concurrent updates).
+    """
+    import threading
+
+    token = _mint_session(agent_ctx, host_peer)
+    agent_id = _register_agent(agent_ctx, token, host_peer)
+
+    results: dict[str, dict] = {}
+    barrier = threading.Barrier(2)
+
+    def do_update(label: str) -> None:
+        # Request-peer context is thread-local — each worker thread must
+        # set its own (the host_peer fixture only set the main thread's).
+        _set_request_peer_context(peer_pid=os.getpid())
+        try:
+            barrier.wait(timeout=5)  # release both threads together
+            results[label] = mutations.app_agent_update(
+                agent_ctx,
+                {
+                    "app_session_token": token,
+                    "agent_id": agent_id,
+                    "label": label,
+                },
+                peer_uid=host_peer,
+            )
+        finally:
+            _clear_request_peer_context()
+
+    t1 = threading.Thread(target=do_update, args=("alpha",))
+    t2 = threading.Thread(target=do_update, args=("beta",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert set(results) == {"alpha", "beta"}, "a worker thread did not finish"
+    for label, env in results.items():
+        assert env["ok"] is True, f"{label} update failed: {env}"
+        # FR-030a: entity updates MUST NOT return stale_object — that code
+        # is reserved for queue terminal-state guards. (ok is True here, so
+        # there is no error block; the explicit guard documents the intent.)
+        assert "error" not in env
+
+    # Last-write-wins: the persisted label is exactly one of the two
+    # values — never corrupt, never a partial mix.
+    detail = reads.app_agent_detail(
+        agent_ctx,
+        {"app_session_token": token, "agent_id": agent_id},
+        peer_uid=host_peer,
+    )
+    assert detail["ok"] is True
+    assert detail["result"]["row"]["label"] in {"alpha", "beta"}
 
 
 def test_agent_update_missing_agent_id_validation_failed(

@@ -90,9 +90,17 @@ class IdempotencyStore:
         """Insert a new dedupe record. Evicts the LRU entry if at cap.
 
         If ``key`` is already present, the existing entry is replaced
-        (this case is unexpected in the happy path — concurrent
-        send_input calls block per Round-4 Block D Q27 — but we tolerate
-        it rather than raising).
+        rather than raising.
+
+        Concurrency caveat (review finding): ``app.send_input`` performs
+        ``lookup`` → mutate → ``record`` WITHOUT holding a lock across
+        the whole sequence — the store's lock guards only the individual
+        ``lookup`` / ``record`` calls. Two concurrent calls with the same
+        ``(session, key)`` can therefore both miss the lookup and both
+        enqueue a real queue row (a check-and-act TOCTOU). The store's
+        per-op locking keeps the structure itself consistent; it does NOT
+        make the end-to-end dedupe atomic. A per-(session,key) lock held
+        across the mutation is the proper fix and is tracked as follow-up.
         """
         entry = IdempotencyEntry(
             idempotency_key=key,

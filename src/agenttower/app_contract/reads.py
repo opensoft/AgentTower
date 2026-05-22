@@ -298,7 +298,7 @@ def app_pane_list(
     if err:
         return err
 
-    _, _, canonical_order, err = _validate_order_by(
+    order_field, order_direction, canonical_order, err = _validate_order_by(
         params.get("order_by"),
         field_set=_PANE_ORDER_BY_FIELDS,
         default_field="default",
@@ -395,6 +395,24 @@ def app_pane_list(
                 container_name=pane.container_name,
             )
         )
+
+    # Apply the requested (or default) ordering before paginating. FR-021
+    # pane default order is (container_name, session_name, window_index,
+    # pane_index) ASC; an explicit order_by names a single view-model field.
+    # Without this the order_by param was validated and recorded into the
+    # cursor but never actually applied (review finding — app_pane_list was
+    # the only list handler missing the _sort_rows call).
+    _sort_rows(
+        filtered_views,
+        order_field,
+        order_direction,
+        default_keys=(
+            "container_name",
+            "session_name",
+            "window_index",
+            "pane_index",
+        ),
+    )
 
     total = len(filtered_views)
     page = filtered_views[offset : offset + limit]

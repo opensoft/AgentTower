@@ -560,6 +560,7 @@ _SEND_INPUT_PAYLOAD_MAX_BYTES = 16384
 # session is dropped via ``drop_idempotency_store``. (Unwired-service gap
 # noted in the T060–T065 handoff.)
 import threading as _threading
+import time as _time
 
 from .idempotency import MAX_KEY_LENGTH as _IDEMP_MAX_KEY_LEN
 from .idempotency import IdempotencyStore as _IdempotencyStore
@@ -1284,12 +1285,16 @@ def app_send_input(
     )
 
     # FR-031a: record the response so a retry with the same key replays it.
+    # ``created_at_ms`` is the record-time wall clock — NOT the session
+    # birth time. Using the session start would stamp every entry for a
+    # session with one identical timestamp, making the field useless for
+    # diagnostics / LRU reasoning (review finding).
     if idempotency_key is not None and message_id is not None:
         store.record(
             idempotency_key,
             message_id,
             env,
-            getattr(session, "connection_started_at_ms", 0),
+            int(_time.time() * 1000),
         )
 
     return env
