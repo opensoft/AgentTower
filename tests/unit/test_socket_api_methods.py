@@ -108,9 +108,7 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "routes.enable",
         "routes.disable",
         # FEAT-011 — app.* host-only namespace (T002 / FR-001 / FR-042).
-        # US1 + US2 ship 12 methods; US3 will add the remaining 18 to
-        # reach the 30-method v1.0 surface documented in
-        # ``contracts/app-methods.md``.
+        # The full v1.0 surface — 32 methods (US1 + US2 + US3).
         "app.preflight",
         "app.hello",
         "app.readiness",
@@ -123,6 +121,26 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "app.agent.list",
         "app.agent.detail",
         "app.agent.register_from_pane",
+        "app.container.list",
+        "app.container.detail",
+        "app.log_attachment.list",
+        "app.log_attachment.detail",
+        "app.event.list",
+        "app.event.detail",
+        "app.queue.list",
+        "app.queue.detail",
+        "app.route.list",
+        "app.route.detail",
+        "app.agent.update",
+        "app.log.attach",
+        "app.log.detach",
+        "app.send_input",
+        "app.queue.approve",
+        "app.queue.delay",
+        "app.queue.cancel",
+        "app.route.add",
+        "app.route.remove",
+        "app.route.update",
     }
 
 

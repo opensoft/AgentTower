@@ -29,12 +29,11 @@ class TestDispatchTableCardinality:
         ``routing.disable``, ``routing.status``. FEAT-010 adds 6 more
         (routes.* CRUD): ``routes.add``, ``routes.list``, ``routes.show``,
         ``routes.remove``, ``routes.enable``, ``routes.disable``.
-        FEAT-011 ships **12 of its 30 v1.0 methods** in this PR
-        (US1 + US2): ``app.preflight``, ``app.hello``, ``app.readiness``,
-        ``app.dashboard``, ``app.scan.{containers,panes,status}``,
-        ``app.pane.{list,detail}``, ``app.agent.{list,detail,register_from_pane}``.
-        US3 adds the remaining 18 (queue/route/log/update mutations
-        and the other 5 entity reads).
+        FEAT-011 ships its **full 32-method v1.0 ``app.*`` surface**
+        (US1 + US2 + US3): bootstrap/dashboard, scans, 7 entity
+        list/detail read pairs, the adopt mutation, and the operator
+        mutations (agent.update, log.attach/detach, send_input,
+        queue.*, route.*).
         This test pins the closed FEAT-001..011 set so an accidental
         extra method cannot sneak in beyond the spec'd surface.
         """
@@ -82,7 +81,7 @@ class TestDispatchTableCardinality:
             "routes.enable",
             "routes.disable",
             # FEAT-011 app.* host-only namespace (T002 / FR-001 / FR-042).
-            # US1 + US2: 12 of 30 v1.0 methods. US3 ships the remaining 18.
+            # Full v1.0 surface — 32 methods (US1 + US2 + US3).
             "app.preflight",
             "app.hello",
             "app.readiness",
@@ -95,8 +94,28 @@ class TestDispatchTableCardinality:
             "app.agent.list",
             "app.agent.detail",
             "app.agent.register_from_pane",
+            "app.container.list",
+            "app.container.detail",
+            "app.log_attachment.list",
+            "app.log_attachment.detail",
+            "app.event.list",
+            "app.event.detail",
+            "app.queue.list",
+            "app.queue.detail",
+            "app.route.list",
+            "app.route.detail",
+            "app.agent.update",
+            "app.log.attach",
+            "app.log.detach",
+            "app.send_input",
+            "app.queue.approve",
+            "app.queue.delay",
+            "app.queue.cancel",
+            "app.route.add",
+            "app.route.remove",
+            "app.route.update",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 47
+        assert len(dispatch) == 67
 
 
 # ---------------------------------------------------------------------------

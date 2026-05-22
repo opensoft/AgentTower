@@ -127,10 +127,12 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
     from . import scan_handlers as _scan_handlers
 
     return {
+        # ── Bootstrap + dashboard (US1) ──────────────────────────────
         "app.preflight": _wrap_handler(_preflight.app_preflight),
         "app.hello": _wrap_handler(_hello.app_hello),
         "app.readiness": _wrap_handler(_readiness.app_readiness),
         "app.dashboard": _wrap_handler(_dashboard.app_dashboard),
+        # ── Scans + pane/agent reads + adopt (US2) ───────────────────
         "app.scan.containers": _wrap_handler(_scan_handlers.app_scan_containers),
         "app.scan.panes": _wrap_handler(_scan_handlers.app_scan_panes),
         "app.scan.status": _wrap_handler(_scan_handlers.app_scan_status),
@@ -141,6 +143,28 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
         "app.agent.register_from_pane": _wrap_handler(
             _mutations.app_agent_register_from_pane
         ),
+        # ── Remaining entity reads (US3, T054–T058) ──────────────────
+        "app.container.list": _wrap_handler(_reads.app_container_list),
+        "app.container.detail": _wrap_handler(_reads.app_container_detail),
+        "app.log_attachment.list": _wrap_handler(_reads.app_log_attachment_list),
+        "app.log_attachment.detail": _wrap_handler(_reads.app_log_attachment_detail),
+        "app.event.list": _wrap_handler(_reads.app_event_list),
+        "app.event.detail": _wrap_handler(_reads.app_event_detail),
+        "app.queue.list": _wrap_handler(_reads.app_queue_list),
+        "app.queue.detail": _wrap_handler(_reads.app_queue_detail),
+        "app.route.list": _wrap_handler(_reads.app_route_list),
+        "app.route.detail": _wrap_handler(_reads.app_route_detail),
+        # ── Operator mutations (US3, T060–T065) ──────────────────────
+        "app.agent.update": _wrap_handler(_mutations.app_agent_update),
+        "app.log.attach": _wrap_handler(_mutations.app_log_attach),
+        "app.log.detach": _wrap_handler(_mutations.app_log_detach),
+        "app.send_input": _wrap_handler(_mutations.app_send_input),
+        "app.queue.approve": _wrap_handler(_mutations.app_queue_approve),
+        "app.queue.delay": _wrap_handler(_mutations.app_queue_delay),
+        "app.queue.cancel": _wrap_handler(_mutations.app_queue_cancel),
+        "app.route.add": _wrap_handler(_mutations.app_route_add),
+        "app.route.remove": _wrap_handler(_mutations.app_route_remove),
+        "app.route.update": _wrap_handler(_mutations.app_route_update),
     }
 
 
