@@ -47,7 +47,7 @@ These were locked before plan generation; this section is a sanity audit.
 - [X] CHK028 Does ANY artifact still imply that **`hints[]` is only on dashboard** (it must also be on readiness per FR-014a)? [Negative, Consistency, Spec §FR-014a]
 - [X] CHK029 Does ANY artifact still imply that **container callers can call `app.*` methods** (forbidden by FR-042)? [Negative, Consistency, Spec §FR-042]
 - [X] CHK030 Does ANY artifact still imply that **`details` may be `null` or absent** (forbidden by FR-033)? [Negative, Consistency, Spec §FR-033]
-- [X] CHK031 Does ANY artifact's **error-code list** count differ from 26 entries at v1.0? [Negative, Consistency, Spec §FR-034]
+- [X] CHK031 Does ANY artifact's **error-code list** count differ from 27 entries at v1.0? [Negative, Consistency, Spec §FR-034]
 
 ## Round-2/3 SC Gap (Outstanding)
 

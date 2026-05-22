@@ -58,7 +58,7 @@ specs/011-app-backend-contract/
 ├── research.md          # Phase 0 — open-question resolutions
 ├── data-model.md        # Phase 1 — entities, view models, closed sets
 ├── contracts/           # Phase 1 — wire-level contracts
-│   ├── app-methods.md     # Per-method request/response shapes (30 methods)
+│   ├── app-methods.md     # Per-method request/response shapes (32 methods)
 │   ├── error-codes.md     # Closed-set codes + per-code `details` registry
 │   └── closed-sets.md     # All other closed enumerations
 ├── quickstart.md        # Synthetic-client walkthrough for Story 1

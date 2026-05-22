@@ -23,8 +23,8 @@
 
 ## Spec ↔ Contracts Consistency
 
-- [X] CHK012 Does `app-methods.md`'s **method enumeration (30 methods)** cover every method referenced in FR-029 plus the bootstrap and read methods? [Consistency, Contracts §app-methods, Spec §FR-029]
-- [X] CHK013 Does `error-codes.md`'s **26-code closed set** match FR-034's enumeration entry-for-entry (no missing codes, no extra codes)? [Consistency, Contracts §error-codes, Spec §FR-034]
+- [X] CHK012 Does `app-methods.md`'s **method enumeration (32 methods)** cover every method referenced in FR-029 plus the bootstrap and read methods? [Consistency, Contracts §app-methods, Spec §FR-029]
+- [X] CHK013 Does `error-codes.md`'s **27-code closed set** match FR-034's enumeration entry-for-entry (no missing codes, no extra codes)? [Consistency, Contracts §error-codes, Spec §FR-034]
 - [X] CHK014 Does `error-codes.md`'s **per-code `details` registry** match FR-034a entry-for-entry? [Consistency, Contracts §error-codes, Spec §FR-034a]
 - [X] CHK015 Does `closed-sets.md`'s **`role_priority` and `state_priority` tables** match FR-021a integer-for-integer? [Consistency, Contracts §closed-sets, Spec §FR-021a]
 - [X] CHK016 Does `closed-sets.md`'s **hint codes set** match FR-014a's v1.0 registry? [Consistency, Contracts §closed-sets, Spec §FR-014a]

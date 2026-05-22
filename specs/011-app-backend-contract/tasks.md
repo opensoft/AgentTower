@@ -335,7 +335,7 @@ are verified by `test_app_view_models.py`, `test_app_us3_reads.py`,
 ```bash
 # Launch all closed-set / constant tasks in parallel:
 Task: "Define APP_CONTRACT_VERSION + helpers in src/agenttower/app_contract/versioning.py"
-Task: "Define ERROR_CODES + DETAILS_SCHEMA in src/agenttower/app_contract/errors.py"
+Task: "Define ERROR_CODES + DETAILS_REQUIRED_KEYS in src/agenttower/app_contract/errors.py"
 Task: "Define closed-set enums (scan_state, severity, hint codes, priorities) in src/agenttower/app_contract/versioning.py"
 
 # Launch independent infrastructure modules in parallel:
