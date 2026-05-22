@@ -269,7 +269,7 @@ def test_dispatch_handles_internal_exception_gracefully() -> None:
     handler, _ = _make_handler(b'{"method": "ping"}\n')
 
     def boom(ctx, params, peer_uid=-1):  # noqa: ANN001
-        raise RuntimeError("kaboom")
+        raise RuntimeError("kaboom-secret-path-/etc/shadow")
 
     from agenttower.socket_api.methods import DISPATCH
 
@@ -282,7 +282,14 @@ def test_dispatch_handles_internal_exception_gracefully() -> None:
 
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == errors.INTERNAL_ERROR
-    assert "RuntimeError" in envelope["error"]["message"]
+    # FEAT-011 review-remediation (H3): the client-visible message MUST NOT
+    # echo the exception type or message — those can carry filesystem paths,
+    # SQL fragments, or request content. Detail goes to daemon stderr only.
+    message = envelope["error"]["message"]
+    assert "RuntimeError" not in message
+    assert "kaboom-secret-path" not in message
+    assert "/etc/shadow" not in message
+    assert "see daemon log" in message
 
 
 def test_handle_writes_envelope_on_uid_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:

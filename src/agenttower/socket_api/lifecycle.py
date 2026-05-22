@@ -199,6 +199,16 @@ EVENT_MOUNTS_JSON_OVERSIZED = "mounts_json_oversized"
 EVENT_SOCKET_PEER_UID_MISMATCH = "socket_peer_uid_mismatch"
 EVENT_AUDIT_APPEND_FAILED = "audit_append_failed"
 
+# FEAT-011 review-remediation (H1): emitted at daemon startup when the
+# ``AGENTTOWER_TEST_FORCE_HOST_PEER`` test seam is active. The seam makes
+# the host-vs-container peer check (FR-042 host-only gate) return True for
+# any caller — it exists so WSL2 / Docker-in-Docker / sandboxed CI runners
+# (whose ``/proc`` markers false-positive) can run the integration suite.
+# A production daemon MUST NOT have this set; emitting a ``warn``-level
+# lifecycle event makes an otherwise-silent process-wide gate bypass
+# auditable in the daemon log.
+EVENT_HOST_PEER_CHECK_BYPASSED = "host_peer_check_bypassed"
+
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
         EVENT_DAEMON_STARTING,
@@ -220,6 +230,7 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         EVENT_MOUNTS_JSON_OVERSIZED,
         EVENT_SOCKET_PEER_UID_MISMATCH,
         EVENT_AUDIT_APPEND_FAILED,
+        EVENT_HOST_PEER_CHECK_BYPASSED,
     }
 )
 
