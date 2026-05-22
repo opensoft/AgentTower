@@ -8,9 +8,28 @@ a diagnostic ``code`` field carrying one of:
 
 If the daemon is reachable enough to respond at all, the success
 envelope is the normal path (the diagnostic ``code`` distinguishes
-edge conditions). Actual OS-level connect failures (socket missing,
-permission denied) surface as connection errors to the client; the
-client library translates those into the matching diagnostic code.
+edge conditions).
+
+Daemon-health detection — who reports which ``code``:
+
+* A *fully-dead* daemon cannot run this handler at all. The client's
+  ``connect()`` fails at the OS level (the socket file is gone, or
+  exists but nothing is listening, or permissions deny it); the client
+  library is responsible for mapping those connect failures onto the
+  ``socket_missing`` / ``socket_permission_denied`` / ``daemon_unavailable``
+  diagnostic codes. The handler never executes, so it cannot report
+  them itself.
+* A *shutting-down* daemon is the gap this handler covers: the listener
+  is still accepting connections and dispatching requests, but the
+  daemon has begun its graceful-shutdown sequence and is no longer a
+  trustworthy backend. That window is detectable here via
+  ``ctx.shutdown_requested`` (a ``threading.Event | None`` on
+  ``DaemonContext``). When it is set, the handler returns the success
+  envelope with ``code = "daemon_unavailable"``, ``daemon_reachable =
+  false`` and ``socket_reachable = true`` — the socket answered, but the
+  daemon behind it is on its way out.
+* Otherwise the handler reports ``code = "ok"`` with both reachability
+  flags ``true``.
 
 The host-only gate (FR-042) applies to ``app.preflight`` too — a
 bench-container peer receives the closed-set failure envelope
@@ -55,6 +74,21 @@ def app_preflight(
             "app.* namespace is host-only; bench-container callers refused",
             details={},
         )
+
+    # Daemon-health detection. The socket answered (we are running), so
+    # ``socket_reachable`` is always true on this path. If the daemon has
+    # begun its graceful-shutdown sequence the backend is no longer
+    # trustworthy even though it still answered — report the
+    # shutting-down window as ``daemon_unavailable``. A fully-dead daemon
+    # never reaches this code; the client maps that connect failure to a
+    # diagnostic code itself (see the module docstring).
+    shutdown = getattr(ctx, "shutdown_requested", None)
+    if shutdown is not None and shutdown.is_set():
+        return envelope.success({
+            "socket_reachable": True,
+            "daemon_reachable": False,
+            "code": "daemon_unavailable",
+        })
 
     return envelope.success({
         "socket_reachable": True,

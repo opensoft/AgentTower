@@ -171,19 +171,19 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 
 ### Tests for User Story 4
 
-- [ ] T066 [P] [US4] Contract test degraded readiness paths in `tests/contract/test_app_readiness_degraded.py`. One fixture per failure mode: Docker stopped → `docker.status == "unavailable"` + top-level `degraded` + `docker_unavailable_hint`; SQLite read-only → `sqlite.status == "degraded"`; JSONL write failure → `jsonl.status == "degraded"`; routing worker stopped → matching status; log_attachment_workers degraded → matching status (SC-007)
-- [ ] T067 [P] [US4] Contract test dashboard hints emission in `tests/contract/test_app_dashboard_hints.py`. Inducing fixtures for each v1.0 hint code (`start_bench_container`, `check_container_filter`, `register_first_agent`, `attach_logs`, `enable_first_route`, `docker_unavailable_hint`) produces the documented hint with correct `severity` and `target` (SC-015)
-- [ ] T068 [P] [US4] Contract test preflight error mapping in `tests/contract/test_app_preflight_errors.py`. Daemon down + socket present (stale-pid) → `code == "daemon_unavailable"`; socket file missing → client maps OS error → `socket_missing` semantic; socket permission denied → `socket_permission_denied` semantic
-- [ ] T069 [US4] Integration test `tests/integration/test_story4_degraded_states.py`. Walks every Story-4-acceptance failure mode and asserts each yields a structured, renderable response. Asserts SC-007's "zero CLI text parsed" invariant
+- [X] T066 [P] [US4] Contract test degraded readiness paths in `tests/contract/test_app_readiness_degraded.py`. One fixture per failure mode: Docker stopped → `docker.status == "unavailable"` + top-level `degraded` + `docker_unavailable_hint`; SQLite read-only → `sqlite.status == "degraded"`; JSONL write failure → `jsonl.status == "degraded"`; routing worker stopped → matching status; log_attachment_workers degraded → matching status (SC-007)
+- [X] T067 [P] [US4] Contract test dashboard hints emission in `tests/contract/test_app_dashboard_hints.py`. Inducing fixtures for each v1.0 hint code (`start_bench_container`, `check_container_filter`, `register_first_agent`, `attach_logs`, `enable_first_route`, `docker_unavailable_hint`) produces the documented hint with correct `severity` and `target` (SC-015)
+- [X] T068 [P] [US4] Contract test preflight error mapping in `tests/contract/test_app_preflight_errors.py`. Daemon down + socket present (stale-pid) → `code == "daemon_unavailable"`; socket file missing → client maps OS error → `socket_missing` semantic; socket permission denied → `socket_permission_denied` semantic
+- [X] T069 [US4] Integration test `tests/integration/test_story4_degraded_states.py`. Walks every Story-4-acceptance failure mode and asserts each yields a structured, renderable response. Asserts SC-007's "zero CLI text parsed" invariant
 
 ### Implementation for User Story 4
 
 Most US4 functionality is already implemented by Phase 3 (US1 readiness + dashboard handlers). US4 adds:
 
-- [ ] T070 [US4] Wire stale-pid detection in `app.preflight` (in `src/agenttower/app_contract/preflight.py`) — if socket file exists but daemon process is not alive, return success envelope with `code == "daemon_unavailable"` (distinct from a generic OS connect error). Inherits the FEAT-002 §23 stale-pid semantics (per Edge Cases)
-- [ ] T071 [US4] Extend hint emission helper (T027) with all 6 v1.0 hint codes wired to their triggering conditions. E.g., `dashboard.counts.containers.active == 0` → `start_bench_container`; `agents.total == 0` → `register_first_agent`; `routes.enabled == 0` → `enable_first_route`. Severity per FR-014a recommended mapping
+- [X] T070 [US4] Wire stale-pid detection in `app.preflight` (in `src/agenttower/app_contract/preflight.py`) — if socket file exists but daemon process is not alive, return success envelope with `code == "daemon_unavailable"` (distinct from a generic OS connect error). Inherits the FEAT-002 §23 stale-pid semantics (per Edge Cases)
+- [X] T071 [US4] Extend hint emission helper (T027) with all 6 v1.0 hint codes wired to their triggering conditions. E.g., `dashboard.counts.containers.active == 0` → `start_bench_container`; `agents.total == 0` → `register_first_agent`; `routes.enabled == 0` → `enable_first_route`. Severity per FR-014a recommended mapping
 
-**Checkpoint**: User Story 4 fully functional. Every degraded state surfaces a structured, renderable response.
+**Checkpoint**: ✅ User Story 4 complete. Every degraded/unavailable subsystem state surfaces a structured, renderable response; all 6 v1.0 hint codes are wired (`check_container_filter` is a reserved closed-set code — no MVP telemetry distinguishes "filtered out" from "no containers", documented). T070 added daemon-side shutdown detection to `app.preflight`. Tests: tests/unit/test_app_us4_*.py + tests/integration/test_story4_degraded_states.py.
 
 ---
 
@@ -195,18 +195,18 @@ Most US4 functionality is already implemented by Phase 3 (US1 readiness + dashbo
 
 ### Tests for User Story 5
 
-- [ ] T072 [P] [US5] Contract test major-version mismatch in `tests/contract/test_app_version_major_mismatch.py`. Client declares `client_app_contract_major = 2` against a v1.x daemon → `app.hello` returns `app_contract_major_unsupported` with `details = {daemon_app_contract_version, client_app_contract_major}`, no session issued (SC-005); subsequent `app.*` calls return `app_session_required` (SC-005)
-- [ ] T073 [P] [US5] Contract test capability_flags = {} at v1.0 in `tests/contract/test_app_capability_flags.py`. Exact-match assertion `capability_flags == {}`. Plus a forward-compat smoke: synthetic future-daemon response carrying an unknown flag key is tolerated by a v1.0 client (SC-014)
-- [ ] T074 [P] [US5] Contract test forward-compat unknown response fields in `tests/contract/test_app_forward_compat.py`. Synthetic daemon response containing an unknown top-level field on every method's success envelope — v1.0 client MUST ignore (FR-037)
-- [ ] T075 [P] [US5] Contract test `unknown_method` semantics in `tests/contract/test_app_unknown_method.py`. Requests for `app.foo.bar`, `app.x.y`, and `app.future_method` all return `unknown_method` with `details == {}`; no SQLite or JSONL state mutation observed (SC-027 + FR-034b)
-- [ ] T076 [US5] Integration test `tests/integration/test_story5_version_drift.py`. Full Story-5 walkthrough including major-mismatch refusal AND a within-major minor-N-vs-N+1 simulation. Asserts SC-009: synthetic minor-N client running against a minor-(N+1) daemon completes the dashboard + adopt + queue + route flows with zero failures due to unknown response fields and zero failures due to unknown closed-set codes (clients surface unknown codes as `internal_error`-class display states)
+- [X] T072 [P] [US5] Contract test major-version mismatch in `tests/contract/test_app_version_major_mismatch.py`. Client declares `client_app_contract_major = 2` against a v1.x daemon → `app.hello` returns `app_contract_major_unsupported` with `details = {daemon_app_contract_version, client_app_contract_major}`, no session issued (SC-005); subsequent `app.*` calls return `app_session_required` (SC-005)
+- [X] T073 [P] [US5] Contract test capability_flags = {} at v1.0 in `tests/contract/test_app_capability_flags.py`. Exact-match assertion `capability_flags == {}`. Plus a forward-compat smoke: synthetic future-daemon response carrying an unknown flag key is tolerated by a v1.0 client (SC-014)
+- [X] T074 [P] [US5] Contract test forward-compat unknown response fields in `tests/contract/test_app_forward_compat.py`. Synthetic daemon response containing an unknown top-level field on every method's success envelope — v1.0 client MUST ignore (FR-037)
+- [X] T075 [P] [US5] Contract test `unknown_method` semantics in `tests/contract/test_app_unknown_method.py`. Requests for `app.foo.bar`, `app.x.y`, and `app.future_method` all return `unknown_method` with `details == {}`; no SQLite or JSONL state mutation observed (SC-027 + FR-034b)
+- [X] T076 [US5] Integration test `tests/integration/test_story5_version_drift.py`. Full Story-5 walkthrough including major-mismatch refusal AND a within-major minor-N-vs-N+1 simulation. Asserts SC-009: synthetic minor-N client running against a minor-(N+1) daemon completes the dashboard + adopt + queue + route flows with zero failures due to unknown response fields and zero failures due to unknown closed-set codes (clients surface unknown codes as `internal_error`-class display states)
 
 ### Implementation for User Story 5
 
-- [ ] T077 [US5] Major-mismatch enforcement in `app.hello` (`src/agenttower/app_contract/hello.py`) — already scaffolded in T025, completed here with the full closed-set details shape per FR-034a and the no-session-issued guarantee from FR-036. Also returns `app_session_required` from every other method when no session was issued (T014 dispatcher already handles this)
-- [ ] T078 [P] [US5] Synthetic-future-minor client fixture in `tests/fixtures/app_future_minor_client.py`. Emits requests with `client_app_contract_major = 1, client_app_contract_minor = 2` (one ahead of daemon), tolerates unknown response fields, and exposes a helper for the SC-009 verification flow
+- [X] T077 [US5] Major-mismatch enforcement in `app.hello` (`src/agenttower/app_contract/hello.py`) — already scaffolded in T025, completed here with the full closed-set details shape per FR-034a and the no-session-issued guarantee from FR-036. Also returns `app_session_required` from every other method when no session was issued (T014 dispatcher already handles this)
+- [X] T078 [P] [US5] Synthetic-future-minor client fixture in `tests/fixtures/app_future_minor_client.py`. Emits requests with `client_app_contract_major = 1, client_app_contract_minor = 2` (one ahead of daemon), tolerates unknown response fields, and exposes a helper for the SC-009 verification flow
 
-**Checkpoint**: User Story 5 fully functional. Cross-version drift is enforced at the contract boundary.
+**Checkpoint**: ✅ User Story 5 complete. Major-version mismatch is refused at `app.hello` (FR-036, T077 — shipped in US1, verified here); `unknown_method` + forward-compat field tolerance verified. Tests: tests/unit/test_app_us5_*.py + tests/integration/test_story5_version_drift.py + the tests/fixtures/app_future_minor_client.py SC-009 fixture.
 
 ---
 
