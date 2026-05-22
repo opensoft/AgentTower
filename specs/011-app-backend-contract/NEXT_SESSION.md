@@ -82,7 +82,7 @@ app.dashboard  → counts across 7 surfaces + recents + hints[]
 - Host-only gate (FR-042) on every method including preflight/hello.
 - Session-required gate (FR-007) on readiness/dashboard, fires AFTER
   host-only so container peers never see session-state leakage.
-- 26-entry closed code set (FR-034), 12-entry per-code `details`
+- 27-entry closed code set (FR-034), 15-entry per-code `details`
   registry (FR-034a), envelope shape (FR-033), all enforced by
   `errors.validate_details()` → `ContractViolation` if a handler
   emits a malformed failure.
@@ -237,7 +237,7 @@ requirement needs >64 KiB, that's a separate spec/plan change against
 src/agenttower/app_contract/
 ├── __init__.py             # APP_CONTRACT_VERSION, SUPPORTED_MINOR_RANGE
 ├── versioning.py           # constants + all closed-set enums
-├── errors.py               # 26 error codes + DETAILS_REQUIRED_KEYS + validate_details
+├── errors.py               # 27 error codes + DETAILS_REQUIRED_KEYS + validate_details
 ├── envelope.py             # success / failure / internal_error builders
 ├── sessions.py             # AppSession + SessionRegistry + gate_session_required
 ├── host_only.py            # is_host_peer wrapper (FR-042)
@@ -285,9 +285,9 @@ If you've been away from this codebase:
 - **What this feature is**: a `app.*` socket method namespace that lets
   a packaged desktop app talk to `agenttowerd` without scraping CLI
   output. Host-only. Versioned. Closed-set everything.
-- **Why it has so many specs**: 3 clarify rounds, multiple checklist
-  passes, and an analyze remediation produced a very tight contract.
-  61 FRs, 27 SCs, 26 closed-set codes — all locked. The spec is the
+- **Why it has so many specs**: 6 clarify rounds, multiple checklist
+  passes, and analyze remediations produced a very tight contract.
+  74 FRs, 38 SCs, 27 closed-set codes — all locked. The spec is the
   hardest-thinking part already done.
 - **Where the implementation phase actually is**: 13/94 tasks done.
   The skeleton is solid; the bulk of US2/US3 mutation work + tests +

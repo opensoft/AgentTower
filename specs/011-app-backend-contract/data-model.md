@@ -68,6 +68,8 @@ Per-session dedupe map for `app.send_input` (FR-031a). Scope is `(app_session_id
 
 These are **response shapes** assembled from existing service-layer DAOs at read time. They are not stored; they are projected. Each row is a fresh dict built from the underlying SQLite row(s) by `view_models.py`. The DAOs that feed them are the same ones the CLI methods use (FR-004).
 
+**Envelope placement**: a `.list` method returns its view models as an array under `result.rows[]`. A `.detail` method and every mutation method return a **single** view model wrapped under `result.row` — i.e. `result == {"row": <ViewModel>}`, never the view model spread directly onto `result`. This keeps single-entity and list responses decoded the same way (`result["row"]` vs `result["rows"]`).
+
 ### ContainerViewModel
 
 Source: FEAT-003 `containers` rows. Timestamp field names corrected in

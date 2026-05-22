@@ -233,20 +233,47 @@ def test_readiness_without_session_token_returns_app_session_required(
     assert envelope["error"]["code"] == "app_session_required"
 
 
-def test_unknown_app_method_returns_unknown_method(socket_path: Path) -> None:
-    """FR-034b: app.foo.bar (nonexistent) → unknown_method, no state change.
+def test_unknown_app_method_returns_unknown_method(
+    socket_path: Path, events_path: Path
+) -> None:
+    """SC-027 / FR-034b: nonexistent `app.*` methods → unknown_method with
+    no observable state change.
 
     T098: the FEAT-002 dispatcher detects `app.*` method names that miss
     DISPATCH and emits the FEAT-011 envelope shape (with
     ``app_contract_version`` stamp and ``error.details = {}``) instead
     of the legacy `make_error` shape.
+
+    SC-027 depth: exercise several distinct unknown names (a flat name, a
+    dotted name, and a name that shadows a real prefix) and confirm none
+    of them leaked an audit row into ``events.jsonl`` — an unknown method
+    is rejected before any handler runs, so it MUST NOT mutate SQLite or
+    the JSONL audit log. A valid call afterward proves the daemon's
+    dispatch state survived the rejections intact.
     """
-    envelope = _one_shot_call(socket_path, "app.foo.bar")
-    assert envelope["ok"] is False, envelope
-    assert envelope["error"]["code"] == "unknown_method"
-    # T098: FR-033 envelope shape on app.* unknown-method failures.
-    assert envelope["app_contract_version"] == "1.0"
-    assert envelope["error"]["details"] == {}
+    unknown_methods = ["app.foo.bar", "app.dashboard.refresh", "app.unknown"]
+    events_before = events_path.read_text() if events_path.exists() else ""
+
+    for method in unknown_methods:
+        envelope = _one_shot_call(socket_path, method)
+        assert envelope["ok"] is False, (method, envelope)
+        assert envelope["error"]["code"] == "unknown_method", method
+        # T098: FR-033 envelope shape on app.* unknown-method failures.
+        assert envelope["app_contract_version"] == "1.0", method
+        assert envelope["error"]["details"] == {}, method
+
+    # SC-027: no unknown method name should appear in the audit log, and
+    # the only growth (if any) is unrelated daemon lifecycle/worker rows.
+    events_after = events_path.read_text() if events_path.exists() else ""
+    new_lines = events_after[len(events_before):]
+    for method in unknown_methods:
+        assert method not in new_lines, (
+            f"unknown method {method!r} leaked into events.jsonl"
+        )
+
+    # State unchanged: a valid method still dispatches normally.
+    preflight = _one_shot_call(socket_path, "app.preflight")
+    assert preflight["ok"] is True, preflight
 
 
 def test_fr003b_wire_framing_stray_cr_returns_malformed_request(
@@ -385,6 +412,13 @@ def test_fr003a_wire_framing_oversized_app_method_returns_payload_too_large(
     details = envelope["error"]["details"]
     assert "size_limit_bytes" in details
     assert "actual_size_bytes" in details
+    # SC-028: the reported cap is the *actually enforced* limit. FEAT-011
+    # FR-003a asks for a 1 MiB request cap, but the host-only app.* surface
+    # rides FEAT-002's pre-existing 64 KiB (65536-byte) line reader, so the
+    # daemon enforces — and therefore reports — 65536. The spec/impl gap
+    # (1 MiB requested vs 64 KiB enforced) is tracked as a known item; this
+    # assertion pins the wire contract to the real enforced value.
+    assert details["size_limit_bytes"] == 65536
     assert details["actual_size_bytes"] > details["size_limit_bytes"]
     assert envelope["app_contract_version"] == "1.0"
 

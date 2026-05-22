@@ -683,6 +683,38 @@ def test_event_list_rejects_unknown_filter(
     assert env["error"]["details"]["field"] == "origin"
 
 
+@pytest.mark.parametrize(
+    ("filter_field", "operator_value"),
+    [
+        ("event_type", "err*"),
+        ("event_type", "%error"),
+        ("agent_id", "agt-1~"),
+        ("agent_id", "agt<1"),
+        ("event_type", "type LIKE foo"),
+    ],
+)
+def test_event_list_rejects_operator_laden_filter_value(
+    event_db: tuple[DaemonContext, list[int]],
+    host_session: tuple[int, str],
+    filter_field: str,
+    operator_value: str,
+) -> None:
+    """SC-018 / FR-024a: v1.0 filters are exact-match only. A filter value
+    carrying operator-like syntax must be rejected with validation_failed
+    and details.field naming the offending filter."""
+    ctx, _ = event_db
+    uid, token = host_session
+    env = reads.app_event_list(
+        ctx,
+        {"app_session_token": token, "filters": {filter_field: operator_value}},
+        peer_uid=uid,
+    )
+    assert env["ok"] is False, env
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == filter_field
+    assert env["error"]["details"]["reason"] == "operator syntax not supported"
+
+
 def test_event_list_order_by_observed_at_asc(
     event_db: tuple[DaemonContext, list[int]], host_session: tuple[int, str]
 ) -> None:
@@ -913,6 +945,34 @@ def test_queue_list_rejects_unknown_filter(
     assert env["error"]["details"]["field"] == "route_id"
 
 
+@pytest.mark.parametrize(
+    ("filter_field", "operator_value"),
+    [
+        ("state", "blocked%"),
+        ("sender_agent_id", "agt<x"),
+        ("target_agent_id", "agt-y*"),
+        ("target_agent_id", "id ~ pattern"),
+    ],
+)
+def test_queue_list_rejects_operator_laden_filter_value(
+    queue_db: DaemonContext,
+    host_session: tuple[int, str],
+    filter_field: str,
+    operator_value: str,
+) -> None:
+    """SC-018 / FR-024a: app.queue.list filters are exact-match only."""
+    uid, token = host_session
+    env = reads.app_queue_list(
+        queue_db,
+        {"app_session_token": token, "filters": {filter_field: operator_value}},
+        peer_uid=uid,
+    )
+    assert env["ok"] is False, env
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == filter_field
+    assert env["error"]["details"]["reason"] == "operator syntax not supported"
+
+
 def test_queue_list_payload_preview_redacted(
     queue_db: DaemonContext, host_session: tuple[int, str]
 ) -> None:
@@ -1094,6 +1154,27 @@ def test_route_list_rejects_unknown_filter(
     )
     assert env["ok"] is False
     assert env["error"]["details"]["field"] == "bad"
+
+
+@pytest.mark.parametrize("operator_value", ["<true", "true*", "en~abled"])
+def test_route_list_rejects_operator_laden_filter_value(
+    route_db: DaemonContext,
+    host_session: tuple[int, str],
+    operator_value: str,
+) -> None:
+    """SC-018 / FR-024a: app.route.list's only filter (`enabled`) is
+    exact-match only; an operator-laden string value is rejected before
+    the boolean-type check."""
+    uid, token = host_session
+    env = reads.app_route_list(
+        route_db,
+        {"app_session_token": token, "filters": {"enabled": operator_value}},
+        peer_uid=uid,
+    )
+    assert env["ok"] is False, env
+    assert env["error"]["code"] == "validation_failed"
+    assert env["error"]["details"]["field"] == "enabled"
+    assert env["error"]["details"]["reason"] == "operator syntax not supported"
 
 
 def test_route_list_order_by_updated_at_desc(

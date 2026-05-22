@@ -764,15 +764,43 @@ def app_agent_detail(
 # ─── US3 entity-read shared plumbing ─────────────────────────────────────
 
 
+# FR-024a / SC-018: v1.0 filters are exact-match only. A filter *value*
+# carrying operator-like syntax must be rejected — the daemon never
+# interprets `<`, `>`, `~`, SQL `LIKE` wildcards (`*`, `%`), so silently
+# matching them exactly would surprise a client expecting operator
+# semantics. Adding real operators is an additive minor (FR-035).
+_FILTER_OPERATOR_CHARS: frozenset[str] = frozenset("<>~*%")
+
+
+def _filter_value_operator(value: Any) -> str | None:
+    """Return the offending operator token in a filter value, or ``None``.
+
+    Only string values can carry operator syntax; non-strings (the
+    boolean ``enabled`` filter, integers) are returned as clean.
+    """
+    if not isinstance(value, str):
+        return None
+    for ch in value:
+        if ch in _FILTER_OPERATOR_CHARS:
+            return ch
+    # SQL `LIKE` as a standalone token (case-insensitive).
+    if "like" in value.lower().split():
+        return "LIKE"
+    return None
+
+
 def _validate_filters_object(
     params: dict[str, Any], allowed: set[str], entity: str
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Coerce ``params['filters']`` to a dict and reject unknown keys.
+    """Coerce ``params['filters']`` to a dict, reject unknown keys, and
+    reject operator-laden values.
 
     Returns ``(filters, None)`` on success or ``({}, error_envelope)`` on
     failure. ``error.details.field`` is the offending filter field name
     (FR-024a). An unknown filter field is the offending field; a
-    non-object ``filters`` value yields ``details.field == "filters"``.
+    non-object ``filters`` value yields ``details.field == "filters"``;
+    an operator-laden value yields ``details.field`` set to that filter's
+    key with ``details.reason == "operator syntax not supported"``.
     """
     filters_raw = params.get("filters") or {}
     if not isinstance(filters_raw, dict):
@@ -787,6 +815,15 @@ def _validate_filters_object(
                 VALIDATION_FAILED,
                 f"unknown {entity} filter field: {key!r}",
                 details={"field": key, "reason": "unknown filter"},
+            )
+    for key, value in filters_raw.items():
+        operator = _filter_value_operator(value)
+        if operator is not None:
+            return {}, _envelope.failure(
+                VALIDATION_FAILED,
+                f"{entity} filter {key!r} is exact-match only; "
+                f"operator syntax ({operator!r}) is not supported at v1.0",
+                details={"field": key, "reason": "operator syntax not supported"},
             )
     return filters_raw, None
 

@@ -19,6 +19,8 @@ or
 
 Where `details` is always an object (possibly empty `{}`).
 
+**Single-entity result wrapper**: for the `.detail` read methods and every mutation method, the success `result` wraps the entity view model under a `row` key — i.e. `result == {"row": <EntityViewModel>}`, NOT the view model directly. This is the singular counterpart of the `.list` methods' `result.rows[]` array, so a client decodes a single entity (`result["row"]`) and a list of entities (`result["rows"]`) the same way. Per-method "Success result" descriptions below that say "the full `<Entity>ViewModel`" mean that view model **wrapped under `result.row`**.
+
 **Host-only gate** (FR-042): every `app.*` call from a bench-container peer is rejected at the dispatcher with `error.code == "host_only"`. This applies to `app.preflight` and `app.hello` too.
 
 **Session gate** (FR-007): every method except `app.preflight` and `app.hello` requires a valid `app_session_token`. Missing → `app_session_required`. Stale/invalid → `app_session_expired`.
@@ -88,7 +90,7 @@ Handshake; issues a session.
 
 **Failure codes**: `host_only`, `app_contract_major_unsupported`, `validation_failed` (incl. `details = {field: "client_app_contract_major", reason: "<...>"}` for malformed major, and `details = {field: "app.hello", reason: "too_many_sessions"}` when the 8-session cap is hit per FR-008b), `internal_error`. On `app_contract_major_unsupported`, `details = {daemon_app_contract_version, client_app_contract_major}` and no session is issued (FR-036).
 
-**Idempotent on same connection** (FR-008a): a second `app.hello` on the same socket connection returns the **same** `app_session_token` and `app_session_id` issued by the first call. No new session row; no audit row.
+**Fresh token per call** (FR-008a): each `app.hello` issues a **fresh** `app_session_token` and a fresh monotonic `app_session_id`. There is no same-connection idempotency — the FEAT-002 dispatcher is one-request-per-connection, so the original Round-4 "same-connection idempotency" wording was unreachable and is deprecated (see FR-008a + drift-finding T097). Clients reuse one token across many fresh connections rather than calling `app.hello` per request.
 
 ---
 
