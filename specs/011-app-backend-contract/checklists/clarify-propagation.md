@@ -49,7 +49,7 @@ These were locked before plan generation; this section is a sanity audit.
 - [X] CHK030 Does ANY artifact still imply that **`details` may be `null` or absent** (forbidden by FR-033)? [Negative, Consistency, Spec §FR-033]
 - [X] CHK031 Does ANY artifact's **error-code list** count differ from 27 entries at v1.0? [Negative, Consistency, Spec §FR-034]
 
-## Round-2/3 SC Gap (Outstanding)
+## Round-2/3 SC Gap (Resolved)
 
 - [X] CHK032 Are **success criteria added for FR-020a (pagination), FR-030b (scan timeout), FR-031a (idempotency), FR-039 (capability_flags), FR-014a (hints), FR-021a (state_priority/role_priority normative ordering), FR-021b (order_by direction), FR-024a (filter exact-match), FR-029a (update clearable fields), FR-029b (log.detach idempotent), FR-030c (scan.status method), FR-034a (details registry), FR-042 (app.* host-only), FR-003a (payload caps)**? [Gap, Spec §Success Criteria]
 - [X] CHK033 Is the **SC numbering plan** documented (e.g., SC-011..SC-025) so the additions don't collide with existing SC-001..SC-010? [Gap, Spec §Success Criteria]
