@@ -33,7 +33,7 @@ Where `details` is always an object (possibly empty `{}`).
 
 **Cursor opacity** (FR-020b): `cursor_next` is opaque to clients, ≤ 512 characters, daemon-chosen encoding. Clients pass it back verbatim. Malformed, oversized, or order/filter-mismatched cursors → `validation_failed.details.field == "cursor_next"`.
 
-The method list below is the **complete v1.0 surface** (30 methods). All methods are required at v1.0; `capability_flags = {}`.
+The method list below is the **complete v1.0 surface** (32 methods). All methods are required at v1.0; `capability_flags = {}`.
 
 ---
 
@@ -437,11 +437,11 @@ Poll a previously-issued scan (FR-030c).
 
 ## Method Count
 
-30 methods total at v1.0:
-- 2 bootstrap (preflight, hello)
-- 2 dashboard surfaces (readiness, dashboard)
-- 14 read surfaces (7 entities × {list, detail})
-- 1 adopt mutation
-- 11 operator mutations (agent.update, log.attach, log.detach, send_input, queue × 3, route × 3, scan × 3)
+32 methods total at v1.0:
+- 2 bootstrap (`app.preflight`, `app.hello`)
+- 2 dashboard surfaces (`app.readiness`, `app.dashboard`)
+- 14 read surfaces (7 entities — container, pane, agent, log_attachment, event, queue, route — × {list, detail})
+- 1 adopt mutation (`app.agent.register_from_pane`)
+- 13 operator mutations: `app.agent.update`, `app.log.attach`, `app.log.detach`, `app.send_input`, `app.queue.{approve,delay,cancel}` (3), `app.route.{add,remove,update}` (3), `app.scan.{containers,panes,status}` (3)
 
-All required at v1.0. `capability_flags = {}` reflects "every method is mandatory" (FR-039).
+Total: 2 + 2 + 14 + 1 + 13 = **32**. All required at v1.0; `capability_flags = {}` reflects "every method is mandatory" (FR-039). The wired `DISPATCH` table is therefore 35 legacy FEAT-002..010 methods + 32 `app.*` = 67 entries (pinned by `tests/unit/test_dispatch_table_stability.py`).

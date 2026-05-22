@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/011-app-backend-contract/`
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/](./contracts/), [quickstart.md](./quickstart.md)
 
-**Tests**: Tests are **REQUIRED** for FEAT-011. Every SC-001..SC-027 success criterion names a contract or integration test as its verification mechanism. Test files are enumerated in `plan.md` §Project Structure.
+**Tests**: Tests are **REQUIRED** for FEAT-011. Every SC-001..SC-038 success criterion names a contract or integration test as its verification mechanism. Test files are enumerated in `plan.md` §Project Structure.
 
 **Organization**: Tasks are grouped by user story (US1..US5 from `spec.md`). Within each phase, tasks marked **[P]** can run in parallel (different files, no dependencies on incomplete tasks).
 
@@ -19,9 +19,9 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 
 **Purpose**: Project skeleton and dispatcher wiring. No method handlers yet.
 
-- [ ] T001 Create new sub-package `src/agenttower/app_contract/` with empty modules per `plan.md` §Project Structure: `__init__.py`, `dispatcher.py`, `sessions.py`, `host_only.py`, `preflight.py`, `hello.py`, `readiness.py`, `dashboard.py`, `reads.py`, `mutations.py`, `scans.py`, `idempotency.py`, `envelope.py`, `errors.py`, `versioning.py`, `view_models.py`, `audit.py`
+- [X] T001 Create new sub-package `src/agenttower/app_contract/` with empty modules per `plan.md` §Project Structure: `__init__.py`, `dispatcher.py`, `sessions.py`, `host_only.py`, `preflight.py`, `hello.py`, `readiness.py`, `dashboard.py`, `reads.py`, `mutations.py`, `scans.py`, `idempotency.py`, `envelope.py`, `errors.py`, `versioning.py`, `view_models.py`, `audit.py`
 - [X] T002 Wire `app_contract/dispatcher.py::register()` entry point into FEAT-002's existing socket dispatcher (in `src/agenttower/daemon/dispatcher.py` or equivalent — verify exact location during implementation). Single registration call that the daemon startup invokes after legacy method registration. Per FR-002, MUST NOT alter legacy method registration paths.
-- [ ] T003 [P] Configure mypy/ruff exclusions and type-stub annotations for `src/agenttower/app_contract/` in `pyproject.toml`, mirroring the existing config for other sub-packages
+- [X] T003 [P] Configure mypy/ruff exclusions and type-stub annotations for `src/agenttower/app_contract/` in `pyproject.toml`, mirroring the existing config for other sub-packages
 
 ---
 
@@ -34,31 +34,31 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 ### Closed-set registries and version constants
 
 - [X] T004 [P] Define `APP_CONTRACT_VERSION = "1.0"`, `SUPPORTED_MINOR_RANGE = {"min": "1.0", "max": "1.0"}`, and the `parse_major_minor()` / `is_major_compatible()` helpers in `src/agenttower/app_contract/versioning.py`
-- [X] T005 [P] Define the 26-entry `ERROR_CODES` frozenset and the per-code `DETAILS_SCHEMA` dict (per FR-034, FR-034a) in `src/agenttower/app_contract/errors.py`. Include validation helper `validate_details(code, details) -> None` that raises `ContractViolation` if required keys are missing
+- [X] T005 [P] Define the `ERROR_CODES` frozenset (26 at the time of writing; Round-4 added `malformed_request` → 27 at v1.0) and the per-code `DETAILS_REQUIRED_KEYS` dict (per FR-034, FR-034a) in `src/agenttower/app_contract/errors.py`. Include validation helper `validate_details(code, details) -> None` that raises `ContractViolation` if required keys are missing
 - [X] T006 [P] Define all closed-set enums in `src/agenttower/app_contract/versioning.py` (or a sibling `constants.py`): readiness state, subsystem status, subsystem names tuple, hint severity, hint codes set, scan state `{running, completed, failed}`, scan kind, mutation origin `{cli, app, route, system}`, container state, `state_priority` mapping (per FR-021a), `role_priority` mapping (per FR-021a)
 
 ### Envelope and dispatcher gates
 
 - [X] T007 Envelope builders `envelope.success(method, result) -> dict` and `envelope.failure(method, code, details, message=None) -> dict` in `src/agenttower/app_contract/envelope.py`. Both stamp `app_contract_version` automatically; `failure()` calls `errors.validate_details()`. Depends on T004, T005
 - [X] T008 [P] Host-vs-container peer detector `host_only.is_host_peer(connection) -> bool` in `src/agenttower/app_contract/host_only.py`. Wraps the existing FEAT-009 mechanism (per Research §R-001; locate the function during implementation and import rather than reimplement)
-- [ ] T009 [P] Payload-size gate `dispatcher.enforce_request_size_limit(line_bytes) -> None` in `src/agenttower/app_contract/dispatcher.py`. Raises `PayloadTooLarge` if `len(line_bytes) > 1_048_576`. Hard cap per FR-003a
+- [X] T009 [P] Payload-size gate `dispatcher.enforce_request_size_limit(line_bytes) -> None` in `src/agenttower/app_contract/dispatcher.py`. Raises `PayloadTooLarge` if `len(line_bytes) > 1_048_576`. Hard cap per FR-003a
 - [X] T010 [P] App-session table `SessionRegistry` in `src/agenttower/app_contract/sessions.py`: per-connection sessions keyed by `connection_id`, uuid-v4 hex tokens, monotonic `app_session_id`, `register()` / `lookup_by_token()` / `invalidate_on_close()`. No persistence (per FR-006)
-- [ ] T011 [P] Idempotency dedupe store `IdempotencyStore` (per-session) in `src/agenttower/app_contract/idempotency.py`: dict keyed by `idempotency_key`, LRU eviction at 256 entries, scoped to session lifetime (per FR-031a + Research R-006). Methods: `lookup(key)`, `record(key, message_id, response)`
-- [ ] T012 [P] In-memory scan registry `ScanRegistry` in `src/agenttower/app_contract/scans.py`: `OrderedDict[scan_id, ScanRecord]` capped at 100 entries with FIFO eviction (per FR-030c + Research R-009). Methods: `start(scan_kind, session_id) -> scan_id`, `complete(scan_id, result)`, `fail(scan_id, error)`, `lookup(scan_id) -> ScanRecord | None`
-- [ ] T013 [P] JSONL audit helper `audit.emit_app_mutation(event_type, payload, session) -> None` in `src/agenttower/app_contract/audit.py`. Wraps the existing FEAT-008/010 audit writer per Research §R-007; injects `origin="app"` + `app_session_id` (NEVER `app_session_token`)
-- [ ] T014 Dispatcher gate chain in `src/agenttower/app_contract/dispatcher.py`: composes the gate sequence `(payload_size → unknown_method → host_only → session)` and routes the request to the registered method handler. Order matters: payload size is the cheapest reject; unknown method check next (avoid leaking host_only info on bad method names); host-only third; session last (so `app.preflight` and `app.hello` bypass the session gate). Depends on T007, T008, T009, T010
+- [X] T011 [P] Idempotency dedupe store `IdempotencyStore` (per-session) in `src/agenttower/app_contract/idempotency.py`: dict keyed by `idempotency_key`, LRU eviction at 256 entries, scoped to session lifetime (per FR-031a + Research R-006). Methods: `lookup(key)`, `record(key, message_id, response)`
+- [X] T012 [P] In-memory scan registry `ScanRegistry` in `src/agenttower/app_contract/scans.py`: `OrderedDict[scan_id, ScanRecord]` capped at 100 entries with FIFO eviction (per FR-030c + Research R-009). Methods: `start(scan_kind, session_id) -> scan_id`, `complete(scan_id, result)`, `fail(scan_id, error)`, `lookup(scan_id) -> ScanRecord | None`
+- [X] T013 [P] JSONL audit helper `audit.emit_app_mutation(event_type, payload, session) -> None` in `src/agenttower/app_contract/audit.py`. Wraps the existing FEAT-008/010 audit writer per Research §R-007; injects `origin="app"` + `app_session_id` (NEVER `app_session_token`)
+- [X] T014 Dispatcher gate chain in `src/agenttower/app_contract/dispatcher.py`: composes the gate sequence `(payload_size → unknown_method → host_only → session)` and routes the request to the registered method handler. Order matters: payload size is the cheapest reject; unknown method check next (avoid leaking host_only info on bad method names); host-only third; session last (so `app.preflight` and `app.hello` bypass the session gate). Depends on T007, T008, T009, T010
 
 ### View models
 
-- [ ] T015 [P] View model builders for **all 7 entities** (Container, Pane, Agent, LogAttachment, Event, Queue, Route) in `src/agenttower/app_contract/view_models.py`. Each builder takes the underlying DAO row(s) and returns the documented response shape from `data-model.md` §View Models. Includes derived fields: `registered: bool`, `agent_id: nullable` (Pane); `log_attached: bool`, `pane_active: bool` (Agent); `state_priority: int` (Queue); compact `summary` field per row (Event). No I/O — pure projection functions
+- [X] T015 [P] View model builders for **all 7 entities** (Container, Pane, Agent, LogAttachment, Event, Queue, Route) in `src/agenttower/app_contract/view_models.py`. Each builder takes the underlying DAO row(s) and returns the documented response shape from `data-model.md` §View Models. Includes derived fields: `registered: bool`, `agent_id: nullable` (Pane); `log_attached: bool`, `pane_active: bool` (Agent); `state_priority: int` (Queue); compact `summary` field per row (Event). No I/O — pure projection functions
 
 ### Test fixtures
 
-- [ ] T016 [P] Synthetic NDJSON socket client `SyntheticAppClient` in `tests/fixtures/app_synthetic_client.py`. Bare-metal Unix-socket connect, NDJSON framing, typed helpers per method (`app_hello()`, `app_dashboard()`, etc.), and a low-level `call(method, params)`. NEVER invokes the `agenttower` CLI subprocess (per SC-001 and Research §R-010)
-- [ ] T017 [P] Host vs bench-container peer simulators in `tests/fixtures/app_peer_simulators.py`. Two factories: `make_host_peer()` and `make_container_peer()`, each producing a fake connection whose `host_only.is_host_peer(conn)` predicate returns the appropriate value
-- [ ] T018 [P] Frozen-clock helper `freeze_clock(monotonic_ms)` in `tests/fixtures/app_clock.py` for deterministic ordering tests (FR-021/021a, SC-016)
+- [X] T016 [P] Synthetic NDJSON socket client `SyntheticAppClient` in `tests/fixtures/app_synthetic_client.py`. Bare-metal Unix-socket connect, NDJSON framing, typed helpers per method (`app_hello()`, `app_dashboard()`, etc.), and a low-level `call(method, params)`. NEVER invokes the `agenttower` CLI subprocess (per SC-001 and Research §R-010)
+- [X] T017 [P] Host vs bench-container peer simulators in `tests/fixtures/app_peer_simulators.py`. Two factories: `make_host_peer()` and `make_container_peer()`, each producing a fake connection whose `host_only.is_host_peer(conn)` predicate returns the appropriate value
+- [X] T018 [P] Frozen-clock helper `freeze_clock(monotonic_ms)` in `tests/fixtures/app_clock.py` for deterministic ordering tests (FR-021/021a, SC-016)
 
-**Checkpoint**: Foundation ready. All user stories can now begin in parallel (subject to staffing).
+**Checkpoint**: ✅ Foundation complete. T001 (sub-package), T004–T015 (version/error/enum constants, envelope + dispatcher gates, host-only gate, SessionRegistry, IdempotencyStore, ScanRegistry, audit helper, view models) all shipped. Reconciliation notes: T003 (mypy/ruff config) — the `app_contract` package lints clean under the existing `pyproject.toml` config, no exclusion needed; T009 + T014 (payload-size gate + gate chain) — implemented as the FEAT-002 `socket_api/server.py` wire-framing layer (`_make_payload_too_large_envelope`, `malformed_request`) plus the per-handler `gate_session_required` + dispatcher `_wrap_handler`, rather than a single composed `dispatcher.enforce_request_size_limit`; T016–T018 (named test-fixture files) — the synthetic-client / peer-simulator / frozen-clock helpers were inlined into each test module (socket helpers in the `test_story*` integration files; `host_peer` fixtures copied per file) rather than extracted to `tests/fixtures/app_*.py`. All foundational behavior is exercised by the 787-test suite.
 
 ---
 
@@ -70,10 +70,10 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 
 ### Tests for User Story 1
 
-- [ ] T019 [P] [US1] Contract test for `app.preflight` in `tests/contract/test_app_preflight.py`. Covers success envelope, closed-set diagnostic codes `{ok, daemon_unavailable, socket_missing, socket_permission_denied}` per FR-011, no-session-required behavior, `host_only` rejection for container peers (SC-022)
-- [ ] T020 [P] [US1] Contract test for `app.hello` in `tests/contract/test_app_hello.py`. Covers full FR-010 field set, `capability_flags == {}` at v1.0 (SC-014), major-mismatch path returning `app_contract_major_unsupported` with both versions in `details` (SC-005 + FR-036), `host_only` for container peers
-- [ ] T021 [P] [US1] Contract test for `app.readiness` in `tests/contract/test_app_readiness.py`. Covers all 6 subsystems from FR-013, state aggregation (FR-012 / FR-014), `reason == ""` when `status == ok`, hints array always present (SC-015), each hint code in the v1.0 registry, side-effect-free assertion (no audit row, no scan triggered — FR-045)
-- [ ] T022 [P] [US1] Contract test for `app.dashboard` in `tests/contract/test_app_dashboard.py`. Covers all 7 count surfaces from FR-016, recents structure (FR-017), `recent_limit` bounds `[1, 50]` and out-of-bounds → `validation_failed.details.field == "recent_limit"`, hints array always present, no global lock (FR-018)
+- [X] T019 [P] [US1] Contract test for `app.preflight` in `tests/contract/test_app_preflight.py`. Covers success envelope, closed-set diagnostic codes `{ok, daemon_unavailable, socket_missing, socket_permission_denied}` per FR-011, no-session-required behavior, `host_only` rejection for container peers (SC-022)
+- [X] T020 [P] [US1] Contract test for `app.hello` in `tests/contract/test_app_hello.py`. Covers full FR-010 field set, `capability_flags == {}` at v1.0 (SC-014), major-mismatch path returning `app_contract_major_unsupported` with both versions in `details` (SC-005 + FR-036), `host_only` for container peers
+- [X] T021 [P] [US1] Contract test for `app.readiness` in `tests/contract/test_app_readiness.py`. Covers all 6 subsystems from FR-013, state aggregation (FR-012 / FR-014), `reason == ""` when `status == ok`, hints array always present (SC-015), each hint code in the v1.0 registry, side-effect-free assertion (no audit row, no scan triggered — FR-045)
+- [X] T022 [P] [US1] Contract test for `app.dashboard` in `tests/contract/test_app_dashboard.py`. Covers all 7 count surfaces from FR-016, recents structure (FR-017), `recent_limit` bounds `[1, 50]` and out-of-bounds → `validation_failed.details.field == "recent_limit"`, hints array always present, no global lock (FR-018)
 - [X] T023 [US1] Integration test `tests/integration/test_story1_dashboard_bootstrap.py`. Walks the quickstart Story-1 flow against a real daemon fixture, asserts SC-002 ≤500 ms wall-clock from `app.hello` send to `app.dashboard` response receive (no warmed caches), asserts SC-001 (no subprocess invocation, no log scraping), asserts SC-008 token redaction in JSONL. **10 tests passing** including SC-002 worst-of-5 (Round-4 Q52) and SC-008. Surfaced two spec/implementation drifts in the process — see T097, T098 below.
 
 ### Implementation for User Story 1
@@ -86,7 +86,7 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 - [X] T029 [US1] `app.dashboard` handler in `src/agenttower/app_contract/dashboard.py`. Composes counts for all 7 surfaces per FR-016 using existing FEAT-003..010 DAOs, compact recents per FR-017 using `view_models` compact builders (T015), and hints via shared emission helper from T027. No global lock (FR-018). Validates `recent_limit` bounds. Registered via dispatcher
 - [X] T030 [P] [US1] SC-002 latency benchmark in `tests/integration/test_story1_dashboard_bootstrap.py` (folded into T023). **Round-4 Block H Q52 superseded the original wording** (p95 over 20 trials → worst across 5 trials). Test asserts worst-of-5 ≤ 500 ms wall-clock from `app.hello` send to `app.dashboard` response receive.
 
-**Checkpoint**: User Story 1 fully functional and SC-002 budget met. App can bootstrap and render a dashboard. MVP boundary reached.
+**Checkpoint**: ✅ User Story 1 complete — `app.preflight/hello/readiness/dashboard` shipped, SC-002 budget met. T019–T022 (US1 contract tests) shipped as `tests/unit/test_app_contract_smoke.py` (the US1 smoke suite) + `tests/integration/test_story1_dashboard_bootstrap.py` rather than per-method `tests/contract/test_app_*.py` files — same `tests/unit/` vs `tests/contract/` reconciliation noted in `plan.md` §Testing; no coverage gap.
 
 ---
 
@@ -114,7 +114,7 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 - [X] T041 [US2] `app.agent.register_from_pane` — shipped in `src/agenttower/app_contract/mutations.py`. FR-028a full 6-field identity match, FR-028b attach_log+inactive guard, FR-028c parent_agent_id, FR-028d label normalization. Calls the FEAT-006 `register_agent` service layer (NOT the CLI entry); emits an `agent_registered` audit row via `audit.emit_app_mutation()` (T013); returns the post-state `AgentViewModel`; `pane_already_registered` with the existing `agent_id`.
 - [X] T042 [P] [US2] SC-004 latency benchmark — shipped as `test_story2_adopt_roundtrip_sc004_within_2s` in `tests/integration/test_story2_adopt_roundtrip.py`: asserts the 4-call adopt chain sum ≤ 2 s (Round-4 Q53 superseded the original "p95 over 10 trials" wording with a sum-of-4-calls budget).
 
-**Checkpoint**: ✅ User Story 2 fully functional and verified — 12 of 30 v1.0 `app.*` methods shipped (US1 + US2). The app can scan, list panes/agents, and adopt panes into agents structurally. The brief's "adopt-existing-panes" MVP target is hit. 238 US2 tests pass; `app_contract` package coverage 98%.
+**Checkpoint**: ✅ User Story 2 fully functional and verified — 12 of 32 v1.0 `app.*` methods shipped (US1 + US2). The app can scan, list panes/agents, and adopt panes into agents structurally. The brief's "adopt-existing-panes" MVP target is hit. 238 US2 tests pass; `app_contract` package coverage 98%.
 
 ---
 
@@ -128,8 +128,8 @@ Single Python package at repo root: `src/agenttower/` plus `tests/`. All file pa
 
 - [X] T043 [P] [US3] Contract test `app.container.list` / `.detail` in `tests/contract/test_app_containers.py`. Default ordering by `name ASC`, filter by `state ∈ {active, inactive, degraded_scan}`, `degraded_scan` semantics per FR-016a (SC-026), `not_found` on detail miss
 - [X] T044 [P] [US3] Contract test `app.log_attachment.list` / `.detail` in `tests/contract/test_app_log_attachments.py`. Default ordering by `last_status_at DESC` (Round-6: FEAT-007 column — no `last_output_at`), filter by `agent_id`, `status`
-- [X] T045 [P] [US3] Contract test `app.event.list` / `.detail` in `tests/contract/test_app_events.py`. Default ordering by `event_id DESC` (relies on FEAT-008 monotonicity assumption from spec.md Assumptions), filter by `event_type`, `origin`, `agent_id`, `since`/`until` (FR-024); exact-match filter enforcement per FR-024a (SC-018)
-- [X] T046 [P] [US3] Contract test `app.queue.list` / `.detail` in `tests/contract/test_app_queue.py`. Default ordering `(state_priority, created_at) ASC` per FR-021a (SC-016 normative mapping); filter by `state`, `origin`, `route_id`, `target_agent_id`, `since`/`until`; `queue_message_not_found` on detail miss
+- [X] T045 [P] [US3] Contract test `app.event.list` / `.detail` in `tests/contract/test_app_events.py`. Default ordering by `event_id DESC` (relies on FEAT-008 monotonicity assumption from spec.md Assumptions), filter by `event_type`, `agent_id`, `since`/`until` (FR-024; Round-6 dropped `origin` — the FEAT-008 `events` row has no `origin` column); exact-match filter enforcement per FR-024a (SC-018)
+- [X] T046 [P] [US3] Contract test `app.queue.list` / `.detail` in `tests/contract/test_app_queue.py`. Default ordering `(state_priority, enqueued_at) ASC` per FR-021a (SC-016 normative mapping; Round-5 corrected `created_at`→`enqueued_at`); filter by `state`, `sender_agent_id`, `target_agent_id`, `since`/`until` (Round-6 dropped `origin`/`route_id` — no such columns); `queue_message_not_found` on detail miss
 - [X] T047 [P] [US3] Contract test `app.route.list` / `.detail` in `tests/contract/test_app_routes.py`. Default ordering `(created_at, route_id) ASC`; filter by `enabled: bool`; `route_not_found` on detail miss
 
 ### Tests for User Story 3 (mutations)
@@ -220,7 +220,7 @@ Most US4 functionality is already implemented by Phase 3 (US1 readiness + dashbo
 - [X] T080 SC-001 no-subprocess-invocation audit in `tests/contract/test_app_no_cli_subprocess.py`. Static-analysis test (and a runtime tracer) asserting that no test file under `tests/contract/` or `tests/integration/` invokes the `agenttower` CLI subprocess at any point
 - [X] T081 SC-008 token-redaction grep test in `tests/contract/test_app_token_redaction.py`. After running the full FEAT-011 test suite, `grep -r "app_session_token" ~/.local/state/opensoft/agenttower/audit.jsonl /tmp/agenttower_test_audit/*.jsonl` MUST return zero matches. The `app_session_id` IS allowed to appear
 - [X] T082 SC-010 fixture-comparison parity test in `tests/contract/test_app_cli_parity.py`. For each operator-parity method (`agent.update`, `log.attach/detach`, `queue.approve/delay/cancel`, `route.add/remove/update`, `register_from_pane`), run the action via the legacy CLI AND via `app.*` against an identical fixture; dump the SQLite row + JSONL audit row (excluding `origin` and `app_session_id` columns); assert byte-for-byte equality
-- [X] T083 SC-003 + SC-021 error-registry and per-code details registry contract test in `tests/contract/test_app_error_registry.py`. Registry-driven test: for every failure path covered by any other contract test, intercept the response, assert `error.code` matches `^[a-z][a-z0-9_]*$`, is in the 26-entry registry (FR-034), and `details` is always a JSON object (FR-033). Codes listed in the FR-034a per-code registry MUST carry the required keys with the documented types (`validation_failed → field, reason`; `app_contract_major_unsupported → daemon_app_contract_version, client_app_contract_major`; `payload_too_large → size_limit_bytes, actual_size_bytes`; etc.); codes not listed MUST carry `details == {}`
+- [X] T083 SC-003 + SC-021 error-registry and per-code details registry contract test in `tests/contract/test_app_error_registry.py`. Registry-driven test: for every failure path covered by any other contract test, intercept the response, assert `error.code` matches `^[a-z][a-z0-9_]*$`, is in the 27-entry registry (FR-034), and `details` is always a JSON object (FR-033). Codes listed in the FR-034a per-code registry MUST carry the required keys with the documented types (`validation_failed → field, reason`; `app_contract_major_unsupported → daemon_app_contract_version, client_app_contract_major`; `payload_too_large → size_limit_bytes, actual_size_bytes`; etc.); codes not listed MUST carry `details == {}`
 - [X] T084 SC-023 payload-caps contract test in `tests/contract/test_app_payload_caps.py`. Synthesize a >1 MiB NDJSON request line and assert the daemon returns `{ok: false, app_contract_version, error: {code: "payload_too_large", details: {size_limit_bytes: 1048576, actual_size_bytes: <observed>}}}` BEFORE any handler executes. Verify SQLite + JSONL state are unmodified after the rejection. Separately, walk every list method's default response and worst-case response (limit=200, recent_limit=50) and assert response NDJSON line size stays well under 8 MiB. Verifies FR-003a + SC-023
 - [X] T085 SC-025 cursor-opacity contract test in `tests/contract/test_app_cursor_opacity.py`. Against a fixture with > 200 rows per list method, paginate fully with default `limit` and assert: (a) each `cursor_next` is opaque (no parseable semantics required from the client), (b) successive pages are contiguous and non-overlapping covering exactly the source set, (c) a tampered or truncated cursor returns `validation_failed.details.field == "cursor_next"`, (d) a stale cursor from a different `order_by`/filter combination is rejected with the same code, (e) `cursor_next` length never exceeds 512 chars. Verifies FR-020 + FR-020b + SC-025
 
@@ -234,7 +234,7 @@ Most US4 functionality is already implemented by Phase 3 (US1 readiness + dashbo
 
 - [X] T089 [P] Update `docs/architecture.md` with a new "App Backend Contract (FEAT-011)" section documenting the namespace, host-only invariant, and dispatch unification
 - [X] T090 [P] Add `docs/app-contract-client-guide.md` — synthetic-client developer guide using the same NDJSON framing the future Flutter/Rust/Swift/Electron client will use
-- [X] T091 Update `CHANGELOG.md` with FEAT-011 entry, listing the 30 new `app.*` methods, the new closed-set error codes, and the `app_contract_version = "1.0"` ship marker
+- [X] T091 Update `CHANGELOG.md` with FEAT-011 entry, listing the 32 new `app.*` methods, the new closed-set error codes, and the `app_contract_version = "1.0"` ship marker
 
 ### Final validation
 
@@ -253,10 +253,43 @@ Most US4 functionality is already implemented by Phase 3 (US1 readiness + dashbo
 
 ## Drift discoveries from T023 socket-level integration test (added 2026-05-19)
 
-These two items are spec/implementation mismatches surfaced when T023 exercised the real Unix-socket path end-to-end. Track separately from the main task list because they affect already-shipped FEAT-002 surface area.
+These two items are spec/implementation mismatches surfaced when T023 exercised the real Unix-socket path end-to-end. Track separately from the main task list because they affect already-shipped FEAT-002 surface area. (Numbering note: there are deliberately no T095/T096 — these drift items were numbered T097/T098 to avoid colliding with any future main-sequence task.)
 
 - [X] T097 **Session-lifecycle wording drift (FR-008 / FR-008a).** Resolved 2026-05-19. spec.md FR-008, FR-008a, FR-008b, FR-031a, SC-013, SC-031, SC-037, and the round-4 Q23 clarification block were rewritten to describe the per-token persistence model that the implementation actually provides (sessions in process-wide `SessionRegistry` keyed by token; not connection-bound; invalidated only by daemon restart or `invalidate()`). FR-008b now specifies the v1.0 reject-not-evict mode of the 8-session cap with LRU eviction reserved as an additive minor. `SessionRegistry.create()` now raises `SessionCapExceeded` at the cap; `app.hello` translates that to `validation_failed.details = {field: "app.hello", reason: "too_many_sessions"}`. New smoke test `test_hello_rejects_9th_concurrent_session` covers the gate.
 - [X] T098 **Legacy `unknown_method` envelope is missing FR-033 `details: {}`.** Resolved 2026-05-19. Added `is_app_method()` and `make_unknown_method_envelope()` to `app_contract/dispatcher.py`. `socket_api/server.py` now detects `app.*` method names that miss the DISPATCH table and emits the FR-033-compliant envelope (carries `app_contract_version` and `error.details = {}`); legacy method names keep their FEAT-002 envelope shape per FR-002. Coverage: unit tests `test_t098_is_app_method_classifier` + `test_t098_make_unknown_method_envelope_shape` + `test_app_dispatcher_unknown_method_envelope_for_app_method`; integration tests `test_unknown_app_method_returns_unknown_method` (asserts FR-033 shape) + `test_unknown_legacy_method_keeps_legacy_envelope` (asserts FR-002 invariant). Also added integration tests for FR-003b wire-framing (stray CR, embedded NUL, trailing content).
+
+---
+
+## Round-4/5/6 Success-Criteria Coverage Map (retro)
+
+`tasks.md` (T001–T094) was generated before the Round-4 checklist-walkthrough
+clarifications and the Round-5/6 schema corrections. Those rounds added
+SC-028..SC-038 and the FRs FR-003b, FR-008a/b, FR-028a–d, FR-030d/e,
+FR-044a–c to `spec.md`. The work was implemented **inline** during the US1–US3
+slices rather than via numbered tasks; this table retro-maps each new success
+criterion to the test(s) that verify it so the spec↔test mapping is complete.
+
+| SC | Behavior | Verifying test(s) | Status |
+|----|----------|-------------------|--------|
+| SC-028 | `malformed_request` wire framing (stray CR / NUL / trailing / decode / empty) | `test_story1_dashboard_bootstrap.py` (wire-framing tests), `test_app_contract_smoke.py` | [X] |
+| SC-029 | Every method at `supported_minor_range.max` is dispatch-wired | `test_dispatch_table_stability.py` (32-method lock-in) | [X] |
+| SC-030 | Scan coalescing (FR-030d) + 4-in-flight cap (FR-030e) | `test_app_scan_handlers.py`, `test_app_foundational_stores.py` | [X] |
+| SC-031 | 8-session cap → `validation_failed.too_many_sessions` | `test_app_contract_smoke.py::test_hello_rejects_9th_concurrent_session` | [X] |
+| SC-032 | Audit best-effort under JSONL outage (FR-044b) | `test_app_foundational_stores.py` (outage tests) | [X] |
+| SC-033 | No `socket.AF_INET` import in `app_contract/**` | `test_app_no_network_listener.py` (runtime) + grep audit | [X]* |
+| SC-034 | Adopt full 6-field pane-identity match (FR-028a) | `test_app_adopt.py` (per-field mismatch parametrize) | [X] |
+| SC-035 | Adopt `attach_log` + inactive container → `container_inactive` (FR-028b) | `test_app_adopt.py` | [X] |
+| SC-036 | Adopt nonexistent `parent_agent_id` → `agent_not_found` (FR-028c) | `test_app_adopt.py` | [X] |
+| SC-037 | Each `app.hello` issues a fresh token | `test_app_contract_smoke.py`, `test_story1_dashboard_bootstrap.py` | [X] |
+| SC-038 | `routing_disabled` vs `permission_denied` split on `app.send_input` (FR-031) | `test_app_us3_mutations.py` | [X] |
+
+`* SC-033`: the runtime no-network-listener test (T079) covers the invariant; a
+dedicated static `grep socket.AF_INET` test is a recommended low-priority
+addition (no FEAT-011 module imports `AF_INET` — verified manually).
+
+Round-5/6 FR corrections (queue-state vocabulary, US3 ViewModel column names)
+are verified by `test_app_view_models.py`, `test_app_us3_reads.py`,
+`test_app_dashboard.py`, and the corrected contract artifacts.
 
 ---
 
@@ -374,8 +407,8 @@ With 3 developers:
 
 ## Notes
 
-- **Tests are MANDATORY** for FEAT-011. Every SC names a contract or integration test. The `tests/contract/` and `tests/integration/` files enumerated in `plan.md` map 1:1 to tasks here.
-- The 30 `app.*` methods enumerated in `contracts/app-methods.md` are all required at v1.0. `capability_flags = {}` reflects "every method is mandatory" (FR-039).
+- **Tests are MANDATORY** for FEAT-011. Every SC (SC-001..SC-038) names a contract or integration test. FEAT-011 tests shipped under `tests/unit/test_app_*.py` + `tests/integration/test_*.py`; the `tests/contract/` paths in older task lines are the deferred organizational layout noted in `plan.md` §Testing (no coverage gap).
+- The 32 `app.*` methods enumerated in `contracts/app-methods.md` are all required at v1.0. `capability_flags = {}` reflects "every method is mandatory" (FR-039).
 - All mutations dispatch into the SAME service layer the legacy CLI methods use (FR-004). Tasks T041, T060..T065 must call service-layer functions, never the CLI entry points.
 - The `app_contract` package adds **zero existing-module modifications** except T002 (the single dispatcher registration call).
 - `[P]` tasks = different files, no dependencies on incomplete tasks. Verify file paths don't collide before marking [P].
