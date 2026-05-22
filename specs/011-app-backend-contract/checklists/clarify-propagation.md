@@ -37,7 +37,7 @@ These were locked before plan generation; this section is a sanity audit.
 - [X] CHK021 **Filter operators = exact match only at v1.0**: present in FR-024a, in `closed-sets.md` Filter Operator Vocabulary section, in `app-methods.md` per-entity filter table? [Consistency, Spec §FR-024a, Contracts §closed-sets, §app-methods]
 - [X] CHK022 **`scan_state.expired` removed from v1.0**: FR-030c enum trimmed, `closed-sets.md` Scan State trimmed, `app-methods.md` `app.scan.status` response trimmed, data-model.md Scan Record + Closed Sets trimmed? [Consistency, Spec §FR-030c, Contracts §closed-sets, §app-methods, DataModel]
 - [X] CHK023 **Payload caps (1 MiB request, 8 MiB response)**: present in FR-003a, in `closed-sets.md` Payload Size Caps section, in `app-methods.md` top-level payload gate, in plan.md Constraints? [Consistency, Spec §FR-003a, Contracts §closed-sets, §app-methods, Plan §Constraints]
-- [X] CHK024 **`payload_too_large` closed-set code**: present in FR-034 (26 codes total), in `error-codes.md` with `details = {size_limit_bytes: int, actual_size_bytes: int}`? [Consistency, Spec §FR-034, §FR-034a, Contracts §error-codes]
+- [X] CHK024 **`payload_too_large` closed-set code**: present in FR-034 (27 codes total), in `error-codes.md` with `details = {size_limit_bytes: int, actual_size_bytes: int}`? [Consistency, Spec §FR-034, §FR-034a, Contracts §error-codes]
 - [X] CHK025 **`payload_too_large` is a possible failure for every method**: stated at top level of `app-methods.md` (not per-method, but globally)? [Consistency, Contracts §app-methods, Spec §FR-003a]
 
 ## Drift Detection (Negative)

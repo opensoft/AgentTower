@@ -21,7 +21,7 @@
 
 ## `contracts/error-codes.md` Completeness & Consistency
 
-- [X] CHK013 Are **all 26 v1.0 codes** listed in error-codes.md with consistent spelling and ordering? [Completeness, Contracts §error-codes]
+- [X] CHK013 Are **all 27 v1.0 codes** listed in error-codes.md with consistent spelling and ordering? [Completeness, Contracts §error-codes]
 - [X] CHK014 Are **typical triggers** documented per code (not just the name)? [Clarity, Contracts §error-codes]
 - [X] CHK015 Is the **per-code `details` registry** complete for every code with structured details (12 entries)? [Completeness, Contracts §error-codes, Spec §FR-034a]
 - [X] CHK016 Is the **`details == {}` set** (14 codes) explicitly enumerated so a contract test can assert membership? [Completeness, Contracts §error-codes]

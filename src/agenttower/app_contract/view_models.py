@@ -298,9 +298,10 @@ def _get(row: Any, name: str, *, default: Any = None) -> Any:
     except (AttributeError, TypeError):
         pass
     try:
-        return row[name]
+        value = row[name]
     except (KeyError, TypeError, IndexError):
         return default
+    return value if value is not None else default
 
 
 def _coerce_int(value: Any) -> int:

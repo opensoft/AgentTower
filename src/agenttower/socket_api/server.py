@@ -98,6 +98,23 @@ def _make_unknown_app_method_envelope(method: str) -> dict[str, Any]:
     return _app_dispatcher.make_unknown_method_envelope(method)
 
 
+def _make_host_only_envelope() -> dict[str, Any]:
+    """Build the FR-042 ``host_only`` envelope for an ``app.*`` call from a
+    bench-container peer. Used by the unknown-app-method path so a
+    container peer can't enumerate which ``app.*`` names exist by
+    probing for ``unknown_method`` vs ``host_only`` — FR-042 says every
+    ``app.*`` call from a container peer is rejected with ``host_only``.
+    """
+    from ..app_contract import envelope as _app_envelope
+    from ..app_contract.errors import HOST_ONLY
+
+    return _app_envelope.failure(
+        HOST_ONLY,
+        "app.* namespace is host-only; bench-container callers refused",
+        details={},
+    )
+
+
 def _make_payload_too_large_envelope(observed_size_bytes: int) -> dict[str, Any]:
     """Build the FR-003a / FR-034a ``payload_too_large`` envelope for an
     oversized ``app.*`` request line.
@@ -328,6 +345,31 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             # legacy methods stay on the FEAT-002 envelope.
             from ..app_contract.dispatcher import is_app_method
             if is_app_method(method):
+                # FR-042: apply the host-only gate BEFORE reporting that
+                # the method is unknown. A bench-container peer probing
+                # ``app.foo`` would otherwise learn the method doesn't
+                # exist while ``app.dashboard`` returns ``host_only`` —
+                # enumeration of the ``app.*`` namespace. With the gate
+                # applied here, container peers get ``host_only`` for
+                # every ``app.*`` name, known or not.
+                connection = getattr(self, "connection", None)
+                peer_pid = (
+                    _peer_pid_from_socket(connection)
+                    if connection is not None
+                    else _NO_PEER_PID
+                )
+                peer_uid = (
+                    _peer_uid_from_socket(connection)
+                    if connection is not None
+                    else _NO_PEER_UID
+                )
+                try:
+                    _set_request_peer_context(peer_pid=peer_pid)
+                    from ..app_contract.host_only import is_host_peer
+                    if not is_host_peer(peer_uid):
+                        return _make_host_only_envelope()
+                finally:
+                    _clear_request_peer_context()
                 return _make_unknown_app_method_envelope(method)
             return errors.make_error(errors.UNKNOWN_METHOD, f"unknown method: {method}")
 
