@@ -265,11 +265,26 @@ def test_dispatch_accepts_valid_ping() -> None:
     assert envelope == {"ok": True, "result": {}}
 
 
+def test_dispatch_unknown_app_method_from_container_peer_returns_host_only() -> None:
+    """FR-042: a bench-container peer probing an unknown ``app.*`` method
+    must get ``host_only`` rather than ``unknown_method``, otherwise the
+    method namespace is enumerable (known names ⇒ host_only, unknown ⇒
+    unknown_method). With no SO_PEERCRED credentials (the `_make_handler`
+    test seam constructs the handler without `setup()`), ``is_host_peer``
+    treats the peer as non-host and the dispatcher must short-circuit at
+    the host-only gate."""
+    envelope = _dispatch_line(b'{"method": "app.foo.bar"}\n')
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "host_only"
+    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["error"]["details"] == {}
+
+
 def test_dispatch_handles_internal_exception_gracefully() -> None:
     handler, _ = _make_handler(b'{"method": "ping"}\n')
 
     def boom(ctx, params, peer_uid=-1):  # noqa: ANN001
-        raise RuntimeError("kaboom")
+        raise RuntimeError("kaboom-secret-path-/etc/shadow")
 
     from agenttower.socket_api.methods import DISPATCH
 
@@ -282,7 +297,14 @@ def test_dispatch_handles_internal_exception_gracefully() -> None:
 
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == errors.INTERNAL_ERROR
-    assert "RuntimeError" in envelope["error"]["message"]
+    # FEAT-011 review-remediation (H3): the client-visible message MUST NOT
+    # echo the exception type or message — those can carry filesystem paths,
+    # SQL fragments, or request content. Detail goes to daemon stderr only.
+    message = envelope["error"]["message"]
+    assert "RuntimeError" not in message
+    assert "kaboom-secret-path" not in message
+    assert "/etc/shadow" not in message
+    assert "see daemon log" in message
 
 
 def test_handle_writes_envelope_on_uid_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:

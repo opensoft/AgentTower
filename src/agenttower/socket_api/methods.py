@@ -2176,3 +2176,12 @@ DISPATCH: dict[str, Handler] = {
     "routes.enable": _routes_enable,
     "routes.disable": _routes_disable,
 }
+
+# FEAT-011: merge the ``app.*`` namespace into DISPATCH. This import lives
+# AFTER the DISPATCH literal so every FEAT-002 name (``DaemonContext``,
+# ``_NO_PEER_UID``, ``_peer_is_host_process``, ``_request_peer_pid``) is
+# already defined when ``app_contract.host_only`` imports them. The merge
+# is purely additive — no legacy method binding is altered (FR-002).
+from agenttower.app_contract.dispatcher import APP_DISPATCH  # noqa: E402
+
+DISPATCH.update(APP_DISPATCH)

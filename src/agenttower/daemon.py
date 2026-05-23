@@ -32,6 +32,7 @@ from .socket_api.lifecycle import (
     EVENT_DAEMON_SHUTDOWN,
     EVENT_DAEMON_STARTING,
     EVENT_ERROR_FATAL,
+    EVENT_HOST_PEER_CHECK_BYPASSED,
     LifecycleLogger,
 )
 from .socket_api.methods import DaemonContext
@@ -773,6 +774,24 @@ def _run(args: argparse.Namespace) -> int:
             pid=os.getpid(),
             state_dir=str(state_dir),
         )
+
+        # FEAT-011 review-remediation (H1): the AGENTTOWER_TEST_FORCE_HOST_PEER
+        # test seam makes the FR-042 host-only peer check return True for any
+        # caller — a process-wide bypass of the app.* host-only gate. It is
+        # only meant for the integration suite on container-shaped CI runners.
+        # If it is set on a real daemon, surface a loud, auditable warn-level
+        # lifecycle event rather than letting the bypass be silent.
+        if os.environ.get("AGENTTOWER_TEST_FORCE_HOST_PEER") == "1":
+            logger.emit(
+                EVENT_HOST_PEER_CHECK_BYPASSED,
+                level="warn",
+                pid=os.getpid(),
+                detail=(
+                    "AGENTTOWER_TEST_FORCE_HOST_PEER=1 is set; the app.* "
+                    "host-only peer check (FR-042) is bypassed process-wide. "
+                    "This must not be set on a production daemon."
+                ),
+            )
 
         if not _recover_stale_artifacts(paths, pid_path, logger):
             return 1

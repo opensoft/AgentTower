@@ -697,6 +697,52 @@ Example response:
 The socket is mounted into bench containers. File permissions should restrict
 access to the host user.
 
+### 19.1 App Backend Contract (FEAT-011)
+
+FEAT-011 adds a versioned, app-facing method namespace — `app.*` — over the
+**same** Unix socket, so a packaged desktop control panel (first target: a
+Flutter desktop app) can operate AgentTower without scraping human CLI output.
+
+- **Additive façade, not a parallel path.** The legacy FEAT-002..FEAT-010
+  methods (`ping`, `status`, `list_agents`, `register_self`, `queue *`,
+  `route *`, …) are unchanged. Every `app.*` method dispatches into the same
+  daemon-internal service layer the CLI uses, so validation, persistence, and
+  JSONL audit behavior are identical regardless of caller surface.
+- **Host-only.** The entire `app.*` namespace is rejected for bench-container
+  peers with the closed-set code `host_only` (FR-042); the legacy namespace
+  stays available to in-container thin clients. The host-vs-container
+  distinction reuses the FEAT-009 peer-detection mechanism.
+- **Versioned.** `app_contract_version` is `MAJOR.MINOR` (`1.0` at ship).
+  `app.hello` advertises it plus a `supported_minor_range`; a major mismatch
+  is refused at `app.hello` with `app_contract_major_unsupported` and no
+  session is issued. Within a major only additive change is allowed.
+- **Sessions.** `app.hello` issues an opaque `app_session_token` held in a
+  process-wide in-memory `SessionRegistry` (cap 8 concurrent). The token is
+  re-presented in `params` on every later call. It is connection-independent
+  (FEAT-002 is one-request-per-connection), carries no user identity, and
+  rides the existing same-host-UID + socket-permission trust model.
+- **Surface (32 methods at v1.0).** Bootstrap (`app.preflight`, `app.hello`);
+  health (`app.readiness`, `app.dashboard`); discovery scans
+  (`app.scan.{containers,panes,status}`); 7 entity read pairs
+  (`app.<entity>.{list,detail}` for container, pane, agent, log_attachment,
+  event, queue, route); the adopt mutation `app.agent.register_from_pane`;
+  and operator mutations (`app.agent.update`, `app.log.{attach,detach}`,
+  `app.send_input`, `app.queue.{approve,delay,cancel}`,
+  `app.route.{add,remove,update}`).
+- **Uniform envelopes.** Every response is `{ok, app_contract_version,
+  result}` or `{ok:false, app_contract_version, error:{code, message,
+  details}}`. `error.code` is drawn from a 27-entry closed set; `details` is
+  always an object.
+- **No new listener, no new persisted secret.** FEAT-011 introduces no TCP /
+  HTTP / WebSocket listener and no new persisted credential or token — the
+  three in-memory stores (session table, scan registry, idempotency map) are
+  all lost on daemon restart.
+
+Implementation lives in `src/agenttower/app_contract/`; the `APP_DISPATCH`
+map is merged into the FEAT-002 `DISPATCH` table at module load. See
+`specs/011-app-backend-contract/` for the full spec, contracts, and the
+`app-contract-client-guide.md` for client developers.
+
 ## 20. CLI MVP
 
 Required MVP commands:

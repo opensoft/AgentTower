@@ -67,6 +67,103 @@ def _peer_pid_from_socket(conn: _socket.socket) -> int:
 
 
 # ---------------------------------------------------------------------------
+# FEAT-011 envelope helpers (FR-003b, T098)
+# ---------------------------------------------------------------------------
+
+
+def _make_malformed_request_envelope(reason: str) -> dict[str, Any]:
+    """Build the FEAT-011 ``malformed_request`` envelope (FR-003b).
+
+    Lazy-imports ``app_contract.envelope`` to keep the module-load free
+    of a cycle (``socket_api/server.py`` imports ``methods.py``, which
+    imports ``app_contract/dispatcher.py``, which imports
+    ``app_contract/envelope.py``).
+    """
+    from ..app_contract import envelope as _app_envelope
+    from ..app_contract.errors import MALFORMED_REQUEST
+
+    return _app_envelope.failure(
+        MALFORMED_REQUEST,
+        f"malformed request line ({reason})",
+        details={"reason": reason},
+    )
+
+
+def _make_unknown_app_method_envelope(method: str) -> dict[str, Any]:
+    """Build the FR-033-compliant ``unknown_method`` envelope for ``app.*``
+    methods not present in DISPATCH (T098).
+    """
+    from ..app_contract import dispatcher as _app_dispatcher
+
+    return _app_dispatcher.make_unknown_method_envelope(method)
+
+
+def _make_host_only_envelope() -> dict[str, Any]:
+    """Build the FR-042 ``host_only`` envelope for an ``app.*`` call from a
+    bench-container peer. Used by the unknown-app-method path so a
+    container peer can't enumerate which ``app.*`` names exist by
+    probing for ``unknown_method`` vs ``host_only`` — FR-042 says every
+    ``app.*`` call from a container peer is rejected with ``host_only``.
+    """
+    from ..app_contract import envelope as _app_envelope
+    from ..app_contract.errors import HOST_ONLY
+
+    return _app_envelope.failure(
+        HOST_ONLY,
+        "app.* namespace is host-only; bench-container callers refused",
+        details={},
+    )
+
+
+def _make_payload_too_large_envelope(observed_size_bytes: int) -> dict[str, Any]:
+    """Build the FR-003a / FR-034a ``payload_too_large`` envelope for an
+    oversized ``app.*`` request line.
+
+    ``actual_size_bytes`` is a **lower bound**, not the true line length:
+    the reader stops at ``MAX_REQUEST_BYTES + 1`` bytes (it deliberately
+    does NOT drain the rest of the socket — draining would defeat the
+    size cap), so a multi-megabyte request still reports
+    ``actual_size_bytes`` ≈ ``MAX_REQUEST_BYTES + 1``. Clients should read
+    it as "at least this many bytes". The ``size_limit_bytes`` field is
+    the effective cap actually enforced here (FEAT-002's
+    ``MAX_REQUEST_BYTES``); note FR-003a's contractual 1 MiB ceiling is
+    higher — the FEAT-002 64 KiB cap binds first (documented gap, see
+    the FR-003b commit message + issue #20-adjacent follow-up).
+    """
+    from ..app_contract import envelope as _app_envelope
+    from ..app_contract.errors import PAYLOAD_TOO_LARGE
+
+    return _app_envelope.failure(
+        PAYLOAD_TOO_LARGE,
+        f"request line exceeds the {MAX_REQUEST_BYTES}-byte cap "
+        f"(observed at least {observed_size_bytes} bytes)",
+        details={
+            "size_limit_bytes": MAX_REQUEST_BYTES,
+            "actual_size_bytes": observed_size_bytes,
+        },
+    )
+
+
+def _line_looks_like_app_method(line_bytes: bytes) -> bool:
+    """Peek-detect whether an unparseable / oversized request line names
+    an ``app.*`` method. Heuristic — we can't json.loads the line (it's
+    either too big or malformed), so we substring-scan the first ~1 KB
+    for ``"method":"app.``.
+
+    False positives are bounded to lines that genuinely contain that
+    literal string in a non-method field (e.g., a payload value), which
+    is acceptable: surfacing a FEAT-011 envelope to such a peer is a
+    strict superset of the legacy envelope (adds version + details),
+    and legacy clients can still parse ``ok: false`` + ``error.code``.
+    """
+    # Bound the scan to keep this cheap even on a 1 MiB line.
+    head = line_bytes[:2048]
+    # Strip whitespace tolerant matches: ``"method":"app.`` and
+    # ``"method": "app.`` (with optional space).
+    return b'"method":"app.' in head or b'"method": "app.' in head
+
+
+# ---------------------------------------------------------------------------
 # Request handler
 # ---------------------------------------------------------------------------
 
@@ -136,28 +233,97 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         except OSError:
             return errors.make_error(errors.INTERNAL_ERROR, "read failed")
 
+        # Peer closed without writing.
         if not line:
-            # Peer closed without writing; we still need to write *something*
-            # so the connection has a deterministic close, but a no-data peer
-            # is not a protocol violation. Return an internal_error envelope
-            # only if the underlying state is broken; otherwise stay silent.
             return errors.make_error(errors.BAD_JSON, "empty request")
 
-        if len(line) > MAX_REQUEST_BYTES or not line.endswith(b"\n"):
+        if len(line) > MAX_REQUEST_BYTES:
+            # FR-003a / FR-034a: ``app.*`` oversized lines emit the
+            # FEAT-011 ``payload_too_large`` envelope (carries
+            # ``size_limit_bytes`` + ``actual_size_bytes``). Legacy
+            # methods keep the FEAT-002 ``request_too_large`` shape per
+            # FR-002. Detection is best-effort substring peek since the
+            # line is too big to JSON-decode reliably.
+            if _line_looks_like_app_method(line):
+                return _make_payload_too_large_envelope(len(line))
             return errors.make_error(
                 errors.REQUEST_TOO_LARGE,
                 f"request line exceeds {MAX_REQUEST_BYTES} bytes",
             )
+        if not line.endswith(b"\n"):
+            # Short line missing the NDJSON terminator: this is a
+            # framing violation, not a size overflow. App-namespace
+            # callers get the FR-003b ``malformed_request`` envelope
+            # with a precise reason; legacy callers keep the FEAT-002
+            # ``bad_request`` shape per FR-002.
+            if _line_looks_like_app_method(line):
+                return _make_malformed_request_envelope("missing newline terminator")
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                "request line missing newline terminator",
+            )
 
+        # FR-003b wire-framing gate. Five cases are caught BEFORE handler
+        # dispatch and emitted in the FEAT-011 envelope with the
+        # ``malformed_request`` closed-set code and a short ``details.reason``:
+        # (a) stray ``\r`` byte, (b) embedded ``\x00`` byte, (e) empty line.
+        # Cases (c) trailing content + (d) JSON decode error are caught
+        # below post-decode. The FEAT-011 envelope is a strict superset of
+        # the legacy FEAT-002 shape (it adds ``app_contract_version`` and
+        # ``error.details``), so legacy clients still see ``ok: false`` +
+        # ``error.code/message`` they can parse; they just see an
+        # unfamiliar closed-set code, which is acceptable for inputs that
+        # were always malformed.
+        body = line[:-1]  # strip trailing \n for the byte checks below
+        if body == b"":
+            return _make_malformed_request_envelope("empty line")
+        if b"\r" in body:
+            return _make_malformed_request_envelope("stray CR")
+        if b"\x00" in body:
+            return _make_malformed_request_envelope("embedded NUL")
+
+        # Invalid UTF-8 and JSON decode errors:
+        # - ``app.*`` requests (detected via substring peek per
+        #   ``_line_looks_like_app_method``) get the FR-003b
+        #   ``malformed_request`` envelope so SC-028 is fully satisfied.
+        # - Legacy requests stay on the FEAT-002 ``bad_json`` envelope
+        #   to preserve the lock-in in ``test_socket_api_framing.py``
+        #   (FR-002: legacy CLI surface unchanged).
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError:
+            if _line_looks_like_app_method(line):
+                return _make_malformed_request_envelope("invalid utf-8")
             return errors.make_error(errors.BAD_JSON, "request is not UTF-8")
 
+        # FR-003b case (c)/(d): use raw_decode so we can distinguish
+        # "extra content after the first JSON object" from a clean
+        # parse failure.
+        text_stripped = text.lstrip()
+        decoder = json.JSONDecoder()
         try:
-            request = json.loads(text)
+            request, idx = decoder.raw_decode(text_stripped)
         except json.JSONDecodeError as exc:
+            if _line_looks_like_app_method(line):
+                return _make_malformed_request_envelope(
+                    f"json decode error: {exc.msg}"
+                )
             return errors.make_error(errors.BAD_JSON, f"json decode failed: {exc.msg}")
+        # Anything non-whitespace remaining is trailing content.
+        # FR-003b: app.* methods get malformed_request; legacy methods
+        # keep the FEAT-002 bad_request shape per FR-002. We detect via
+        # the parsed ``method`` since we now have the decoded request
+        # available (unlike the pre-decode malformed paths above).
+        if text_stripped[idx:].strip():
+            method_val = (
+                request.get("method") if isinstance(request, dict) else None
+            )
+            if isinstance(method_val, str) and method_val.startswith("app."):
+                return _make_malformed_request_envelope("trailing content")
+            return errors.make_error(
+                errors.BAD_REQUEST,
+                "request line has trailing content after the first JSON object",
+            )
 
         if not isinstance(request, dict):
             return errors.make_error(errors.BAD_REQUEST, "request must be a JSON object")
@@ -174,6 +340,37 @@ class _RequestHandler(socketserver.StreamRequestHandler):
 
         handler = DISPATCH.get(method)
         if handler is None:
+            # T098: ``app.*`` methods get the FR-033-compliant FEAT-011
+            # envelope (with ``app_contract_version`` + ``details: {}``);
+            # legacy methods stay on the FEAT-002 envelope.
+            from ..app_contract.dispatcher import is_app_method
+            if is_app_method(method):
+                # FR-042: apply the host-only gate BEFORE reporting that
+                # the method is unknown. A bench-container peer probing
+                # ``app.foo`` would otherwise learn the method doesn't
+                # exist while ``app.dashboard`` returns ``host_only`` —
+                # enumeration of the ``app.*`` namespace. With the gate
+                # applied here, container peers get ``host_only`` for
+                # every ``app.*`` name, known or not.
+                connection = getattr(self, "connection", None)
+                peer_pid = (
+                    _peer_pid_from_socket(connection)
+                    if connection is not None
+                    else _NO_PEER_PID
+                )
+                peer_uid = (
+                    _peer_uid_from_socket(connection)
+                    if connection is not None
+                    else _NO_PEER_UID
+                )
+                try:
+                    _set_request_peer_context(peer_pid=peer_pid)
+                    from ..app_contract.host_only import is_host_peer
+                    if not is_host_peer(peer_uid):
+                        return _make_host_only_envelope()
+                finally:
+                    _clear_request_peer_context()
+                return _make_unknown_app_method_envelope(method)
             return errors.make_error(errors.UNKNOWN_METHOD, f"unknown method: {method}")
 
         # ``self.connection`` is set by ``StreamRequestHandler.setup``; tests
@@ -194,7 +391,21 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             _set_request_peer_context(peer_pid=peer_pid)
             return handler(self.server.context, params, peer_uid)
         except Exception as exc:  # noqa: BLE001 — never crash the daemon (FR-021).
-            return errors.make_error(errors.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
+            # FEAT-011 review-remediation (H3): do NOT echo the exception
+            # type/message to the client — it can carry filesystem paths,
+            # SQL fragments, or request content. The full traceback goes to
+            # the daemon's stderr (operator-visible); the wire gets only a
+            # generic, constant message. ``app.*`` handlers are wrapped by
+            # ``app_contract.dispatcher._wrap_handler`` and rarely reach
+            # this catch-all; legacy methods land here on an unexpected
+            # raise. Either way the client must not see internal detail.
+            import traceback as _traceback
+
+            _traceback.print_exc()
+            return errors.make_error(
+                errors.INTERNAL_ERROR,
+                "internal error handling request; see daemon log",
+            )
         finally:
             _clear_request_peer_context()
 
