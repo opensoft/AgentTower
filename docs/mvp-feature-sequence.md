@@ -433,11 +433,124 @@ Out of scope (entire FEAT-010 envelope):
 - TUI.
 - Antigravity support.
 
+## FEAT-011: Local App Backend Contract
+
+Goal: make `agenttowerd` a stable local backend for a packaged desktop control
+panel instead of forcing the UI layer to scrape CLI output.
+
+Build:
+
+- A local-only app-facing API surface over the existing host daemon.
+- Structured read/write contracts for:
+  - daemon status
+  - containers
+  - panes
+  - agents
+  - log attachment state
+  - events
+  - queue
+  - routes
+- Explicit app bootstrap / health checks for:
+  - daemon reachable
+  - socket path valid
+  - bench connectivity healthy
+  - tmux/discovery state healthy enough to render actionable UI
+- Stable response envelopes suitable for a Flutter desktop app.
+- Local-only security model; no hosted web service and no remote SaaS control
+  plane.
+
+Acceptance:
+
+- A local desktop app can discover the daemon and render all primary
+  read-only/operator surfaces without parsing human CLI text.
+- App-triggered mutations use the same daemon-side validation and persistence
+  path as the CLI.
+- The app can fail fast with actionable diagnostics when the local runtime is
+  unavailable or misconfigured.
+
+Out of scope:
+
+- Desktop UI itself.
+- Managed tmux pane/session creation.
+- Hosted/multi-user control.
+
+## FEAT-012: Flutter Desktop Control Panel (Adopt Existing Sessions)
+
+Goal: ship the first operator-facing desktop control panel for existing bench
+containers and tmux panes.
+
+Build:
+
+- Flutter desktop app targeting Windows, macOS, and Linux.
+- Local-app views for:
+  - daemon/dashboard status
+  - discovered containers
+  - discovered panes
+  - registered agents
+  - log attachment state
+  - events
+  - queue
+  - routes
+- Actions for:
+  - scan containers/panes
+  - register a discovered pane
+  - set role / capability / label
+  - attach / detach log
+  - send input
+  - add / remove / enable / disable route
+- Clear distinction between:
+  - discovered but unmanaged panes
+  - registered/managed agents
+
+Acceptance:
+
+- A user can adopt an already-running tmux pane from the desktop app and turn it
+  into a registered AgentTower agent.
+- The app can manage the same end-to-end workflow the CLI demo proved:
+  register, attach log, observe events, send direct input, create route, and
+  inspect queue/audit state.
+- The app remains local-first and works without a hosted backend.
+
+Out of scope:
+
+- Creating new tmux sessions/panes.
+- Launching Claude/Codex automatically.
+- Remote/mobile control.
+
+## FEAT-013: Managed Session Creation and Lifecycle
+
+Goal: let AgentTower create and manage tmux-backed agent sessions directly,
+instead of only adopting panes that already exist.
+
+Build:
+
+- Create master/slave session/pane workflows from the app and daemon.
+- Opinionated templates such as:
+  - 1 master + 2 slaves
+  - 2 masters + 2 slaves
+- Launch configured agent commands into tmux panes.
+- Auto-register created panes as AgentTower agents.
+- Auto-attach logs for created receiver panes.
+- Add/remove managed panes from the control panel.
+
+Acceptance:
+
+- A user can create a working multi-agent tmux layout from the control panel
+  without manually creating panes first.
+- Created panes appear in the same registry/queue/route/event surfaces as
+  adopted panes.
+- Managed and adopted agents can coexist in the same bench container.
+
+Out of scope:
+
+- Hosted orchestration across many hosts.
+- Automatic semantic planning.
+- Non-tmux agent backends.
+
 ## Later Features
 
-These are intentionally after the first 10:
+These are intentionally after FEAT-013:
 
-- Open a new tmux pane or window attached to a selected container.
 - Inferred swarm parentage.
 - Shell helper integration for yodex, yolo, cta, and related tools.
 - TUI.
