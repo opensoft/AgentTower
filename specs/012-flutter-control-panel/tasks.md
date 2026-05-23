@@ -1,0 +1,442 @@
+---
+description: "Task list for FEAT-012 Flutter Desktop Control Panel"
+---
+
+# Tasks: Flutter Desktop Control Panel for Local Operator Workspaces
+
+**Input**: Design documents from `/specs/012-flutter-control-panel/`
+**Prerequisites**: plan.md ✓, spec.md ✓, research.md ✓, data-model.md ✓, contracts/ ✓, quickstart.md ✓
+
+**Tests**: Test tasks ARE included. plan.md establishes a per-US integration test plan (`apps/control_panel/integration_test/us[1-6]*.dart`) plus a Python mock-daemon harness (research R-17). Unit + widget + golden tests are also planned.
+
+**Organization**: Tasks are grouped by user story. Each US phase delivers an independently shippable + independently testable slice.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
+- Include exact file paths in descriptions
+
+## Path Conventions
+
+This is a multi-language monorepo (per plan.md §Structure Decision). Python sources at `src/agenttower/` are untouched. The Flutter app lives entirely under `apps/control_panel/`. All file paths in this document are repo-root-relative.
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Bootstrap the Flutter app project so foundational + story work can begin.
+
+- [ ] T001 Create directory tree `apps/control_panel/{lib,assets,test,integration_test,test_harness,tools}` per plan.md §Project Structure.
+- [ ] T002 Create `apps/control_panel/pubspec.yaml` declaring Flutter SDK 3.27 stable, Dart 3.5+, and dependencies enumerated in plan.md §Primary Dependencies (flutter_riverpod 2.x, freezed, json_serializable, flutter_markdown, url_launcher, local_notifier, window_manager, path_provider, logger, flutter_localizations, intl, package_info_plus). Also add dev_dependencies: build_runner, freezed, json_serializable, flutter_lints, alchemist, integration_test.
+- [ ] T003 [P] Pin Flutter version via `apps/control_panel/.fvm/fvm_config.json` (research R-01) and document the FVM use in `apps/control_panel/README.md`.
+- [ ] T004 [P] Create `apps/control_panel/analysis_options.yaml` enabling `flutter_lints` and project-specific rule overrides (no implicit-dynamic, strict-inference).
+- [ ] T005 [P] Create `apps/control_panel/l10n.yaml` configuring ARB → Dart codegen (research R-08) with `arb-dir: assets/l10n`, `template-arb-file: en.arb`, `output-localization-file: app_localizations.dart`.
+- [ ] T006 [P] Create `apps/control_panel/assets/l10n/en.arb` (initial MVP locale) with stub keys for the FR-002 / FR-076 / FR-082 banner messages and the FR-009 Settings labels.
+- [ ] T007 [P] Create `apps/control_panel/assets/icons/` and source severity icons (info/warning/high/critical) per research R-15 palette.
+- [ ] T008 [P] Create `apps/control_panel/tools/{package_windows.ps1,package_macos.sh,package_linux.sh,release_feed_check.dart}` as stub scripts (final packaging logic lands in Phase 9; the files are placeholders so the structure is auditable).
+- [ ] T009 Configure Flutter desktop targets (`flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop`) and run `flutter create --platforms=windows,macos,linux .` from `apps/control_panel/` to materialize platform stubs.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented. Includes daemon connectivity, persistence, domain-model scaffolding, app shell, theme/density tokens, and the test harness.
+
+**⚠️ CRITICAL**: No user story work can begin until Phase 2 is complete.
+
+### Daemon connection (FR-001/002/003/004/005, FEAT-011 contract)
+
+- [ ] T010 Implement `apps/control_panel/lib/core/daemon/socket_client.dart` — Unix-socket client using `dart:io` `Socket.connect(InternetAddress(path, type: InternetAddressType.unix), 0)`. Enforce FEAT-011 FR-003a per-line caps (1 MiB request / 8 MiB response) and FR-003b framing strictness (UTF-8, `\n`-terminated, reject `\r` / `\x00` / trailing content). Research R-04. Satisfies FR-001 + FR-060 (refuses any non-local target — no host/port field is exposed anywhere in the client API).
+- [ ] T011 [P] Implement `apps/control_panel/lib/core/daemon/envelope.dart` — parser for `{ok, app_contract_version, result}` and `{ok, app_contract_version, error: {code, message, details}}` envelopes (FEAT-011 FR-033).
+- [ ] T012 [P] Implement `apps/control_panel/lib/core/daemon/errors.dart` — Dart sealed class with one variant per FEAT-011 27-entry closed-set error code. Map each to user-facing copy via i18n keys. Highlight `app_contract_major_unsupported` and `host_only` per `contracts/app-methods-consumed.md` §8.
+- [ ] T013 Implement `apps/control_panel/lib/core/daemon/session.dart` — session lifecycle: call `app.hello` on connect, hold token in-memory only (FR-003), re-bootstrap on socket close / daemon restart / contract-version change / explicit Retry.
+- [ ] T014 Implement `apps/control_panel/lib/core/daemon/app_client.dart` — typed wrappers for the bootstrap-level FEAT-011 methods (`app.preflight`, `app.hello`, `app.readiness`, `app.dashboard`); per-story method wrappers land in their respective phases.
+- [ ] T015 [P] Implement `apps/control_panel/lib/core/daemon/contract_version.dart` — minimum-required-version registry per surface (FR-002) + Riverpod `Provider<ContractCompat>` driving FR-002 banner + per-surface degradation state.
+
+### Persistence (FR-003/061a/069/070/078/082)
+
+- [ ] T016 Implement `apps/control_panel/lib/core/persistence/paths.dart` — per-OS app-data directory resolution via `path_provider` `getApplicationSupportDirectory()` (research R-06): `~/.local/share/agenttower-control-panel/` (Linux), `~/Library/Application Support/agenttower-control-panel/` (macOS), `%LOCALAPPDATA%\agenttower-control-panel\` (Windows). Satisfies FR-061a per-OS-user isolation invariant — paths resolve per-user via OS conventions; no cross-user file access.
+- [ ] T017 Implement `apps/control_panel/lib/core/persistence/ux_state_repository.dart` — single owner of `ux-state.json` read/write (per data-model.md §3). Atomic write via `.tmp` + fsync + rename (research R-05). Debounced 250ms cadence + immediate flush on FR-082 close (with 500ms cap).
+- [ ] T018 [P] Implement `apps/control_panel/lib/core/persistence/migrations.dart` — forward-only `Migration {fromVersion, toVersion, transform}` framework per research R-21. Currently empty (schema_version = 1) but the framework MUST be present.
+- [ ] T019 [P] Implement `apps/control_panel/lib/core/persistence/compatibility.dart` — FR-070 "compatible app launch" check: same app major AND same `app_contract_version` major; on mismatch drop persisted UX state.
+- [ ] T020 [P] Implement `apps/control_panel/lib/core/persistence/corruption.dart` — corruption quarantine logic: rename `ux-state.json` to `ux-state.json.corrupt-<timestamp>` on parse failure (`contracts/ux-state.md` §2).
+
+### Logging + diagnostics (FR-074, research R-07/R-18)
+
+- [ ] T021 [P] Implement `apps/control_panel/lib/core/logging/rotating_file_logger.dart` — `logger` 2.x with custom `RotatingFileOutput`: 5 files × 10 MiB at `<app-data>/agenttower-control-panel/logs/control-panel.log.<N>`. Capture levels error/warn/info; redact session tokens, prompt bodies, operator notes.
+- [ ] T022 [P] Implement `apps/control_panel/lib/core/logging/uncaught_error_handler.dart` — top-level `runZonedGuarded` writing uncaught exceptions to the rotating log (research R-18). No remote crash reporter.
+- [ ] T023 [P] Implement `apps/control_panel/lib/core/logging/latency_capture.dart` — log entries for any operator action exceeding 200 ms p95 (research R-14). Document the threshold in code constants.
+
+### Settings + doctor (FR-009, research R-20)
+
+- [ ] T024 Implement `apps/control_panel/lib/core/config/settings_model.dart` — `Settings` freezed class with: daemonSocketPath, theme, density, notificationsGrouping, osNativeNotifications. Match data-model.md §2.1 SettingsValues. Satisfies FR-060 — the model deliberately omits any `host` or `port` field; only `daemonSocketPath` is configurable.
+- [ ] T025 Implement `apps/control_panel/lib/features/settings/settings_repository.dart` — load/save via the UX-state repository (T017).
+- [ ] T026 Implement `apps/control_panel/lib/features/settings/doctor.dart` — Riverpod `FutureProvider<DoctorReport>` fanning out the 6 FR-009 checks per research R-20: (1) socket reachable, (2) peer UID match, (3) `app_contract_version` satisfies surfaces, (4) app-data dir writable, (5) log file writable + not at cap, (6) OS-native notification permission (conditional on toggle).
+- [ ] T027 [P] Implement `apps/control_panel/lib/features/settings/diagnostics_bundle.dart` — "Copy diagnostics bundle" producing: doctor output + app version + `app_contract_version` + socket path + OS user + recent rotating log. No upload, no telemetry.
+
+### Theme, density, a11y (FR-009/066/067)
+
+- [ ] T028 [P] Implement `apps/control_panel/lib/ui/theme/color_tokens.dart` — Light + Dark + System tokens with WCAG AA contrast per research R-15. Include severity palette (info/warning/high/critical) keyed against theme background.
+- [ ] T029 [P] Implement `apps/control_panel/lib/ui/theme/density_tokens.dart` — Comfortable + Compact row-height / padding tokens.
+- [ ] T030 [P] Implement `apps/control_panel/lib/ui/a11y/focus_utils.dart` — focus-order helpers, visible-focus decoration, modal trap-free focus utilities per FR-066.
+- [ ] T031 [P] Wire `apps/control_panel/lib/core/l10n/` codegen output to `MaterialApp` `localizationsDelegates` + `supportedLocales` (en only at MVP) per research R-08. Satisfies FR-067 — English-only at MVP, all user-facing strings routed through the i18n layer so adding a locale later is a translation drop-in.
+
+### Notifications + shortcuts (FR-007/057/058/075)
+
+- [ ] T032 Implement `apps/control_panel/lib/core/notifications/grouping_rule.dart` — view-layer projection collapsing N ≥ 3 notifications sharing `event_class` + `agent_id` + severity ≤ warning within rolling 60s window per FR-057.
+- [ ] T033 [P] Implement `apps/control_panel/lib/core/notifications/os_native_dispatcher.dart` — `local_notifier` integration dispatching only high/critical severities when FR-058 toggle is enabled. Research R-10.
+- [ ] T034 [P] Implement `apps/control_panel/lib/core/shortcuts/shortcuts.dart` — `Shortcuts` widget binding Ctrl/Cmd+P (project switcher per FR-007) and Ctrl/Cmd+K (command palette per FR-075). Platform-aware key resolution.
+- [ ] T035 [P] Implement `apps/control_panel/lib/core/shortcuts/command_palette.dart` — `Ctrl/Cmd+K` palette supporting project-switch, workspace-switch, sub-view jump, doctor invocation, and (extensible) primary-action commands per FR-075 + research R-20.
+
+### Update indicator (FR-068)
+
+- [ ] T036 [P] Implement `apps/control_panel/lib/core/update/release_feed_check.dart` — one HTTPS GET to `https://releases.opensoft.one/agenttower/control-panel/latest.json` per app launch via `dart:io` `HttpClient` (research R-12). Parse feed JSON; on failure stay silent. Surface "update available" indicator state via Riverpod `Provider<UpdateState>`.
+
+### Domain model scaffolding (data-model.md §1-3)
+
+- [ ] T037 Configure `build_runner` in `apps/control_panel/build.yaml` and verify `flutter pub run build_runner watch` generates freezed/json_serializable code into `*.freezed.dart` and `*.g.dart`.
+- [ ] T038 [P] Implement `apps/control_panel/lib/domain/models/common_enums.dart` — shared enums referenced across entities (AgentRole, AgentState, MasterStatus, Stage, ExecutionStatus, AssignmentState, RunState, RunResult, DriftStatus, DriftSeverity, DriftSource, DriftConfidence, EntrypointType, BlockingLevel, DemoReadinessState, AttentionSeverity, NotificationSeverity, AttentionClass, HandoffMode, HandoffPriority, PolicySource, ResolvedExclusion, WorkItemKind, OnboardingMilestone, Workspace, ThemeMode, DensityMode, SortDirection). State values in prose use hyphenated form per FR-014; Dart enum variants use camelCase per Dart convention.
+- [ ] T039 [P] Implement `apps/control_panel/lib/domain/lifecycles/pane_state_validator.dart` — encode FR-014 transition matrix per data-model.md §1.4 as `bool isValidTransition(PaneState from, PaneState to)`.
+- [ ] T040 [P] Implement `apps/control_panel/lib/domain/lifecycles/drift_state_validator.dart` — encode FR-034 transition matrix per data-model.md §1.9.
+- [ ] T041 [P] Implement `apps/control_panel/lib/domain/lifecycles/handoff_state_validator.dart` — encode FR-044 transition matrix per data-model.md §1.6, including operator-vs-daemon authority rules.
+- [ ] T042 [P] Implement `apps/control_panel/lib/domain/lifecycles/validation_run_state_validator.dart` — encode FR-048 transition matrix per data-model.md §1.11, including "result meaningful only in terminal states".
+- [ ] T043 [P] Implement `apps/control_panel/lib/domain/lifecycles/feature_change_stage_validator.dart` — encode F7-b deferred-stage transition rule per data-model.md §1.5 (deferred → definition | spec_ready only).
+
+### App shell (FR-002/004/006/007/082)
+
+- [ ] T044 Implement `apps/control_panel/lib/main.dart` — entrypoint: `ProviderScope` + `window_manager` window-geometry restore per research R-11 + immediate-close behavior per FR-082.
+- [ ] T045 Implement `apps/control_panel/lib/app.dart` — `MaterialApp.router` with theme/density wiring (T028/T029), locale wiring (T031), and the routing tree (T046).
+- [ ] T046 [P] Implement `apps/control_panel/lib/routing/router.dart` — workspace + sub-view registry; top-level routes for agent_ops / project_specs / testing_demo / settings per FR-006.
+- [ ] T047 [P] Implement `apps/control_panel/lib/features/shell/global_banner.dart` — FR-002 contract-version-incompatible banner (global) and FR-076 first-launch-project-not-resolved banner (non-blocking, per-project).
+- [ ] T048 [P] Implement `apps/control_panel/lib/features/shell/project_switcher.dart` — Ctrl/Cmd+P shortcut and visible UI affordance per FR-007.
+- [ ] T049 [P] Implement `apps/control_panel/lib/features/shell/runtime_state_provider.dart` — Riverpod `Provider<RuntimeState>` distinguishing the 5 FR-004 states (runtime-unreachable, contract-version-incompatible, runtime-healthy-empty, runtime-healthy-populated, runtime-degraded).
+
+### Test harness (research R-17)
+
+- [ ] T050 Implement `apps/control_panel/test_harness/mock_daemon/server.py` — Python mock listening on a temp Unix socket, speaking FEAT-011 envelopes, parameterized by JSON fixture files. Supports per-test process spawn (no cross-test state).
+- [ ] T051 [P] Create `apps/control_panel/test_harness/mock_daemon/README.md` documenting fixture format + how integration tests invoke the harness.
+- [ ] T052 [P] Implement `apps/control_panel/test/helpers/mock_daemon_client.dart` — Dart-side helper that spawns the Python harness, connects, and exposes a typed API for tests.
+- [ ] T053 [P] Implement `apps/control_panel/test/helpers/fixture_builders.dart` — freezed-fixture builders for every data-model entity (Project, AdoptedAgent, Pane, Handoff, DriftSignal, ValidationEntrypoint, ValidationRun, Notification, AttentionItem, etc.). Default values + `.copyWith` per test scenario.
+
+**Checkpoint**: Foundation ready — user story implementation can now begin in parallel.
+
+---
+
+## Phase 3: User Story 1 - Adopt and operate existing agent panes (Priority: P1) 🎯 MVP
+
+**Goal**: Operator launches the app, discovers existing tmux panes through it, adopts one into a registered agent (label/role/capability/log-attach), watches events flow in, sends a direct prompt, and creates a route — all without ever opening a terminal.
+
+**Independent Test**: With `agenttowerd` running, a bench container present, and ≥1 live tmux pane, an operator can on a clean machine take the pane from "discovered but unmanaged" to "registered agent with attached log, observable events, a successful direct send, and ≥1 active route" — confirming each state transition via the corresponding view in the app.
+
+### Tests for User Story 1 (per plan.md integration_test/)
+
+- [ ] T054 [P] [US1] Write integration test `apps/control_panel/integration_test/us1_adopt_and_operate.dart` covering US1 §1-§6 acceptance scenarios against the mock-daemon harness (T050). Assert SC-001 budget: full 8-milestone onboarding walk (launch → first registered agent + log + event + send + route) completes in ≤ 10 minutes on the mock daemon.
+- [ ] T055 [P] [US1] Write integration test `apps/control_panel/integration_test/runtime_states.dart` exercising the FR-004 five-state distinction on every US1 sub-view. Assert SC-010 budgets: on simulated daemon outage, every live-data surface transitions to its `runtime-unreachable` empty state within 2 s; after daemon return + "Retry connection", live state reverts within 5 s; no surface displays stale data labelled as live during the outage.
+- [ ] T056 [P] [US1] Write integration test `apps/control_panel/integration_test/contract_version_skew.dart` covering FR-002 global banner + per-surface read-only mode (US1 acceptance scenario added by F1 / spec-quality-pass).
+
+### Domain models for US1
+
+- [ ] T057 [P] [US1] Implement `apps/control_panel/lib/domain/models/container.dart` — `Container` freezed class per data-model.md §1.16.
+- [ ] T058 [P] [US1] Implement `apps/control_panel/lib/domain/models/pane.dart` — `Pane` freezed class with PaneState enum + FR-014 transition reference per data-model.md §1.4.
+- [ ] T059 [P] [US1] Implement `apps/control_panel/lib/domain/models/adopted_agent.dart` — `AdoptedAgent` freezed class with role/capability/project_path/log_attachment/parent_agent_id/descendants_beyond_visible per data-model.md §1.2.
+- [ ] T060 [P] [US1] Implement `apps/control_panel/lib/domain/models/queue_row.dart` — `QueueRow` freezed class per data-model.md §1.16.
+- [ ] T061 [P] [US1] Implement `apps/control_panel/lib/domain/models/route.dart` — `Route` freezed class per data-model.md §1.16.
+- [ ] T062 [P] [US1] Implement `apps/control_panel/lib/domain/models/event.dart` — `Event` freezed class per data-model.md §1.16.
+
+### Daemon-client extensions for US1 (contracts/app-methods-consumed.md §1-6)
+
+- [ ] T063 [US1] Extend `apps/control_panel/lib/core/daemon/app_client.dart` with `app.container.list/.detail`, `app.pane.list/.detail`, `app.agent.list/.detail`, `app.log_attachment.list/.detail`, `app.event.list/.detail`, `app.queue.list/.detail`, `app.route.list/.detail` typed wrappers.
+- [ ] T064 [US1] Extend `app_client.dart` with US1 mutations: `app.agent.register_from_pane`, `app.agent.update`, `app.log.attach`, `app.log.detach`, `app.send_input`, `app.queue.approve/.delay/.cancel`, `app.route.add/.remove/.update`, `app.scan.containers/.panes/.status`. Satisfies FR-005 — every mutation goes through `app.*` daemon methods; the app NEVER invents or mutates domain state locally.
+
+### Agent Operations workspace (FR-011..FR-022)
+
+- [ ] T065 [US1] Implement `apps/control_panel/lib/features/agent_ops/dashboard/dashboard_view.dart` — FR-012 Dashboard (daemon reachability, contract version, container count, pane count by state, registered-agent count by state, blocked-queue count, recently-skipped-route count, recommended next action per FR-004 state).
+- [ ] T066 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/containers/containers_view.dart` — FR-013 Containers view (label, discovered status, project path).
+- [ ] T067 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/panes_view.dart` — FR-014 Panes view with the four-state vocabulary (discovered-and-unmanaged | discovered-and-registered | inactive/stale | discovery-degraded) and per-state next-action affordance.
+- [ ] T068 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/adopt_flow.dart` — FR-016 adopt-existing-pane form (label, role, capability, project_path, attach_log_now). Reject role/capability incompatible with discovered pane class. Calls `app.agent.register_from_pane`. ≤ 5 s budget per FR-065.
+- [ ] T069 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/agents_view.dart` — FR-015 Agents view treating agent + current goal/task as primary unit; render parent/child sub-agent tree limited to 2 visible levels per data-model.md §1.2 with "+N descendants" affordance.
+- [ ] T070 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/log_attach_affordance.dart` — FR-017 log attach/detach available from Agents view and per-pane affordance.
+- [ ] T071 [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/direct_send.dart` — FR-018 Direct Send (non-empty payload required, inline daemon response, no silent retry on failure). Uses optional `idempotency_key` per FEAT-011 FR-031a.
+- [ ] T072 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/events/events_view.dart` — FR-019 Events view in observed-at order with virtualized infinite scroll per FR-080 + "Jump to most recent" affordance.
+- [ ] T073 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/queue/queue_view.dart` — FR-020 Queue view with the 5-state vocabulary (queued | blocked | delivered | canceled | failed) and approve/delay/cancel actions on blocked + (cancel-only) on queued rows. Virtualized per FR-080.
+- [ ] T074 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/routes/routes_view.dart` — FR-021 Routes view with source scope, target rule, master rule, enabled state, recent skip explanation, explainability surface per FR-059.
+- [ ] T075 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/routes/add_route_flow.dart` — Add route form (source + event_class + target + master_rule). Calls `app.route.add`.
+- [ ] T076 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/health/health_view.dart` — FR-022 Health view with per-subsystem readiness (discovery, log attachment, classifier, queue, routing) + composite "degraded but usable" state + in-app explainability per FR-059.
+
+### Onboarding (FR-010 + R-20)
+
+- [ ] T077 [US1] Implement `apps/control_panel/lib/features/onboarding/onboarding_flow.dart` — 8-milestone onboarding per FR-010 with automatically-detectable completion criteria (per F11). Each milestone observes the daemon state and self-completes when detected. Skippable from any step.
+- [ ] T078 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/dashboard_nudges.dart` — incomplete-milestone nudges on the Dashboard per FR-010 + clarify Q24. Visually distinguished from the FR-012 recommended-next-action tile.
+- [ ] T079 [US1] Persist `OnboardingMilestone` completion state via the UX-state repository (per data-model.md §2.1 + contracts/ux-state.md §1).
+
+### Trust-model first-launch statement (FR-061)
+
+- [ ] T080 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/trust_model_statement.dart` — first-launch in-app statement of local-only trust (Unix socket + same-host UID per FR-061). Also reachable from Settings.
+
+**Checkpoint**: User Story 1 (MVP) is fully functional and testable independently. The app delivers a strict-superset replacement for the equivalent CLI adopt-existing-pane workflow.
+
+---
+
+## Phase 4: User Story 2 - Re-orient to a project and see which master is driving which feature (Priority: P2)
+
+**Goal**: Operator opens the app, sees projects as cards, distinguishes them at a glance, picks one, and on Current Work immediately sees the active feature + driving master + one-click links to PRD/architecture/roadmap/feature spec/OpenSpec change.
+
+**Independent Test**: With ≥2 registered projects each carrying ≥1 active feature/change and an assigned master, operator can identify the driver per project, distinguish by card-level info, open ≥1 doc in one click from Current Work, and answer "which master is driving FEAT-N" without leaving the app.
+
+### Tests for User Story 2
+
+- [ ] T081 [P] [US2] Write `apps/control_panel/integration_test/us2_project_and_master.dart` covering US2 §1-§5 acceptance scenarios (including the F1-added scenario for FR-076 first-launch project resolution).
+
+### Domain models for US2
+
+- [ ] T082 [P] [US2] Implement `apps/control_panel/lib/domain/models/project.dart` — `Project` freezed class with the FR-025 attribute set per data-model.md §1.1. Include `primaryMasterAgentIds: List<String>` (capped at 2), `masterOverflowCount: int`, `subAgentCount: int` per the Round-2 finding F-A7. Satisfies FR-026 — Project identity uses the canonicalized repository absolute path (one project = one repository); worktrees and branches are subordinate context.
+- [ ] T083 [P] [US2] Implement `apps/control_panel/lib/domain/models/master_summary.dart` — `MasterSummary` freezed class with FR-030 attributes per data-model.md §1.3. Construct ONLY when the underlying AdoptedAgent satisfies FR-071 (role=master AND master-class capability).
+- [ ] T084 [P] [US2] Implement `apps/control_panel/lib/domain/models/feature_change_status.dart` — `FeatureChangeStatus` freezed class with FR-028 three-layer model per data-model.md §1.5. Stage enum includes `deferred` per F7-a; F7-b transition rule already in T043.
+
+### Daemon-client extensions for US2
+
+- [ ] T085 [US2] Extend `app_client.dart` with anticipated FEAT-011 methods (per contracts/app-methods-consumed.md §3): `app.project.list/.detail/.add/.remove`, `app.feature_change.list/.detail`. Gate via FR-002 contract-version-incompatible degradation when methods are absent.
+- [ ] T086 [US2] Implement `apps/control_panel/lib/domain/master_qualification.dart` — fetch master-class capability set from daemon once per session; cache; use to gate MasterSummary construction per FR-071.
+
+### Project + Specs workspace (FR-023..FR-032)
+
+- [ ] T087 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/projects_view.dart` — FR-023/FR-024 Projects view as cards (not a table) sized for ~5 projects.
+- [ ] T088 [US2] Implement `apps/control_panel/lib/features/project_specs/projects/project_card.dart` — FR-025 card with every required attribute (name, repository path, repo state badge, active branch/worktree badge, active feature/change, current phase/status, current driving master, compact master strip up to 2 + overflow, sub-agent count, last activity, validation badge + last run age, drift badge + source + age, attention summary, unread notification count, quick actions).
+- [ ] T089 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/add_project.dart` — explicit "Add Project" action per Assumption: project registration model. Calls `app.project.add`.
+- [ ] T090 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/remove_project.dart` — FR-077 confirmation-gated remove; clears project-scoped UI persistence (last sub-view + sort/filter per FR-078); daemon data untouched.
+- [ ] T091 [US2] Implement `apps/control_panel/lib/features/project_specs/current_work/current_work_view.dart` — FR-027 Current Work view with active feature/change, driving master, workflow phase, recent activity, one-click links to PRD/architecture/roadmap/feature spec/OpenSpec change paths (document open behavior per FR-079).
+- [ ] T092 [US2] Implement `apps/control_panel/lib/features/project_specs/current_work/driving_master_indicator.dart` — FR-029 "agent X is driving FEAT-N under handoff H" indicator on every feature surface, with one-click navigation to master summary + handoff record. Handles multi-driver conflict display.
+- [ ] T093 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/specs/specs_view.dart` — FR-031 Specs view (project-first, then feature). Document list/panel uses FR-079 markdown rendering.
+- [ ] T094 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/changes/changes_view.dart` — FR-032 Changes view for OpenSpec-side proposed/active changes; FR-079 document rendering.
+- [ ] T095 [P] [US2] Implement `apps/control_panel/lib/ui/widgets/markdown_viewer.dart` — `flutter_markdown` viewer per research R-09 + FR-079. Safe-markdown subset (HTML disabled, `javascript:` / `data:` URLs rejected). "Open externally" affordance via `url_launcher`.
+
+### First-launch project resolution (FR-076)
+
+- [ ] T096 [US2] Implement `apps/control_panel/lib/features/project_specs/projects/first_launch_resolution.dart` — restore persisted last-active project if it still resolves (registered with daemon OR inferable from current adopted agent's `project_path`); otherwise land on Projects view with no selection and FR-076 non-blocking banner.
+
+**Checkpoint**: Project navigation, project cards, current work, specs/changes viewing all work. Operator can re-orient across projects.
+
+---
+
+## Phase 5: User Story 3 - Generate, preview, and submit a master-driving handoff prompt (Priority: P3)
+
+**Goal**: Operator puts a master to work on features/changes by stepping through master → project → work-item selection → mode → auto-fill → preview → notes → submit. The handoff is a durable, reviewable object delivered via FEAT-009 safe prompt queue.
+
+**Independent Test**: With a registered master and a project with ≥1 feature spec, operator can complete the full handoff flow and afterwards see (a) the prompt arriving at the target master via the queue and (b) a durable handoff record in `submitted` (or `accepted`) state.
+
+### Tests for User Story 3
+
+- [ ] T097 [P] [US3] Write `apps/control_panel/integration_test/us3_handoff_flow.dart` covering US3 §1-§6 + FR-072 failure tiers + FR-081 supersede scenarios (the F1-added scenarios for handoff failure and supersede). Assert SC-003 budget: single-feature handoff with auto-filled context completes from "open handoff flow" to "submitted" in ≤ 30 s on the mock daemon. Assert SC-004: for a feature range with ≥1 deferred + ≥1 merged intermediate item, the resolved-list shown in preview matches byte-for-byte the resolved-list embedded in the submitted prompt (snapshot diff).
+
+### Domain models for US3
+
+- [ ] T098 [P] [US3] Implement `apps/control_panel/lib/domain/models/handoff.dart` — `Handoff` freezed class per data-model.md §1.6 with `handoffId` (post-submit) / `draftId` (pre-submit), `deliveryStatus` (FR-072(b)), `failureContext` (FR-072(a)), `supersededByHandoffId` + `supersedesHandoffId`.
+- [ ] T099 [P] [US3] Implement `apps/control_panel/lib/domain/models/resolved_work_item.dart` — `ResolvedWorkItem` + `ResolvedExclusion` enum per data-model.md §1.7. Render excluded items as `FEAT-N (excluded: deferred)` / `FEAT-N (excluded: merged)` per F7-c.
+- [ ] T100 [P] [US3] Implement `apps/control_panel/lib/domain/helper_policy/helper_policy.dart` — `HelperPolicy` + `HelperPolicySnapshot` freezed classes per data-model.md §1.8 + FR-038a + contracts/helper-policy.md.
+
+### Daemon-client extensions for US3
+
+- [ ] T101 [US3] Extend `app_client.dart` with anticipated FEAT-011 methods: `app.handoff.list/.detail/.draft/.preview/.submit/.cancel/.supersede`, `app.helper_policies.list/.resolve`. Per R-19 caveat, gate via FR-002 degradation when missing.
+
+### Handoff prompt flow (FR-036..FR-045 + FR-038a + FR-072 + FR-081)
+
+- [ ] T102 [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/handoff_flow.dart` — multi-step flow per FR-036 (master → project → work-item → mode in order). Input validation per master qualification (FR-071), project resolution, feature existence. Satisfies FR-037 — optional inputs (priority, deadline, helper-policy override, operator notes) are accepted alongside the required FR-036 inputs.
+- [ ] T103 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/feature_range_resolver.dart` — FR-039 canonical `FEAT-N..FEAT-M` range syntax per F8 (inclusive both ends; ascending numeric order regardless of input order). Annotate excluded `deferred` / `merged` items per F7-c.
+- [ ] T104 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/auto_fill_context.dart` — FR-038 auto-fill: project/repo identity, active branch/worktree, PRD path, architecture, roadmap, selected feature spec paths, OpenSpec change paths, current stage/status/subphase, known drift state, current validation state, allowed helper-agent defaults (via FR-038a), repo workflow rules.
+- [ ] T105 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/helper_policy_resolver.dart` — per FR-038a + contracts/helper-policy.md: call `app.helper_policies.list` at flow entry + `app.helper_policies.resolve` at submission. Per-handoff override scope only. Surface `policy_source = repo_override` when daemon resolves a repo file.
+- [ ] T106 [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/prompt_skeleton.dart` — sectioned prompt body in FR-040 order: Assignment, Project Context, Workflow Instruction, Helper-Agent Policy, Success Criteria, Stopping and Escalation Rules. Regenerate body on mode change while preserving operator notes (FR-040).
+- [ ] T107 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/preview_view.dart` — preview surface with sectioned prompt + auto-filled context view + operator-notes editor. Reject edits to skeleton sections with inline explanation per FR-041.
+- [ ] T108 [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/submit_flow.dart` — calls `app.handoff.submit`. Persists durable record per FR-042. Delivery via FEAT-009 safe prompt queue per FR-043. Handles three FR-072 failure tiers: (a) submission failure → stays `drafted` + error attached; (b) delivery failure → stays `submitted` + delivery-failure indicator + "Retry delivery" action; (c) offline master → held `submitted` until reconnect.
+- [ ] T109 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/supersede_flow.dart` — FR-081 supersede: prior handoff → `superseded`, new handoff records `supersededByHandoffId`. Does NOT auto-cancel prior queue rows; operator-facing warning at supersede time.
+- [ ] T110 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/handoff_list_view.dart` — query handoffs by project / master / feature/change / assignment state + date-range on `created_at` per FR-045.
+- [ ] T111 [P] [US3] Implement `apps/control_panel/lib/features/project_specs/handoff/handoff_detail_view.dart` — render the handoff record (state model independent from feature/change lifecycle per FR-044), supersede chain, delivery status, helper-policy snapshot (FR-042).
+
+**Checkpoint**: Operator can complete a full handoff lifecycle. US1 + US2 + US3 all work independently.
+
+---
+
+## Phase 6: User Story 4 - See and act on drift signals for a project (Priority: P3)
+
+**Goal**: Operator opens Drift, sees findings with status / source / severity / confidence / age / scope / summary / evidence / recommended action, walks them through the lifecycle, and can launch a drift-repair handoff that pre-fills the affected feature(s).
+
+**Independent Test**: With ≥1 project having a drift finding, operator can render the finding with the documented fields, drill in, launch a drift-repair handoff (pre-fills feature + `drift_repair` mode + drift signal id), and walk new → review_needed → confirmed → repair_planned → resolved with the project-card drift badge updating accordingly.
+
+### Tests for User Story 4
+
+- [ ] T112 [P] [US4] Write `apps/control_panel/integration_test/us4_drift.dart` covering US4 §1-§5 acceptance scenarios. Assert SC-005 budget: after the mock daemon emits a new drift finding for a project, the project card's drift badge updates within 60 s.
+
+### Domain models for US4
+
+- [ ] T113 [P] [US4] Implement `apps/control_panel/lib/domain/models/drift_signal.dart` — `DriftSignal` freezed class per data-model.md §1.9 with full FR-033 attributes + FR-034 lifecycle states.
+
+### Daemon-client extensions for US4
+
+- [ ] T114 [US4] Extend `app_client.dart` with: `app.drift.list/.detail/.transition`.
+
+### Drift surface (FR-033..FR-035)
+
+- [ ] T115 [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_view.dart` — FR-033 Drift list with status, source, severity, confidence, age, scope, summary, recommended action, supporting evidence, linked refs. Uses severity palette from research R-15. Virtualized per FR-080.
+- [ ] T116 [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_detail_view.dart` — per-finding detail with evidence rendering (markdown via T095) and "Repair this drift" action per FR-035.
+- [ ] T117 [P] [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_transition.dart` — operator-driven `app.drift.transition` calls per FR-034. Uses T040 validator to prevent illegal transitions.
+- [ ] T118 [P] [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_repair_handoff_launch.dart` — pre-fills handoff flow with affected feature(s), `drift_repair` mode, drift signal id as context. Depends on US3 handoff flow (T102).
+
+**Checkpoint**: Drift surface live + drift-repair handoff launch wired. US1+US2+US3+US4 all work independently.
+
+---
+
+## Phase 7: User Story 5 - See available validation, run it, and judge demo readiness (Priority: P3)
+
+**Goal**: Operator opens Testing and Demo, sees validation entrypoints grouped by scope, triggers runs, watches state transitions, reads a current demo readiness summary that answers "can I demo this branch now?".
+
+**Independent Test**: With a project exposing ≥2 validation entrypoints (≥1 required, ≥1 recommended), operator can list them, trigger one, see the run progress queued → running → completed, see it in run history, and read a demo readiness summary that reflects the latest result with at least one recommended-next-run or blocking-finding entry.
+
+### Tests for User Story 5
+
+- [ ] T119 [P] [US5] Write `apps/control_panel/integration_test/us5_validation_demo.dart` covering US5 §1-§5 acceptance scenarios.
+
+### Domain models for US5
+
+- [ ] T120 [P] [US5] Implement `apps/control_panel/lib/domain/models/validation_entrypoint.dart` — `ValidationEntrypoint` freezed class per data-model.md §1.10 (label, type, scope, description, blocking_level, estimated_duration, enabled).
+- [ ] T121 [P] [US5] Implement `apps/control_panel/lib/domain/models/validation_run.dart` — `ValidationRun` freezed class per data-model.md §1.11 with state/result/timestamps/summary/artifacts/triggered_by/linked refs.
+- [ ] T122 [P] [US5] Implement `apps/control_panel/lib/domain/models/demo_readiness_summary.dart` — `DemoReadinessSummary` freezed class per data-model.md §1.12 with overall_state / summary / blocking_findings / recommended_next_runs / recent_run_ids / linked_feature_ids. Encode the "at most at_risk if any required entrypoint has not run" invariant.
+
+### Daemon-client extensions for US5
+
+- [ ] T123 [US5] Extend `app_client.dart` with: `app.validation.entrypoint.list/.detail`, `app.validation.run.list/.detail/.trigger/.cancel`, `app.demo_readiness.detail`.
+
+### Testing & Demo workspace (FR-046..FR-051)
+
+- [ ] T124 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/available_validation/available_validation_view.dart` — FR-046/FR-047 grouped by scope; each card shows label, type, scope, description, blocking level, estimated duration, enabled state.
+- [ ] T125 [US5] Implement `apps/control_panel/lib/features/testing_demo/available_validation/trigger_run.dart` — entrypoint-card "Run" action calling `app.validation.run.trigger`. ≤ 2 s to `running` state per SC-006. Satisfies FR-049 trigger half — execution is invoked through the daemon; the app NEVER executes runners locally.
+- [ ] T126 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/runs/runs_view.dart` — FR-048 Runs view with the 5-state vocabulary + 5-result vocabulary; virtualized per FR-080.
+- [ ] T127 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/runs/cancel_run.dart` — cancel `running` / `queued` runs via `app.validation.run.cancel`. Uses T042 validator. Satisfies FR-049 cancel half — cancellation is invoked through the daemon; the app does NOT terminate any local subprocess.
+- [ ] T128 [US5] Implement `apps/control_panel/lib/features/testing_demo/demo_readiness/demo_readiness_view.dart` — FR-050 overall state + summary + blocking findings + recommended next runs + recent run refs. Updates within 5 s of a run resolving per SC-007.
+- [ ] T129 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/demo_readiness/readiness_computation.dart` — local rendering helper that respects the FR-050 "at most at_risk if required entrypoint missing" invariant when displaying.
+
+**Checkpoint**: Testing & Demo workspace live. US1..US5 all work independently.
+
+---
+
+## Phase 8: User Story 6 - Operator attention queue, notifications, and notification history (Priority: P3)
+
+**Goal**: Operator uses attention queue, notifications panel, notification history as day-to-day signal-over-noise UX. Attention queue is stable while interacting. Grouped notifications per FR-057. OS-native integration per FR-058.
+
+**Independent Test**: With a session producing ≥3 distinct actionable items and ≥3 notifications, operator can distinguish attention queue / notifications panel / notification history by contents and behaviors; click an attention item and arrive at its resolution surface; acknowledge a notification and see it move to history; observe that the queue does not reorder under the pointer while interacting.
+
+### Tests for User Story 6
+
+- [ ] T130 [P] [US6] Write `apps/control_panel/integration_test/us6_attention_notifications.dart` covering US6 §1-§5 + the F1-added FR-057 grouping rule scenario. Include SC-008a stability test (100 simulated live-update bursts with synthetic hover pattern; no position change under pointer for ≥ 2 s).
+
+### Domain models for US6
+
+- [ ] T131 [P] [US6] Implement `apps/control_panel/lib/domain/models/attention_item.dart` — `AttentionItem` freezed class with `ResolutionTarget` sealed class (queueRow | healthSubsystem | driftFinding | validationRun) per data-model.md §1.13.
+- [ ] T132 [P] [US6] Implement `apps/control_panel/lib/domain/models/notification.dart` — `Notification` freezed class per data-model.md §1.14 carrying the fields the FR-057 grouping rule keys on.
+- [ ] T133 [P] [US6] Implement `apps/control_panel/lib/domain/models/operator_history_entry.dart` — `OperatorHistoryEntry` freezed class per data-model.md §1.15 with parent/sub-agent rollup per FR-055.
+
+### Daemon-client extensions for US6
+
+- [ ] T134 [US6] Extend `app_client.dart` with: `app.attention.list/.detail`, `app.notification.list/.history/.acknowledge`, `app.operator_history.list`.
+
+### Attention queue (FR-052..FR-055)
+
+- [ ] T135 [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/attention_queue_view.dart` — FR-052 actionable-items queue with icon (class) + color (severity) + age + one-line summary. Default sort severity-then-age.
+- [ ] T136 [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/interaction_stability.dart` — FR-053 2-second interaction-stability window. Defer reorders / item changes while operator hovers / clicks / presses keys on the queue.
+- [ ] T137 [P] [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/resolution_navigation.dart` — FR-054 click → resolution surface dispatch per `ResolutionTarget` variant.
+- [ ] T138 [P] [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/operator_history_view.dart` — FR-055 durable operator history rolled up by agent with sub-agents nested.
+
+### Notifications panel + history (FR-008/056/057/058)
+
+- [ ] T139 [US6] Implement `apps/control_panel/lib/features/notifications/notifications_panel.dart` — FR-008/FR-056 notifications panel. Apply the FR-057 grouping rule (T032) as a view-layer projection.
+- [ ] T140 [P] [US6] Implement `apps/control_panel/lib/features/notifications/notification_history_view.dart` — FR-056 history surface; processed → history.
+- [ ] T141 [P] [US6] Implement `apps/control_panel/lib/features/notifications/badges.dart` — FR-025/FR-056 unread notification count badges at project-card level + global level.
+- [ ] T142 [US6] Implement `apps/control_panel/lib/features/notifications/os_native_integration.dart` — wire T033 OS-native dispatcher: fires only for high/critical severities, only when the FR-058 toggle is enabled.
+
+**Checkpoint**: Attention queue + notifications + history live. All 6 user stories work independently.
+
+---
+
+## Phase 9: Polish & Cross-Cutting Concerns
+
+**Purpose**: Wrap-up tasks that span multiple stories or finalize release readiness.
+
+- [ ] T143 Wire FR-009 Settings surface aggregating every entry: daemon socket path, contract version display, notifications grouping toggle, OS-native notification integration toggle, theme (Light/Dark/System), density (Comfortable/Compact), "Open log folder" + "Copy diagnostics bundle" affordances, doctor / preflight action. Settings is reachable from any workspace + command palette.
+- [ ] T144 [P] Hook doctor (T026) into the command palette (T035) per research R-20 so it's invokable via Ctrl/Cmd+K.
+- [ ] T145 [P] Hook diagnostics bundle (T027) into Settings (T143) + command palette (T035).
+- [ ] T146 [P] Implement `apps/control_panel/lib/features/shell/version_display.dart` — FR-068 installed app version display on Dashboard + Settings, "update available" indicator linking to release page (driven by T036).
+- [ ] T147 Implement `apps/control_panel/lib/features/shell/quit_handler.dart` — FR-082 immediate-close behavior; trigger FR-069 flush-before-exit via T017.
+- [ ] T148 [P] Implement per-OS packaging in `apps/control_panel/tools/package_windows.ps1` (MSIX), `tools/package_macos.sh` (DMG + notarization + hardened runtime), `tools/package_linux.sh` (AppImage + .deb) per research R-13.
+- [ ] T149 [P] Write unit tests in `apps/control_panel/test/unit/` covering: lifecycle validators (T039-T043), envelope parser (T011), error code mapping (T012), UX-state repository (T017) including atomic-write + migration + corruption-quarantine paths, helper-policy resolver (T105) including FEAT-011 v1.0 absence fallback (per contracts/helper-policy.md §6).
+- [ ] T150 [P] Write widget tests in `apps/control_panel/test/widget/` covering: project card rendering (T088) with zero/one/two/overflow masters, attention queue (T135) icon+color combinations, severity badges across themes (T028), markdown viewer (T095) safe-markdown subset.
+- [ ] T151 [P] Write golden tests in `apps/control_panel/test/golden/` (alchemist) for: Light/Dark/System themes × Comfortable/Compact densities × every workspace top-level view, ensuring FR-066 WCAG AA contrast and FR-009 density consistency.
+- [ ] T152 Write `apps/control_panel/README.md` covering: build / run / packaging instructions per OS, mock-daemon harness usage, FVM pin, lint rules. Mirrors plan.md §Project Structure overview.
+- [ ] T153 Run the `specs/012-flutter-control-panel/quickstart.md` validation against the integrated app + real `agenttowerd` on each supported OS (Windows, macOS, Linux). Record outcomes against each acceptance-check table.
+
+### Verification tasks (added per /speckit-analyze Round 1)
+
+- [ ] T154 [P] Performance verification suite in `apps/control_panel/test/perf/perf_budgets_test.dart` asserting (a) FR-062 cold-start-to-Dashboard p95 ≤ 2 s, (b) FR-063 first-screenful render p95 ≤ 1 s for every FR-063 list view (Containers, Panes, Agents, Events, Queue, Routes, Projects, Available Validation, Runs, Drift) at FEAT-011 default page-size 50, (c) FR-064 live-update propagation p95 ≤ 2 s from mock-daemon event emission to in-app render. Closes analyze findings C1+C2+C3.
+- [ ] T155 Network-trace + subprocess-trace verification in `apps/control_panel/test/security/no_network_no_cli_scrape_test.dart`: run full-workspace exercise under packet capture (assert zero outbound packets except to `releases.opensoft.one`) AND under process trace (assert no subprocess invocation of the `agenttower` CLI). Closes analyze finding C4 / SC-009.
+- [ ] T156 CLI non-regression smoke in `tests/integration/test_feat012_cli_noop.py` (Python, lives next to existing FEAT-002..010 tests) — assert FEAT-002..010 CLI methods produce byte-identical output before and after the desktop-app build is installed. Closes analyze finding Const2.
+- [ ] T157 [P] Codebase audit in `apps/control_panel/tools/audit_no_local_mutation.dart` (or `scripts/`) — static-analysis pass asserting that every mutation in `apps/control_panel/lib/` originates from `core/daemon/app_client.dart` surface (no UI code constructs `app.*` requests directly, no UI code mutates daemon-owned model state). Closes analyze finding C12 / FR-005 invariant.
+- [ ] T158 [P] Annotate non-buildable Success Criteria in `apps/control_panel/test/perf/sc_coverage_map.md` (a doc, not test code): explicitly mark SC-002, SC-008, SC-011, SC-012, SC-013 as user-study or post-launch-survey items deferred to internal Opensoft operator cohort evaluation; reference Assumptions in spec.md. Document SC-006/007/008a as covered by T125/T128/T130, SC-001 by T054 (extended), SC-003/004 by T097 (extended), SC-005 by T112 (extended), SC-009 by T155, SC-010 by T055 (extended). Closes analyze findings C6 + C11.
+- [ ] T159 [P] Update SC coverage references in `specs/012-flutter-control-panel/tasks.md` final footer to reflect post-fix counts (no functional change; documentation-only counter sync).
+
+---
+
+## Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Setup (Phase 1)**: no dependencies; start immediately.
+- **Foundational (Phase 2)**: depends on Setup. BLOCKS all user-story phases.
+- **User Stories (Phases 3-8)**: all depend on Foundational. After Foundational completes, US1..US6 can proceed in parallel where staffing allows. Story-internal dependencies:
+  - **US1 (Phase 3)**: T077/T078/T079 (onboarding) depend on T067/T068 (Panes view + adopt flow) and T071 (Direct Send) and T065 (Dashboard).
+  - **US2 (Phase 4)**: T086 (master qualification) depends on T083 (MasterSummary model). T088 (project card) depends on T082 (Project model) + T083.
+  - **US3 (Phase 5)**: T102+T106+T107+T108 depend on T098+T099+T100 (handoff/resolved-work-item/helper-policy models). T103 depends on T084 (FeatureChangeStatus enum). T108 depends on T101 (daemon-client extension). T109 depends on T108.
+  - **US4 (Phase 6)**: T118 (drift-repair handoff launch) depends on US3 T102 (handoff flow).
+  - **US5 (Phase 7)**: independent of US3/US4 model-wise. T125+T127+T128 depend on T123 (daemon-client extension).
+  - **US6 (Phase 8)**: T136 (interaction stability) depends on T135 (attention queue view). T139 (notifications panel) consumes T032 (grouping rule from Phase 2).
+- **Polish (Phase 9)**: depends on user-story completions where named (T144 ⇐ T026 + T035; T145 ⇐ T027 + T143 + T035; T146 ⇐ T036; T147 ⇐ T017; T153 ⇐ all earlier phases).
+
+### MVP scope (minimum shippable)
+
+**Phase 1 + Phase 2 + Phase 3 (US1).** This delivers the absolute-minimum US1 P1 slice: launch → adopt → log → events → direct send → route. Onboarding, doctor, diagnostics, and the trust-model first-launch statement are included in US1's phase because they wrap the same workflow. The MVP is shippable without US2..US6 and is a strict-superset replacement for the equivalent FEAT-002..010 CLI workflow.
+
+After MVP ships, deliver US2 next (project navigation), then US3 (handoff flow), then US4..US6 in any order based on operator demand.
+
+### Parallel execution examples
+
+Once Phase 2 (Foundational) is complete, the following groups can run in parallel:
+
+- **Phase 3 (US1) initial parallel batch**: T054 + T055 + T056 (tests) || T057 + T058 + T059 + T060 + T061 + T062 (models).
+- **Phase 4 (US2) initial parallel batch**: T081 (tests) || T082 + T083 + T084 (models).
+- **Phase 5 (US3) initial parallel batch**: T097 (tests) || T098 + T099 + T100 (models).
+- **Phase 9 (Polish) parallel batch**: T144 + T145 + T146 + T148 + T149 + T150 + T151 (all [P]).
+
+Within a single user-story phase, the [P]-marked tasks against distinct file paths can run in parallel; non-[P] tasks (e.g. T068 adopt flow depending on T067 panes view) must be serialized.
+
+---
+
+## Implementation Strategy
+
+1. **Get to MVP fast.** Complete Phases 1 → 2 → 3 in that order. The MVP delivers operator-visible value (adopt + operate first pane from the desktop) and validates the entire daemon-connection + persistence + onboarding stack.
+2. **Validate MVP independently.** Walk `specs/012-flutter-control-panel/quickstart.md` end-to-end against a real `agenttowerd` + bench container. Pass = MVP shippable.
+3. **Incremental delivery.** US2..US6 each ship as their own increment in priority order. Every checkpoint is an "operator-visible value" milestone.
+4. **Polish the seams, not the centre.** Polish phase (Phase 9) is for cross-cutting concerns; do NOT defer story-specific polish into Phase 9.
+5. **Tests grow with stories.** Each US has its own integration test file (T054 / T081 / T097 / T112 / T119 / T130) that mirrors that story's acceptance scenarios. Run them after each story phase completes. The mock-daemon harness (T050) is the shared substrate.
+6. **Watch the spec-quality-pass items.** The Round-2 Tier-2 and Tier-3 findings (F-A3..F-A20 from `checklists/alignment.md`) are NOT in this task list. Surface them as plan v2 work or address opportunistically during implementation.
+
+---
+
+**Total tasks**: 159 (T001..T159)
+**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (17, including 6 verification tasks T154-T159 added per /speckit-analyze).
+**Parallel tasks**: 109 marked [P].
+**Story-labelled tasks**: 89 across US1..US6.
+
+**Verification-task coverage** (added per /speckit-analyze Round 1):
+- Performance: T154 covers FR-062 + FR-063 + FR-064 budgets.
+- Security: T155 covers SC-009 (no non-local socket + no CLI subprocess scrape).
+- CLI non-regression: T156 covers Const2 (constitution principle IV).
+- Architectural invariant: T157 covers FR-005 (no local invent/mutate; all mutations via `app.*`).
+- Success-criteria documentation: T158 produces `sc_coverage_map.md` annotating SC-002/008/011/012/013 as user-study or post-launch-survey items and tracing all other SCs to specific tasks.
+- Extended integration tests: T054 asserts SC-001, T055 asserts SC-010, T097 asserts SC-003+SC-004, T112 asserts SC-005.
