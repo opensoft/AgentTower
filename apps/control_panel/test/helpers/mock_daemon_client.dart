@@ -68,7 +68,11 @@ class MockDaemonClient {
         '--fixture',
         fixtureFile.path,
       ],
-      mode: ProcessStartMode.detachedWithStdio,
+      // Swarm-review CR-2: previously `detachedWithStdio` made `kill` +
+      // `exitCode` throw `Bad state: Process is detached` at teardown.
+      // The harness IS the child of this test process; detachment is
+      // unnecessary and breaks the SIGTERM + exitCode-wait in stop().
+      mode: ProcessStartMode.normal,
     );
 
     final socketFile = File(socketPath);

@@ -9,6 +9,7 @@ part 'drift_supporting.g.dart';
 /// FR-033 — Drift scope binds a finding to a specific operational
 /// surface so the operator can act on it from the right place
 /// (project card, feature/change detail, branch view, etc.).
+@JsonEnum(valueField: 'wireValue')
 enum DriftScopeKind {
   project('project'),
   featureChange('feature_change'),
@@ -53,6 +54,7 @@ extension DriftScopeAlias on DriftScope {
 /// the app renders them with [DriftEvidenceKind]-specific affordances
 /// (e.g. log excerpts get a monospace block, file pointers get an
 /// Open-externally affordance).
+@JsonEnum(valueField: 'wireValue')
 enum DriftEvidenceKind {
   logExcerpt('log_excerpt'),
   filePointer('file_pointer'),
@@ -79,7 +81,11 @@ class DriftEvidence with _$DriftEvidence {
     String? filePath,
     int? lineNumber,
     String? url,
-    String? agentAgentId,
+    // Swarm-review M-22: previously `agentAgentId` auto-renamed to
+    // `agent_agent_id` via the snake_case field_rename build rule.
+    // That wire field never appears in any daemon response; the
+    // canonical field is `agent_id`.
+    String? agentId,
   }) = _DriftEvidence;
 
   factory DriftEvidence.fromJson(Map<String, dynamic> json) =>

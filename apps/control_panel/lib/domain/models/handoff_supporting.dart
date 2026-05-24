@@ -54,6 +54,7 @@ class HandoffContextBundle with _$HandoffContextBundle {
 
 /// FR-072(b) — delivery-failure indicator surfaced on the handoff
 /// detail view. Null on happy path.
+@JsonEnum(valueField: 'wireValue')
 enum HandoffDeliveryStatusKind {
   pending('pending'),
   delivered('delivered'),

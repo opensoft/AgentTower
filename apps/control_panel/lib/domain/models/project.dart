@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'badges.dart';
+import 'common_enums.dart';
 
 part 'project.freezed.dart';
 part 'project.g.dart';
@@ -37,7 +38,12 @@ class Project with _$Project {
     required ValidationBadge validationBadge,
     DateTime? validationLastRunAt,
     required DriftBadge driftBadge,
-    String? driftSource,
+    // Swarm-review H-F1: `driftSource` was typed `String?` but per
+    // data-model.md §1.1 line 37 the wire-aligned enum is
+    // [DriftSource] (static_check | agent_review | operator_report
+    // | test_result). Typing the field properly unblocks pattern
+    // matching in the project-card render.
+    DriftSource? driftSource,
     DateTime? driftAge,
     required AttentionSummary attentionSummary,
     @Default(0) int unreadNotificationCount,

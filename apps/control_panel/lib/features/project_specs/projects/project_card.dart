@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/badges.dart';
+import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/project.dart';
 
 /// FR-025 Project card. T088 (Phase 4 US2).
@@ -330,14 +331,14 @@ class _DriftChip extends StatelessWidget {
     required this.age,
   });
   final DriftBadge badge;
-  final String? source;
+  final DriftSource? source;
   final DateTime? age;
 
   @override
   Widget build(BuildContext context) {
     final parts = <String>['drift: ${badge.highestSeverity.wireValue}'];
     if (badge.openCount > 0) parts.add('(${badge.openCount})');
-    if (source != null) parts.add('src=$source');
+    if (source != null) parts.add('src=${source!.wireValue}');
     if (age != null) {
       parts.add('${DateTime.now().difference(age!).inMinutes}m');
     }

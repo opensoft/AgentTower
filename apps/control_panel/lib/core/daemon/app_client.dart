@@ -83,16 +83,31 @@ class AppClient {
 
   // -------- agent
 
+  // Swarm-review H-E1: removed the `projectId` parameter. Per
+  // app-methods.md line 203 the v1.0 agent-filter closed set is
+  // {role, capability, container_id, log_attached} — `project_id`
+  // is NOT an accepted filter, so the daemon would have rejected
+  // it with `validation_failed.details.field == "project_id"`.
+  // Project-scoped agent enumeration is a v1.x extension; gate it
+  // behind a capability flag when it ships.
   Future<PagedResult> agentList({
     String? cursorNext,
     int? limit,
-    String? projectId,
+    String? role,
+    String? capability,
+    String? containerId,
+    bool? logAttached,
   }) =>
       _list(
         'app.agent.list',
         cursorNext: cursorNext,
         limit: limit,
-        extra: {if (projectId != null) 'project_id': projectId},
+        extra: {
+          if (role != null) 'role': role,
+          if (capability != null) 'capability': capability,
+          if (containerId != null) 'container_id': containerId,
+          if (logAttached != null) 'log_attached': logAttached,
+        },
       );
 
   Future<Map<String, dynamic>> agentDetail(String agentId) =>
@@ -706,14 +721,22 @@ class AppClient {
     String method, {
     String? cursorNext,
     int? limit,
+    String? orderBy,
     Map<String, dynamic>? extra,
   }) async {
+    // Swarm-review CR-3: per FEAT-011 app-methods.md §list-request-shape
+    // (line 169-177) filters MUST nest under `filters: {…}`. Previously
+    // we splatted `extra` at the top level, which the daemon either
+    // dropped silently or rejected as `validation_failed.details.field
+    // == "<unknown>"`. The H-E2 add of `order_by` is plumbed here so
+    // callers can opt into a non-default sort without a per-call patch.
     final env = await session.call(
       method,
       params: {
         if (cursorNext != null) 'cursor_next': cursorNext,
         if (limit != null) 'limit': limit,
-        ...?extra,
+        if (orderBy != null) 'order_by': orderBy,
+        if (extra != null && extra.isNotEmpty) 'filters': extra,
       },
     );
     final raw = _unwrapResult(env);

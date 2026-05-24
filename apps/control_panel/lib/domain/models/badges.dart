@@ -15,6 +15,7 @@ part 'badges.g.dart';
 
 // ---------------------------------------------------------------- repo state
 
+@JsonEnum(valueField: 'wireValue')
 enum RepoStateKind {
   clean('clean'),
   dirty('dirty'),
@@ -61,6 +62,7 @@ class BranchWorktreeBadge with _$BranchWorktreeBadge {
 
 // --------------------------------------------------------------- validation
 
+@JsonEnum(valueField: 'wireValue')
 enum ValidationBadgeKind {
   unknown('unknown'),
   pending('pending'),
