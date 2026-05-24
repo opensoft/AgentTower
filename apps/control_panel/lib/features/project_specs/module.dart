@@ -3,6 +3,7 @@ import '../../domain/models/common_enums.dart';
 import '../registry.dart';
 import 'changes/changes_view.dart';
 import 'current_work/current_work_view.dart';
+import 'drift/drift_view.dart';
 import 'projects/projects_view.dart';
 import 'specs/specs_view.dart';
 
@@ -39,6 +40,10 @@ void registerProjectSpecs() {
     'project_specs/changes',
     const ContractVersion(1, 0),
   );
+  ContractRegistry.declare(
+    'project_specs/drift',
+    const ContractVersion(1, 0),
+  );
 
   WorkspaceRegistry.register(
     Workspace.projectSpecs,
@@ -59,5 +64,10 @@ void registerProjectSpecs() {
     Workspace.projectSpecs,
     'changes',
     (_) => const ChangesView(),
+  );
+  WorkspaceRegistry.register(
+    Workspace.projectSpecs,
+    'drift',
+    (_) => const DriftView(),
   );
 }

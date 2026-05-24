@@ -264,22 +264,22 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 4
 
-- [ ] T112 [P] [US4] Write `apps/control_panel/integration_test/us4_drift.dart` covering US4 §1-§5 acceptance scenarios. Assert SC-005 budget: after the mock daemon emits a new drift finding for a project, the project card's drift badge updates within 60 s. **The SC-005 assertion MUST observe the actual badge transition (poll `find.text` or watch the badge widget's Riverpod state) within the 60 s window** — do not ship a pump-and-assert-elapsed shape; see the T054/T055 cautionary precedent + T161/T162 below.
+- [X] T112 [P] [US4] Write `apps/control_panel/integration_test/us4_drift.dart` covering US4 §1-§5 acceptance scenarios. Assert SC-005 budget: after the mock daemon emits a new drift finding for a project, the project card's drift badge updates within 60 s. **The SC-005 assertion MUST observe the actual badge transition (poll `find.text` or watch the badge widget's Riverpod state) within the 60 s window** — do not ship a pump-and-assert-elapsed shape; see the T054/T055 cautionary precedent + T161/T162 below.
 
 ### Domain models for US4
 
-- [ ] T113 [P] [US4] Implement `apps/control_panel/lib/domain/models/drift_signal.dart` — `DriftSignal` freezed class per data-model.md §1.9 with full FR-033 attributes + FR-034 lifecycle states.
+- [X] T113 [P] [US4] Implement `apps/control_panel/lib/domain/models/drift_signal.dart` — `DriftSignal` freezed class per data-model.md §1.9 with full FR-033 attributes + FR-034 lifecycle states.
 
 ### Daemon-client extensions for US4
 
-- [ ] T114 [US4] Extend `app_client.dart` with: `app.drift.list/.detail/.transition`.
+- [X] T114 [US4] Extend `app_client.dart` with: `app.drift.list/.detail/.transition`.
 
 ### Drift surface (FR-033..FR-035)
 
-- [ ] T115 [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_view.dart` — FR-033 Drift list with status, source, severity, confidence, age, scope, summary, recommended action, supporting evidence, linked refs. Uses severity palette from research R-15. Virtualized per FR-080.
-- [ ] T116 [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_detail_view.dart` — per-finding detail with evidence rendering (markdown via T095) and "Repair this drift" action per FR-035.
-- [ ] T117 [P] [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_transition.dart` — operator-driven `app.drift.transition` calls per FR-034. Uses T040 validator to prevent illegal transitions.
-- [ ] T118 [P] [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_repair_handoff_launch.dart` — pre-fills handoff flow with affected feature(s), `drift_repair` mode, drift signal id as context. Depends on US3 handoff flow (T102).
+- [X] T115 [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_view.dart` — FR-033 Drift list with status, source, severity, confidence, age, scope, summary, recommended action, supporting evidence, linked refs. Uses severity palette from research R-15. Virtualized per FR-080.
+- [X] T116 [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_detail_view.dart` — per-finding detail with evidence rendering (markdown via T095) and "Repair this drift" action per FR-035.
+- [X] T117 [P] [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_transition.dart` — operator-driven `app.drift.transition` calls per FR-034. Uses T040 validator to prevent illegal transitions.
+- [X] T118 [P] [US4] Implement `apps/control_panel/lib/features/project_specs/drift/drift_repair_handoff_launch.dart` — pre-fills handoff flow with affected feature(s), `drift_repair` mode, drift signal id as context. Depends on US3 handoff flow (T102).
 
 **Checkpoint**: Drift surface live + drift-repair handoff launch wired. US1+US2+US3+US4 all work independently.
 

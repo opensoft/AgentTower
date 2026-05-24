@@ -350,6 +350,52 @@ class AppClient {
     return _unwrapRow(env);
   }
 
+  // -------- drift (T114 — Phase 6 US4)
+
+  Future<PagedResult> driftList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+    String? status,
+    String? severity,
+  }) =>
+      _list(
+        'app.drift.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {
+          if (projectId != null) 'project_id': projectId,
+          if (status != null) 'status': status,
+          if (severity != null) 'severity': severity,
+        },
+      );
+
+  Future<Map<String, dynamic>> driftDetail(String findingId) =>
+      _detail('app.drift.detail', {'finding_id': findingId});
+
+  /// `app.drift.transition` — operator-driven lifecycle transition.
+  /// The daemon enforces FR-034 legal transitions server-side; the
+  /// client validates pre-flight via DriftStateValidator (T040) so
+  /// an illegal click is rejected with an inline explanation rather
+  /// than a round-trip error.
+  Future<Map<String, dynamic>> driftTransition({
+    required String findingId,
+    required String toStatus,
+    String? operatorNote,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.drift.transition',
+      params: {
+        'finding_id': findingId,
+        'to_status': toStatus,
+        if (operatorNote != null) 'operator_note': operatorNote,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
   // -------- helper policies (T101 — Phase 5 US3, per FR-038a + R-19)
 
   /// `app.helper_policies.list` — enumerates available policies for

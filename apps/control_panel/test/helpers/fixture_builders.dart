@@ -106,6 +106,12 @@ class Fixtures {
     DriftConfidence confidence = DriftConfidence.medium,
     String summary = 'Branch does not match intended feature/change',
     String recommendedAction = 'Switch to the intended branch or update the spec',
+    Map<String, dynamic>? scope,
+    List<Map<String, dynamic>>? evidence,
+    List<String> linkedFeatureIds = const <String>[],
+    List<String> linkedChangeIds = const <String>[],
+    String? linkedBranch,
+    String? linkedWorktree,
   }) =>
       {
         'finding_id': findingId,
@@ -114,10 +120,14 @@ class Fixtures {
         'source': source.wireValue,
         'confidence': confidence.wireValue,
         'age_started_at': DateTime.now().toUtc().toIso8601String(),
-        'scope': {'type': 'feature', 'id': 'FEAT-012'},
+        'scope': scope ?? const {'type': 'feature', 'id': 'FEAT-012'},
         'summary': summary,
         'recommended_action': recommendedAction,
-        'evidence': [],
+        'evidence': evidence ?? const <Map<String, dynamic>>[],
+        'linked_feature_ids': linkedFeatureIds,
+        'linked_change_ids': linkedChangeIds,
+        if (linkedBranch != null) 'linked_branch': linkedBranch,
+        if (linkedWorktree != null) 'linked_worktree': linkedWorktree,
       };
 
   // ---- Handoff (real shape lives further down at Phase-5 US3 builder) ----
