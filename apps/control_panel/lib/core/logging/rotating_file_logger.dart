@@ -11,10 +11,20 @@ import '../persistence/paths.dart';
 /// - 5 files × 10 MiB rotation (research R-07)
 /// - JSON-lines format, levels error+warn+info (debug toggleable in Settings)
 /// - Redaction denylist for `app_session_token`, `prompt`/`prompt_text`,
-///   `operator_notes`
+///   `operator_notes` per R-26 + spec FR-074 / FR-079
 /// - Timestamps: ISO-8601 wall-clock + monotonic-ns suffix
 /// - Logs at `<app-data>/agenttower-control-panel/logs/control-panel.log.<N>`
 /// - No upload, no telemetry (FR-074)
+///
+/// Security note (review S1): the key-based redaction in [_redact] only
+/// catches structured fields. If a caller logs a whole envelope as a
+/// string — e.g. `log(Level.error, 'bad envelope: $line')` — the
+/// `app_session_token` value inside the stringified JSON sails past
+/// `_redact`. To close this leak, every emitted line is run through
+/// [_scrubLine] which redacts the values of the same denylist keys when
+/// they appear inside a string. See also review M-SC1 (denylist narrowed
+/// to the spec set; `session_token` removed in favor of the canonical
+/// `app_session_token`).
 class RotatingFileLogger {
   RotatingFileLogger({required this.paths, bool debugEnabled = false})
       : _debugEnabled = debugEnabled,
@@ -27,17 +37,27 @@ class RotatingFileLogger {
   static const int _maxBytesPerFile = 10 * 1024 * 1024; // 10 MiB
   static const int _maxFiles = 5;
 
+  /// The exact denylist documented in R-26 / FR-079. Renaming or extending
+  /// this set is a spec change — coordinate via OpenSpec rather than
+  /// editing in place.
   static const Set<String> _redactedKeys = {
     'app_session_token',
-    'session_token',
     'prompt',
     'prompt_text',
     'operator_notes',
   };
 
+  /// Compiled regex set for the string-scrub pass. Pre-built once because
+  /// `RegExp` construction is heavier than a per-call lookup.
+  static final List<RegExp> _stringRedactPatterns = [
+    for (final key in _redactedKeys)
+      RegExp('("' + RegExp.escape(key) + r'"\s*:\s*)"[^"\\]*(?:\\.[^"\\]*)*"'),
+  ];
+
   IOSink? _sink;
   int _bytesWritten = 0;
   Logger? _logger;
+  Future<void> _writeChain = Future.value();
 
   /// Initializes the logger. Idempotent. Call before any [log] call.
   Future<void> initialize() async {
@@ -52,6 +72,8 @@ class RotatingFileLogger {
 
   /// Logs at the named level. [fields] are merged into the JSON object;
   /// keys in the redaction denylist are replaced with `"[REDACTED]"`.
+  /// The final emitted line is additionally scrubbed for stringified
+  /// occurrences of the same keys (review fix S1).
   void log(Level level, String message, [Map<String, dynamic>? fields]) {
     final l = _logger;
     if (l == null) return;
@@ -78,8 +100,10 @@ class RotatingFileLogger {
     }
   }
 
-  /// Closes the current file sink.
+  /// Closes the current file sink, awaiting any pending writes first so
+  /// FR-082 close-handler integration sees a flushed file.
   Future<void> close() async {
+    await _writeChain;
     await _sink?.flush();
     await _sink?.close();
     _sink = null;
@@ -101,9 +125,22 @@ class RotatingFileLogger {
     return out;
   }
 
+  /// Second-line-of-defence: scrub stringified occurrences of any
+  /// redacted key in the FULL emitted JSON-lines record. This is what
+  /// catches `log('bad envelope: $line')` where the structured-field
+  /// redaction never sees the secret.
+  String _scrubLine(String line) {
+    var out = line;
+    for (final pat in _stringRedactPatterns) {
+      out = out.replaceAllMapped(pat, (m) => '${m.group(1)}"[REDACTED]"');
+    }
+    return out;
+  }
+
   Future<void> _openCurrentFile() async {
     final dir = paths.logsDir;
-    final current = File('${dir.path}${Platform.pathSeparator}control-panel.log.0');
+    final current =
+        File('${dir.path}${Platform.pathSeparator}control-panel.log.0');
     if (current.existsSync()) {
       final stat = await current.stat();
       if (stat.size >= _maxBytesPerFile) {
@@ -120,12 +157,14 @@ class RotatingFileLogger {
     final dir = paths.logsDir;
     // Delete the oldest, shift the rest.
     for (var i = _maxFiles - 1; i >= 0; i--) {
-      final f = File('${dir.path}${Platform.pathSeparator}control-panel.log.$i');
+      final f =
+          File('${dir.path}${Platform.pathSeparator}control-panel.log.$i');
       if (!f.existsSync()) continue;
       if (i == _maxFiles - 1) {
         await f.delete();
       } else {
-        final next = File('${dir.path}${Platform.pathSeparator}control-panel.log.${i + 1}');
+        final next = File(
+            '${dir.path}${Platform.pathSeparator}control-panel.log.${i + 1}');
         await f.rename(next.path);
       }
     }
@@ -133,15 +172,25 @@ class RotatingFileLogger {
   }
 
   /// Internal: write one JSON-lines record, rotating if cap exceeded.
-  Future<void> _writeRaw(String jsonLine) async {
-    final bytes = utf8.encode('$jsonLine\n');
-    if (_bytesWritten + bytes.length > _maxBytesPerFile) {
-      await close();
-      await _rotate();
-      await _openCurrentFile();
-    }
-    _sink?.add(bytes);
-    _bytesWritten += bytes.length;
+  /// Writes are serialized through `_writeChain` so concurrent log calls
+  /// don't interleave bytes inside a single line (review fix M-S4).
+  Future<void> _writeRaw(String jsonLine) {
+    return _writeChain = _writeChain.then((_) async {
+      final scrubbed = _scrubLine(jsonLine);
+      final bytes = utf8.encode('$scrubbed\n');
+      if (_bytesWritten + bytes.length > _maxBytesPerFile) {
+        await _sink?.flush();
+        await _sink?.close();
+        _sink = null;
+        await _rotate();
+        await _openCurrentFile();
+      }
+      _sink?.add(bytes);
+      _bytesWritten += bytes.length;
+    }).catchError((Object _) {
+      // Swallow per-write failures so a failed rotation doesn't bring
+      // down the whole future chain.
+    });
   }
 
   String _currentTimestamp() {
@@ -178,7 +227,9 @@ class _SinkOutput extends LogOutput {
   @override
   void output(OutputEvent event) {
     for (final line in event.lines) {
-      // Best-effort fire-and-forget; rotation handled in _writeRaw.
+      // The actual write is serialized inside `_writeRaw` so we don't
+      // need to `await` here. The returned future is chained internally;
+      // a `close()` call awaits the chain before exiting.
       unawaited(parent._writeRaw(line));
     }
   }

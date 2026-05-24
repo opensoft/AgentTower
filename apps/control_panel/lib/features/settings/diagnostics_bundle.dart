@@ -51,8 +51,12 @@ class DiagnosticsBundle {
         'doctor_report': doctorReport.toJson(),
       };
 
-  /// Returns the preview info: per-file inventory + first/last 20 lines of each log.
-  /// UI shows this BEFORE save/copy so operator can confirm contents.
+  /// Returns the preview info: per-file inventory, first/last 20 lines of
+  /// each log, AND the manifest fields the operator is about to send out
+  /// (review fix S3 — previously the preview omitted `socket_path` and
+  /// `os_user`, so an operator running `Copy diagnostics bundle` had no
+  /// way to confirm what host metadata would leak). UI shows this BEFORE
+  /// save/copy so the operator can confirm contents.
   Future<BundlePreview> buildPreview() async {
     final entries = <BundleEntry>[];
     final dir = paths.logsDir;
@@ -68,7 +72,9 @@ class DiagnosticsBundle {
       final stat = await f.stat();
       final lines = await f.readAsLines();
       final first20 = lines.take(20).toList();
-      final last20 = lines.length > 40 ? lines.skip(lines.length - 20).toList() : <String>[];
+      final last20 = lines.length > 40
+          ? lines.skip(lines.length - 20).toList()
+          : <String>[];
       entries.add(BundleEntry(
         path: f.path,
         sizeBytes: stat.size,
@@ -77,11 +83,13 @@ class DiagnosticsBundle {
       ));
       totalBytes += stat.size;
     }
-    final manifestBytes = utf8.encode(json.encode(manifest())).length;
+    final manifestData = manifest();
+    final manifestBytes = utf8.encode(json.encode(manifestData)).length;
     totalBytes += manifestBytes;
 
     return BundlePreview(
       entries: entries,
+      manifest: manifestData,
       manifestSizeBytes: manifestBytes,
       totalBytes: totalBytes,
       exceedsCap: totalBytes > maxBundleBytes,
@@ -110,12 +118,20 @@ class BundleEntry {
 class BundlePreview {
   const BundlePreview({
     required this.entries,
+    required this.manifest,
     required this.manifestSizeBytes,
     required this.totalBytes,
     required this.exceedsCap,
     required this.smallEnoughForClipboard,
   });
   final List<BundleEntry> entries;
+
+  /// Full manifest contents (app_version, app_contract_version, socket_path,
+  /// os_user, session_start, bundle_generated_at, doctor_report). The UI
+  /// renders this so the operator can confirm what host metadata leaves
+  /// the machine before committing the save/copy.
+  final Map<String, dynamic> manifest;
+
   final int manifestSizeBytes;
   final int totalBytes;
   final bool exceedsCap;

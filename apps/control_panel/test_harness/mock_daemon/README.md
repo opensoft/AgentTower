@@ -26,19 +26,27 @@ The Dart-side helper (`../../test/helpers/mock_daemon_client.dart`, T052) spawns
 {
   "app_contract_version": "1.0",
   "daemon_version": "0.11.0-mock",
-  "session_token": "test-session-token",
+  "app_session_token": "00000000-0000-4000-8000-000000000001",
+  "app_session_id": 1,
+  "host_user_id": "1000",
+  "schema_version": 1,
   "responses": {
     "app.hello": {"ok": true, "result": {}},
     "app.preflight": {"ok": true, "result": {"checks": []}},
-    "app.readiness": {"ok": true, "result": {"hints": []}},
+    "app.readiness": {"ok": true, "result": {"state": "ready", "subsystems": [], "hints": []}},
     "app.dashboard": {
       "ok": true,
       "result": {
-        "container_count": 1,
-        "pane_count_by_state": {"discovered-and-unmanaged": 1},
-        "registered_agent_count_by_state": {},
-        "blocked_queue_count": 0,
-        "recently_skipped_route_count": 0
+        "counts": {
+          "containers": {"active": 1, "inactive": 0, "degraded_scan": 0},
+          "panes_by_state": {"discovered-and-unmanaged": 1},
+          "registered_agents_by_state": {},
+          "blocked_queue": 0,
+          "recently_skipped_routes": 0
+        },
+        "recents": [],
+        "recommended_next_action": null,
+        "hints": []
       }
     },
     "app.pane.list": {
@@ -61,7 +69,16 @@ The Dart-side helper (`../../test/helpers/mock_daemon_client.dart`, T052) spawns
 }
 ```
 
-If a request method is NOT in `responses`, the harness returns `method_not_found` from FEAT-011's closed-set vocabulary.
+Notes:
+
+- The `app.hello` `result` is filled in with the FEAT-011-required fields
+  (`app_session_token`, `app_session_id`, `daemon_version`, `schema_version`,
+  `app_contract_version`, `supported_minor_range`, `host_user_id`,
+  `capability_flags`, `state`) — empty `{}` in the fixture is fine; the
+  harness stamps the missing fields from the top-level fixture keys.
+- If a request method is NOT in `responses`, the harness returns
+  `unknown_method` (FR-034b) from FEAT-011's closed-set vocabulary with
+  `details == {}`.
 
 ## Error injection
 
@@ -78,7 +95,16 @@ To exercise the FEAT-011 error vocabulary, set `responses["<method>"]` to:
 }
 ```
 
-The 27-entry error code set lives in `apps/control_panel/lib/core/daemon/errors.dart`.
+The 27-entry error code set lives in `apps/control_panel/lib/core/daemon/errors.dart` and is sourced from `specs/011-app-backend-contract/contracts/error-codes.md`.
+
+To inject `app_contract_major_unsupported` and have the harness build the FR-036 `details = {daemon_app_contract_version, client_app_contract_major}` payload from the request, use:
+
+```json
+"app.hello": {
+  "ok": false,
+  "_use_helper": "app_contract_major_unsupported"
+}
+```
 
 ## Wire-framing strictness
 

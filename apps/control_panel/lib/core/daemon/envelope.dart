@@ -15,7 +15,7 @@ sealed class Envelope {
   final String appContractVersion;
 
   static Envelope parse(String jsonLine) {
-    final raw = json.decode(jsonLine);
+    final Object? raw = json.decode(jsonLine);
     if (raw is! Map<String, dynamic>) {
       throw const FormatException('Envelope is not a JSON object');
     }

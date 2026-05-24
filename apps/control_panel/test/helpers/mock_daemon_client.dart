@@ -12,19 +12,27 @@ class MockDaemonClient {
     required this.socketPath,
     required this.fixturePath,
     required Process process,
-  }) : _process = process;
+    required Directory tmpDir,
+  })  : _process = process,
+        _tmpDir = tmpDir;
 
   final String socketPath;
   final String fixturePath;
   final Process _process;
+  final Directory _tmpDir;
 
   /// Spawns a fresh mock daemon. The [fixture] map is written to a temp file
   /// and passed to the harness. Returns once the harness has bound the socket
   /// (or throws on startup failure).
+  ///
+  /// [bindTimeout] caps how long we wait for the socket file to appear; the
+  /// default of 5 s is generous enough to survive a cold Python interpreter
+  /// start on a busy CI machine without making real-test feedback feel slow.
   static Future<MockDaemonClient> start({
     required Map<String, dynamic> fixture,
     String? socketPathOverride,
     String pythonExecutable = 'python3',
+    Duration bindTimeout = const Duration(seconds: 5),
   }) async {
     final tmpDir = Directory.systemTemp.createTempSync('feat012-mock-');
     final socketPath =
@@ -50,17 +58,23 @@ class MockDaemonClient {
       mode: ProcessStartMode.detachedWithStdio,
     );
 
-    // Wait up to 2 s for the socket to appear.
     final socketFile = File(socketPath);
-    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    final deadline = DateTime.now().add(bindTimeout);
     while (DateTime.now().isBefore(deadline)) {
       if (socketFile.existsSync()) break;
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     if (!socketFile.existsSync()) {
       process.kill(ProcessSignal.sigkill);
+      // Best-effort cleanup of the per-test temp directory before throwing.
+      try {
+        tmpDir.deleteSync(recursive: true);
+      } catch (_) {
+        // ignore — caller will see the bind failure anyway
+      }
       throw StateError(
-        'Mock daemon failed to bind socket at $socketPath within 2 s',
+        'Mock daemon failed to bind socket at $socketPath '
+        'within ${bindTimeout.inMilliseconds} ms',
       );
     }
 
@@ -68,10 +82,11 @@ class MockDaemonClient {
       socketPath: socketPath,
       fixturePath: fixtureFile.path,
       process: process,
+      tmpDir: tmpDir,
     );
   }
 
-  /// Kills the harness process + removes the socket file.
+  /// Kills the harness process + removes the socket file + per-test tmp dir.
   Future<void> stop() async {
     _process.kill(ProcessSignal.sigterm);
     await _process.exitCode.timeout(
@@ -82,6 +97,19 @@ class MockDaemonClient {
       },
     );
     final socketFile = File(socketPath);
-    if (socketFile.existsSync()) socketFile.deleteSync();
+    if (socketFile.existsSync()) {
+      try {
+        socketFile.deleteSync();
+      } catch (_) {
+        // Best-effort — the recursive tmpDir delete below will catch it.
+      }
+    }
+    if (_tmpDir.existsSync()) {
+      try {
+        _tmpDir.deleteSync(recursive: true);
+      } catch (_) {
+        // Leave the leftover for the OS reaper rather than failing tearDown.
+      }
+    }
   }
 }

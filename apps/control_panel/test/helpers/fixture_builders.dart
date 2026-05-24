@@ -1,4 +1,4 @@
-import '../../lib/domain/models/common_enums.dart';
+import 'package:agenttower_control_panel/domain/models/common_enums.dart';
 
 /// Test fixture builders for integration + unit tests. T053 (Phase 2 Foundational).
 ///
@@ -8,8 +8,7 @@ import '../../lib/domain/models/common_enums.dart';
 ///
 /// Convention: builders accept named optional parameters with sensible
 /// defaults so a test reads `agentFixture(role: 'master')` not 18 lines of
-/// boilerplate. `.copyWith`-style maps via `..addAll(overrides)` when more
-/// flexibility is needed.
+/// boilerplate.
 
 class Fixtures {
   Fixtures._();
@@ -215,5 +214,210 @@ class Fixtures {
         'emitted_at': DateTime.now().toUtc().toIso8601String(),
         'summary': summary,
         'lifecycle': 'incoming',
+      };
+
+  // ---- Event (FR-019 Agent Operations → Events view) ----
+  /// Builder for the `app.event` list/detail surface (T5 review fix).
+  static Map<String, dynamic> event({
+    String eventId = 'evt-1',
+    String eventClass = 'route_skipped',
+    String? agentId = 'agent-1',
+    String? containerId = 'bench-1',
+    String? paneId = 'p1',
+    String? queueMessageId,
+    NotificationSeverity severity = NotificationSeverity.warning,
+    String? emittedAt,
+    String summary = 'Route skipped: source agent paused',
+    Map<String, dynamic>? extra,
+  }) =>
+      {
+        'event_id': eventId,
+        'event_class': eventClass,
+        if (agentId != null) 'agent_id': agentId,
+        if (containerId != null) 'container_id': containerId,
+        if (paneId != null) 'pane_id': paneId,
+        if (queueMessageId != null) 'queue_message_id': queueMessageId,
+        'severity': severity.wireValue,
+        'emitted_at': emittedAt ?? DateTime.now().toUtc().toIso8601String(),
+        'summary': summary,
+        if (extra != null) ...extra,
+      };
+
+  // ---- Queue Row (FR-020 5-state safe-prompt queue) ----
+  /// Builder for the `app.queue` list/detail surface (T5 review fix).
+  static Map<String, dynamic> queueRow({
+    String messageId = 'q-1',
+    String state = 'blocked',
+    String fromAgentId = 'agent-1',
+    String toAgentId = 'agent-2',
+    String? routeId,
+    String? reason,
+    String? createdAt,
+    String? lastTransitionAt,
+    Map<String, dynamic>? payloadPreview,
+  }) =>
+      {
+        'message_id': messageId,
+        'state': state,
+        'from_agent_id': fromAgentId,
+        'to_agent_id': toAgentId,
+        if (routeId != null) 'route_id': routeId,
+        if (reason != null) 'reason': reason,
+        'created_at': createdAt ?? DateTime.now().toUtc().toIso8601String(),
+        'last_transition_at':
+            lastTransitionAt ?? DateTime.now().toUtc().toIso8601String(),
+        'payload_preview': payloadPreview ?? const {},
+      };
+
+  // ---- Route (FR-021 Routes view) ----
+  /// Builder for the `app.route` list/detail surface (T5 review fix).
+  static Map<String, dynamic> route({
+    String routeId = 'route-1',
+    String fromAgentId = 'agent-1',
+    String toAgentId = 'agent-2',
+    bool enabled = true,
+    String? label,
+    int matchedCount = 0,
+    int skippedCount = 0,
+    String? lastMatchedAt,
+    String? lastSkippedAt,
+    String? lastSkipReason,
+  }) =>
+      {
+        'route_id': routeId,
+        'from_agent_id': fromAgentId,
+        'to_agent_id': toAgentId,
+        'enabled': enabled,
+        if (label != null) 'label': label,
+        'matched_count': matchedCount,
+        'skipped_count': skippedCount,
+        if (lastMatchedAt != null) 'last_matched_at': lastMatchedAt,
+        if (lastSkippedAt != null) 'last_skipped_at': lastSkippedAt,
+        if (lastSkipReason != null) 'last_skip_reason': lastSkipReason,
+      };
+
+  // ---- Log Attachment (FR-017) ----
+  /// Builder for the `app.log_attachment` list surface (T5 review fix).
+  static Map<String, dynamic> logAttachment({
+    String attachmentId = 'log-1',
+    String agentId = 'agent-1',
+    String? paneId = 'p1',
+    String logPath = '/work/agenttower/logs/agent-1.log',
+    bool isAttached = true,
+    String? attachedAt,
+    String? detachedAt,
+    String? lastError,
+  }) =>
+      {
+        'log_attachment_id': attachmentId,
+        'agent_id': agentId,
+        if (paneId != null) 'pane_id': paneId,
+        'log_path': logPath,
+        'is_attached': isAttached,
+        'attached_at': attachedAt ?? DateTime.now().toUtc().toIso8601String(),
+        if (detachedAt != null) 'detached_at': detachedAt,
+        if (lastError != null) 'last_error': lastError,
+      };
+
+  // ---- Dashboard counts (FR-012 Agent Operations Dashboard) ----
+  /// Builder for the `app.dashboard` result envelope (T5 review fix).
+  static Map<String, dynamic> dashboardResult({
+    int containersActive = 1,
+    int containersInactive = 0,
+    int containersDegradedScan = 0,
+    Map<String, int>? panesByState,
+    Map<String, int>? agentsByState,
+    int blockedQueue = 0,
+    int recentlySkippedRoutes = 0,
+    List<Map<String, dynamic>>? recents,
+    Map<String, dynamic>? recommendedNextAction,
+    List<Map<String, dynamic>>? hints,
+  }) =>
+      {
+        'counts': {
+          'containers': {
+            'active': containersActive,
+            'inactive': containersInactive,
+            'degraded_scan': containersDegradedScan,
+          },
+          'panes_by_state':
+              panesByState ?? const {'discovered-and-unmanaged': 1},
+          'registered_agents_by_state': agentsByState ?? const {},
+          'blocked_queue': blockedQueue,
+          'recently_skipped_routes': recentlySkippedRoutes,
+        },
+        'recents': recents ?? const [],
+        'recommended_next_action': recommendedNextAction,
+        'hints': hints ?? const [],
+      };
+
+  // ---- Preflight (FR-009 doctor + Settings) ----
+  /// Builder for the `app.preflight` result envelope (T5 review fix).
+  static Map<String, dynamic> preflightResult({
+    bool ok = true,
+    List<Map<String, dynamic>>? checks,
+  }) =>
+      {
+        'ok': ok,
+        'checks': checks ??
+            const [
+              {
+                'name': 'daemon_socket',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+            ],
+      };
+
+  // ---- Readiness (FR-022 Health view) ----
+  /// Builder for the `app.readiness` result envelope (T5 review fix).
+  static Map<String, dynamic> readinessResult({
+    String state = 'ready',
+    List<Map<String, dynamic>>? subsystems,
+    List<Map<String, dynamic>>? hints,
+  }) =>
+      {
+        'state': state,
+        'subsystems': subsystems ??
+            const [
+              {
+                'name': 'docker',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+              {
+                'name': 'tmux_discovery',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+              {
+                'name': 'sqlite',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+              {
+                'name': 'jsonl',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+              {
+                'name': 'routing_worker',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+              {
+                'name': 'log_attachment_workers',
+                'status': 'ok',
+                'reason': '',
+                'hint': null,
+              },
+            ],
+        'hints': hints ?? const [],
       };
 }

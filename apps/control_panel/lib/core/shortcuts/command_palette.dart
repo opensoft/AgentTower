@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// Global command palette opened with Ctrl/Cmd+K. T035 + research R-20.
 ///
@@ -9,25 +10,44 @@ import 'package:flutter/material.dart';
 ///   - Doctor invocation
 ///   - Every documented primary action
 ///
-/// MVP implementation: typed command registry + fuzzy-match filter +
-/// keyboard-navigable list. Concrete commands are registered by each
-/// feature module via [CommandRegistry.register] and live-update as
-/// new modules load.
-class CommandRegistry {
-  CommandRegistry._();
+/// Implementation: feature modules call
+/// `ref.read(commandRegistryProvider.notifier).register(cmd)` during their
+/// own `build()` (typically inside a `Consumer` at workspace mount time).
+/// The palette dialog reads the current list via `ref.watch(commandRegistry
+/// Provider)` so a new module's commands appear without a hot-restart.
+///
+/// The previous implementation used a process-static mutable list, which
+/// review finding A3 flagged as: (a) untracked by Riverpod (palette would
+/// not re-render when commands changed), and (b) leaky across widget tests
+/// in the same isolate. Both are fixed here.
 
-  static final List<PaletteCommand> _commands = [];
+/// Riverpod-managed command registry. Read the current list with
+/// `ref.watch(commandRegistryProvider)`; mutate via
+/// `ref.read(commandRegistryProvider.notifier).register(...)`.
+final commandRegistryProvider =
+    NotifierProvider<CommandRegistryNotifier, List<PaletteCommand>>(
+  CommandRegistryNotifier.new,
+);
 
-  static void register(PaletteCommand command) {
-    _commands.removeWhere((c) => c.id == command.id);
-    _commands.add(command);
+class CommandRegistryNotifier extends Notifier<List<PaletteCommand>> {
+  @override
+  List<PaletteCommand> build() => const [];
+
+  /// Idempotent on `id` — a re-registration with the same id replaces
+  /// the previous entry (useful when a feature widget rebuilds).
+  void register(PaletteCommand command) {
+    final without = state.where((c) => c.id != command.id).toList(growable: true)
+      ..add(command);
+    state = List.unmodifiable(without);
   }
 
-  static void unregister(String id) {
-    _commands.removeWhere((c) => c.id == id);
+  void unregister(String id) {
+    state = List.unmodifiable(state.where((c) => c.id != id));
   }
 
-  static List<PaletteCommand> snapshot() => List.unmodifiable(_commands);
+  void clear() {
+    state = const [];
+  }
 }
 
 /// A single command surfaced in the palette.
@@ -54,9 +74,11 @@ class PaletteCommand {
 }
 
 /// Command palette dialog.
-class CommandPalette extends StatefulWidget {
+class CommandPalette extends ConsumerStatefulWidget {
   const CommandPalette({super.key});
 
+  /// Convenience opener — feature modules trigger this from the Ctrl/Cmd+K
+  /// keyboard shortcut binding in `shortcuts.dart`.
   static Future<void> show(BuildContext context) async {
     await showDialog<void>(
       context: context,
@@ -65,19 +87,16 @@ class CommandPalette extends StatefulWidget {
   }
 
   @override
-  State<CommandPalette> createState() => _CommandPaletteState();
+  ConsumerState<CommandPalette> createState() => _CommandPaletteState();
 }
 
-class _CommandPaletteState extends State<CommandPalette> {
+class _CommandPaletteState extends ConsumerState<CommandPalette> {
   final _controller = TextEditingController();
-  late List<PaletteCommand> _all;
-  late List<PaletteCommand> _filtered;
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
-    _all = CommandRegistry.snapshot();
-    _filtered = _all;
     _controller.addListener(_onQueryChanged);
   }
 
@@ -89,14 +108,7 @@ class _CommandPaletteState extends State<CommandPalette> {
   }
 
   void _onQueryChanged() {
-    final q = _controller.text.toLowerCase().trim();
-    setState(() {
-      if (q.isEmpty) {
-        _filtered = _all;
-      } else {
-        _filtered = _all.where((c) => _fuzzyMatch(c, q)).toList();
-      }
-    });
+    setState(() => _query = _controller.text.toLowerCase().trim());
   }
 
   bool _fuzzyMatch(PaletteCommand c, String q) {
@@ -110,6 +122,10 @@ class _CommandPaletteState extends State<CommandPalette> {
 
   @override
   Widget build(BuildContext context) {
+    final all = ref.watch(commandRegistryProvider);
+    final filtered = _query.isEmpty
+        ? all
+        : all.where((c) => _fuzzyMatch(c, _query)).toList(growable: false);
     return SizedBox(
       width: 560,
       height: 420,
@@ -129,19 +145,27 @@ class _CommandPaletteState extends State<CommandPalette> {
           const Divider(height: 1),
           Expanded(
             child: ListView.builder(
-              itemCount: _filtered.length,
+              itemCount: filtered.length,
               itemBuilder: (context, i) {
-                final cmd = _filtered[i];
+                final cmd = filtered[i];
                 return ListTile(
                   title: Text(cmd.label),
                   subtitle: Text(cmd.category),
                   trailing: cmd.shortcut == null
                       ? null
-                      : Text(cmd.shortcut!,
-                          style: Theme.of(context).textTheme.bodySmall),
+                      : Text(
+                          cmd.shortcut!,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                   onTap: () async {
-                    Navigator.of(context).pop();
-                    await cmd.invoke(context);
+                    // Capture the Navigator BEFORE the awaited gap so we
+                    // never reuse a `BuildContext` that may have been
+                    // detached by the time `invoke` returns (D3 lint).
+                    final nav = Navigator.of(context);
+                    final paletteContext = context;
+                    nav.pop();
+                    if (!paletteContext.mounted) return;
+                    await cmd.invoke(paletteContext);
                   },
                 );
               },
@@ -152,3 +176,4 @@ class _CommandPaletteState extends State<CommandPalette> {
     );
   }
 }
+

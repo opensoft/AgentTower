@@ -2,16 +2,21 @@ import '../../domain/models/common_enums.dart';
 
 /// Per-surface minimum required `app_contract_version` map (T015 + Round-3 R-27).
 ///
-/// **Code-derived at build time**: each feature module declares the `app.*`
-/// methods it consumes; a build-time tool (TODO: T027/T143 doctor surface
-/// integration) computes this map by walking the call sites. For now, the
-/// map is hand-rolled here as a placeholder. When the build-time codegen
-/// lands, this file becomes generated output (`contract_compat_map.g.dart`).
+/// Each feature module declares the minimum `app_contract_version` its
+/// surfaces require by calling [ContractRegistry.declare] (typically inside
+/// the file that declares the surface's Riverpod providers). A
+/// short-lived bootstrap step in `main.dart` seeds the well-known surfaces
+/// for which provider files do not yet exist.
 ///
-/// Per FR-002, surfaces whose minimum version is unmet by the running daemon
-/// degrade to read-only with the documented `contract-version-incompatible`
-/// state from FR-004. Mutations on those surfaces are disabled with an
-/// inline explanation.
+/// Per FR-002, surfaces whose minimum version is unmet by the running
+/// daemon degrade to read-only with the documented
+/// `contract-version-incompatible` state from FR-004. Mutations on those
+/// surfaces are disabled with an inline explanation.
+///
+/// Per Round-3 R-27 this should ultimately become code-derived at build
+/// time. Until then, the runtime registry below replaces the previous
+/// central hand-rolled map (review finding A5) so adding a new surface
+/// touches only its own file.
 
 class ContractVersion {
   const ContractVersion(this.major, this.minor);
@@ -46,37 +51,84 @@ class ContractVersion {
 /// gates on a contract version.
 typedef SurfaceId = String;
 
-/// Per-surface minimum required contract version. Hand-rolled at MVP; per
-/// Round-3 R-27 this becomes code-derived at build time. The Settings →
-/// Doctor surface (T026) renders this map.
-class ContractCompatMap {
+/// Runtime registry of per-surface contract minimums. Feature modules
+/// call [declare] at module load (`main.dart` seeds the MVP set below).
+/// The Settings → Doctor surface (T026) reads [snapshot] to render the
+/// FR-002 banner + per-surface degradation list.
+class ContractRegistry {
+  ContractRegistry._();
+
+  /// Minimum app-wide contract version. Below this even bootstrap fails.
   static const ContractVersion appMinimum = ContractVersion(1, 0);
 
-  /// Each surface declares its minimum required version. Surfaces NOT in this
-  /// map default to [appMinimum] (1.0) — i.e. they work on any v1.x daemon.
-  static const Map<SurfaceId, ContractVersion> perSurfaceMinimum = {
-    // Phase 3 (US1) MVP surfaces — all on v1.0.
-    'agent_ops/dashboard': ContractVersion(1, 0),
-    'agent_ops/containers': ContractVersion(1, 0),
-    'agent_ops/panes': ContractVersion(1, 0),
-    'agent_ops/agents': ContractVersion(1, 0),
-    'agent_ops/events': ContractVersion(1, 0),
-    'agent_ops/queue': ContractVersion(1, 0),
-    'agent_ops/routes': ContractVersion(1, 0),
-    'agent_ops/health': ContractVersion(1, 0),
+  static final Map<SurfaceId, ContractVersion> _declarations = {};
 
-    // Phase 4-8 surfaces — anticipated FEAT-011 v1.x bumps per
-    // contracts/app-methods-consumed.md §3.
-    'project_specs/projects': ContractVersion(1, 1),
-    'project_specs/current_work': ContractVersion(1, 1),
-    'project_specs/specs': ContractVersion(1, 1),
-    'project_specs/changes': ContractVersion(1, 1),
-    'project_specs/drift': ContractVersion(1, 1),
-    'project_specs/handoff': ContractVersion(1, 1),
-    'testing_demo/available_validation': ContractVersion(1, 1),
-    'testing_demo/runs': ContractVersion(1, 1),
-    'testing_demo/demo_readiness': ContractVersion(1, 1),
-  };
+  /// Declares that [surface] requires at least [minimum] from the
+  /// daemon. Idempotent on `surface`: a second `declare` with a lower
+  /// minimum is ignored; a higher one wins. This guards against a
+  /// late-loading module that declares an older version stomping a
+  /// newer one already on file.
+  static void declare(SurfaceId surface, ContractVersion minimum) {
+    final existing = _declarations[surface];
+    if (existing == null || _isHigher(minimum, existing)) {
+      _declarations[surface] = minimum;
+    }
+  }
+
+  /// Returns an unmodifiable view of the current declarations.
+  static Map<SurfaceId, ContractVersion> snapshot() =>
+      Map.unmodifiable(_declarations);
+
+  /// Test-only: clears all declarations so each test starts from a clean slate.
+  static void resetForTesting() => _declarations.clear();
+
+  static bool _isHigher(ContractVersion a, ContractVersion b) =>
+      a.major > b.major || (a.major == b.major && a.minor > b.minor);
+}
+
+/// Seeds the MVP per-surface declarations. Called once from `main.dart`
+/// (and from test setup). Each US-phase task that introduces a new
+/// surface should add a `ContractRegistry.declare(...)` line either here
+/// or — preferably — in its own feature file at module load time.
+void seedMvpContractDeclarations() {
+  // Phase 3 (US1) MVP surfaces — all on v1.0.
+  ContractRegistry.declare('agent_ops/dashboard', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/containers', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/panes', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/agents', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/events', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/queue', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/routes', const ContractVersion(1, 0));
+  ContractRegistry.declare('agent_ops/health', const ContractVersion(1, 0));
+
+  // Phase 4-8 surfaces — anticipated FEAT-011 v1.x bumps per
+  // contracts/app-methods-consumed.md §3.
+  ContractRegistry.declare(
+      'project_specs/projects', const ContractVersion(1, 1));
+  ContractRegistry.declare(
+      'project_specs/current_work', const ContractVersion(1, 1));
+  ContractRegistry.declare('project_specs/specs', const ContractVersion(1, 1));
+  ContractRegistry.declare(
+      'project_specs/changes', const ContractVersion(1, 1));
+  ContractRegistry.declare('project_specs/drift', const ContractVersion(1, 1));
+  ContractRegistry.declare(
+      'project_specs/handoff', const ContractVersion(1, 1));
+  ContractRegistry.declare(
+      'testing_demo/available_validation', const ContractVersion(1, 1));
+  ContractRegistry.declare('testing_demo/runs', const ContractVersion(1, 1));
+  ContractRegistry.declare(
+      'testing_demo/demo_readiness', const ContractVersion(1, 1));
+}
+
+/// Back-compat shim around the old `ContractCompatMap.appMinimum` /
+/// `ContractCompatMap.perSurfaceMinimum` accessors. New code should
+/// prefer [ContractRegistry] directly.
+class ContractCompatMap {
+  ContractCompatMap._();
+
+  static ContractVersion get appMinimum => ContractRegistry.appMinimum;
+  static Map<SurfaceId, ContractVersion> get perSurfaceMinimum =>
+      ContractRegistry.snapshot();
 }
 
 /// Result of comparing the daemon's contract version against the app's
@@ -111,17 +163,18 @@ class ContractCompat {
     return RuntimeStateKind.runtimeHealthyPopulated;
   }
 
-  /// Compute the compatibility report for a given daemon version.
+  /// Compute the compatibility report for a given daemon version against
+  /// every currently-declared surface in [ContractRegistry].
   static ContractCompat compute(ContractVersion daemonVersion) {
     final unmet = <SurfaceId, ContractVersion>{};
-    for (final entry in ContractCompatMap.perSurfaceMinimum.entries) {
+    for (final entry in ContractRegistry.snapshot().entries) {
       if (!daemonVersion.satisfies(entry.value)) {
         unmet[entry.key] = entry.value;
       }
     }
     return ContractCompat(
       daemonVersion: daemonVersion,
-      appMinimum: ContractCompatMap.appMinimum,
+      appMinimum: ContractRegistry.appMinimum,
       unmetSurfaces: unmet,
     );
   }

@@ -14,24 +14,16 @@ import 'session.dart';
 /// All write surfaces auto-generate an `idempotency_key` (uuid v4) per
 /// Round-3 R-28; helpers for that live in `mutation_keys.dart` (T028
 /// dependency, added when first US-phase mutation lands).
+///
+/// `app.preflight` is intentionally NOT exposed here: it does not require
+/// a session token and must be callable BEFORE bootstrap (see review
+/// finding A4). Use [PreflightClient] from `preflight_client.dart`
+/// instead; the Doctor surface (T026/T143) consumes it directly via
+/// `preflightClientProvider`.
 class AppClient {
   AppClient({required this.session});
 
   final DaemonSession session;
-
-  /// `app.preflight` — no session required, diagnostic codes only. Per
-  /// `contracts/app-methods-consumed.md` §1.
-  /// Returns the raw result map. Caller interprets `checks[]` / `ok` fields.
-  Future<Map<String, dynamic>> preflight() async {
-    // Preflight does not require a session token; bypass DaemonSession.call.
-    // Currently DaemonSession.call requires isReady — preflight is a special
-    // case that should run BEFORE bootstrap. The actual preflight wiring is
-    // deferred to the Settings → Doctor surface (T026/T143), which spawns
-    // a one-shot SocketClient + sendLine without going through this class.
-    throw UnimplementedError(
-      'preflight is handled directly by the doctor surface (T026/T143); see contracts/app-methods-consumed.md §1',
-    );
-  }
 
   /// `app.readiness` — per-subsystem readiness probe (FR-022).
   /// Returns raw result; Health view (T076) interprets fields.

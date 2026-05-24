@@ -1,63 +1,80 @@
-/// FEAT-011 closed-set error vocabulary (27 codes per FEAT-011 FR-034).
+/// FEAT-011 closed-set error vocabulary (27 codes at app_contract_version 1.0).
 /// T012 (Phase 2 Foundational).
 ///
-/// Two codes have per-surface UI treatment per `contracts/app-methods-consumed.md` §8:
+/// Source of truth: `specs/011-app-backend-contract/contracts/error-codes.md`.
+/// Adding a new code is an additive minor; removing/renaming a code is a
+/// major bump (FR-034). This enum MUST match the closed set entry-for-entry.
+///
+/// Two codes have per-surface UI treatment per
+/// `contracts/app-methods-consumed.md` §8:
 /// - [appContractMajorUnsupported] → triggers FR-002 global banner +
 ///   per-surface contract-version-incompatible state + disabled mutations
 /// - [hostOnly] → should never reach the desktop app (host-only by FR-061);
 ///   if observed, log + runtime-degraded indicator
+///
+/// Codes prefixed with a daemon subsystem (`docker_unavailable`,
+/// `tmux_unavailable`) are surface-degradation hints, not failures of the
+/// app itself — see FR-022 / FR-072 for the rendering rules.
 
 enum AppContractErrorCode {
-  // Bootstrap / version
+  // Session lifecycle
+  appSessionRequired('app_session_required'),
+  appSessionExpired('app_session_expired'),
   appContractMajorUnsupported('app_contract_major_unsupported'),
-  sessionExpired('session_expired'),
-  tooManySessions('too_many_sessions'),
-
-  // Connection / framing
-  malformedRequest('malformed_request'),
-  payloadTooLarge('payload_too_large'),
-  hostOnly('host_only'),
 
   // Method dispatch
-  methodNotFound('method_not_found'),
-  methodNotImplemented('method_not_implemented'),
+  unknownMethod('unknown_method'),
+
+  // Wire framing (FR-003a/b)
+  malformedRequest('malformed_request'),
+  payloadTooLarge('payload_too_large'),
 
   // Validation
   validationFailed('validation_failed'),
   notFound('not_found'),
-  conflict('conflict'),
 
-  // Auth / permission
-  permissionDenied('permission_denied'),
-  forbidden('forbidden'),
-
-  // State guards
+  // Queue lifecycle (FEAT-009)
   staleObject('stale_object'),
-  terminalStateGuard('terminal_state_guard'),
-  preconditionFailed('precondition_failed'),
 
-  // Pagination / cursor
-  staleCursor('stale_cursor'),
-  invalidLimit('invalid_limit'),
+  // Pane adopt
+  paneAlreadyRegistered('pane_already_registered'),
+  paneNotFound('pane_not_found'),
 
-  // Subsystem availability
-  subsystemUnavailable('subsystem_unavailable'),
-  scanInProgress('scan_in_progress'),
-  scanNotFound('scan_not_found'),
-  scanTimeout('scan_timeout'),
-  queueRejected('queue_rejected'),
+  // Entity-specific not-found
+  agentNotFound('agent_not_found'),
   routeNotFound('route_not_found'),
+  queueMessageNotFound('queue_message_not_found'),
+
+  // Scans
+  scanTimeout('scan_timeout'),
+  scanNotFound('scan_not_found'),
+
+  // Preflight / subsystem diagnostics
+  daemonUnavailable('daemon_unavailable'),
+  socketMissing('socket_missing'),
+  socketPermissionDenied('socket_permission_denied'),
+  dockerUnavailable('docker_unavailable'),
+  tmuxUnavailable('tmux_unavailable'),
+
+  // Mutation guards
+  containerInactive('container_inactive'),
+  logAttachBlocked('log_attach_blocked'),
+  routingDisabled('routing_disabled'),
+
+  // Auth / peer
+  permissionDenied('permission_denied'),
+  hostOnly('host_only'),
 
   // Generic
-  internalError('internal_error'),
-  rateLimited('rate_limited'),
-  unimplemented('unimplemented');
+  internalError('internal_error');
 
   const AppContractErrorCode(this.wireValue);
   final String wireValue;
 
-  static AppContractErrorCode fromWire(String v) =>
-      values.firstWhere(
+  /// Resolves a wire string to its enum variant. Unknown codes (added in a
+  /// future minor) map to [internalError] so the app degrades gracefully
+  /// per SC-009 instead of crashing.
+  static AppContractErrorCode fromWire(String v) => values.firstWhere(
         (e) => e.wireValue == v,
         orElse: () => AppContractErrorCode.internalError,
       );

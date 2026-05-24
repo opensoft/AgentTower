@@ -33,9 +33,17 @@ class SettingsRepository {
 
   /// Persists [settings] back to the UX state via the shared repository
   /// (debounced + atomic per R-05).
-  void save(Settings settings) {
+  void save(Settings settings) => _updateKey('settings', settings.toJson());
+
+  /// Convenience helper for callers that only need to mutate a single
+  /// top-level key in `ux-state.json` without re-serializing the entire
+  /// [Settings] object (review fix M-A3). The copy-on-write pattern in
+  /// the body is the same shape [save] uses; centralizing it here means
+  /// future feature modules that need to persist their own slice of the
+  /// shared state file don't have to re-derive it.
+  void _updateKey(String key, Object value) {
     final current = Map<String, dynamic>.from(uxState.current ?? const {});
-    current['settings'] = settings.toJson();
+    current[key] = value;
     uxState.update(current);
   }
 }

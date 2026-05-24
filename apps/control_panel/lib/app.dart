@@ -2,15 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/l10n/l10n_wiring.dart';
-import 'features/shell/global_banner.dart';
 import 'routing/router.dart';
 import 'ui/theme/color_tokens.dart';
 
 /// Top-level `MaterialApp` widget. T045 (Phase 2 Foundational).
 ///
 /// Wires Material 3 theme (Light + Dark + System per R-15), i18n
-/// localization delegates (R-08 + R-23), the workspace routing registry
-/// (T046), and the FR-002 global banner overlay (T047).
+/// localization delegates (R-08 + R-23), and the workspace routing
+/// registry (T046).
+///
+/// The FR-002 global banner is rendered inside [AppShell] instead of in a
+/// `MaterialApp.builder` Column wrapper (review fix M-A1) — the previous
+/// builder Column forced every route to live inside an extra Column,
+/// which broke widgets that expected to fill the full canvas.
 ///
 /// The actual `AppLocalizations.delegate` import is conditional on
 /// `flutter gen-l10n` having run (post-T009). The import line is commented
@@ -31,16 +35,8 @@ class AgentTowerControlPanel extends ConsumerWidget {
         // AppLocalizations.delegate, // uncomment after flutter gen-l10n
       ],
       supportedLocales: supportedLocales,
+      initialRoute: AppRouter.initialRouteName,
       onGenerateRoute: AppRouter.onGenerateRoute,
-      builder: (context, child) {
-        // Inject the FR-002 banner above every route.
-        return Column(
-          children: [
-            const GlobalBanner(),
-            Expanded(child: child ?? const SizedBox.shrink()),
-          ],
-        );
-      },
     );
   }
 }

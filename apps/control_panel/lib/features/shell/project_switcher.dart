@@ -10,7 +10,7 @@ class ProjectSwitcher extends StatelessWidget {
   const ProjectSwitcher({super.key});
 
   /// Single global shortcut per FR-007: Ctrl+P on Linux/Windows, Cmd+P on macOS.
-  static final ShortcutActivator activator = SingleActivator(
+  static const ShortcutActivator activator = SingleActivator(
     LogicalKeyboardKey.keyP,
     control: true, // wrapped by `meta` on macOS via PlatformMenuBar
   );

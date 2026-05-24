@@ -1,5 +1,10 @@
 # Codex Prompt — Spec Quality Pass for FEAT-012 (via OpenSpec)
 
+> **Status: HISTORICAL** — closed by OpenSpec change
+> `spec-quality-pass-feat-012` (archived
+> `openspec/changes/archive/2026-05-23-spec-quality-pass-feat-012/`).
+> Preserved for audit; not a current source of truth.
+
 **Created**: 2026-05-23
 **Target spec**: `specs/012-flutter-control-panel/spec.md`
 **Workflow**: OpenSpec change proposal (propose → apply, do NOT archive)

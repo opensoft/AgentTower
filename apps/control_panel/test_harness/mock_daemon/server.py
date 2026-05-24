@@ -4,7 +4,8 @@ Listens on a temp Unix socket and speaks the FEAT-011 `app.*` envelope
 contract (`{ok, app_contract_version, result|error}`). Per-test process
 spawn so there is no cross-test state pollution. Parameterized by a JSON
 fixture file specifying which methods return which payloads (including
-error codes from FEAT-011's 27-entry closed-set vocabulary).
+error codes from FEAT-011's 27-entry closed-set vocabulary in
+`specs/011-app-backend-contract/contracts/error-codes.md`).
 
 Usage:
     python3 server.py --socket /tmp/agenttower-test.sock --fixture us1_happy_path.json
@@ -13,7 +14,10 @@ Fixture format:
     {
         "app_contract_version": "1.0",
         "daemon_version": "0.11.0",
-        "session_token": "test-session-token",
+        "app_session_token": "<uuid-v4-hex-36-chars>",
+        "app_session_id": 1,
+        "host_user_id": "1000",
+        "schema_version": 1,
         "responses": {
             "app.hello": {"ok": true, "result": {...}},
             "app.dashboard": {"ok": true, "result": {...}},
@@ -22,16 +26,17 @@ Fixture format:
         }
     }
 
-If a request method is not in `responses`, returns
-`{"ok": false, "error": {"code": "method_not_found", "message": "...", "details": {}}}`.
+If a request method is not in `responses`, returns the FEAT-011 closed-set
+code `unknown_method` (FR-034b) with `details == {}`.
 
-The harness enforces FEAT-011 FR-003a (1 MiB/8 MiB caps) and FR-003b
-(UTF-8 + \\n + no \\r / \\x00) so client-side framing bugs surface
-during tests.
+The harness enforces FEAT-011 FR-003a (1 MiB request / 8 MiB response caps)
+and FR-003b (UTF-8 + \\n + no \\r / \\x00) so client-side framing bugs
+surface during tests.
 """
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -40,6 +45,80 @@ from pathlib import Path
 REQUEST_CAP = 1024 * 1024
 RESPONSE_CAP = 8 * 1024 * 1024
 APP_CONTRACT_VERSION_DEFAULT = "1.0"
+
+
+def _envelope_failure(fixture, code, message, details=None):
+    """Build a FEAT-011 failure envelope with the canonical shape.
+
+    Per `specs/011-app-backend-contract/contracts/error-codes.md`, every
+    failure envelope is `{ok: false, app_contract_version, error: {code,
+    message, details}}` and `details` is ALWAYS an object (never null).
+    """
+    return {
+        "ok": False,
+        "app_contract_version": fixture.get(
+            "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
+        ),
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details if details is not None else {},
+        },
+    }
+
+
+def _envelope_app_contract_major_unsupported(fixture, client_major):
+    """FR-036 — daemon emits a structured failure with both versions in details.
+
+    Helper so tests that want to exercise the FR-002 banner path can
+    inject a fixture entry like `{"ok": false, "_use_helper":
+    "app_contract_major_unsupported"}` and the harness assembles the
+    canonical `details` payload.
+    """
+    return _envelope_failure(
+        fixture,
+        "app_contract_major_unsupported",
+        f"Daemon does not support app_contract major {client_major}",
+        {
+            "daemon_app_contract_version": fixture.get(
+                "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
+            ),
+            "client_app_contract_major": client_major,
+        },
+    )
+
+
+def _stamp_app_hello_result(result, fixture):
+    """Fill in the FEAT-011 contract-required fields on an `app.hello` success.
+
+    Per `contracts/app-methods.md` §app.hello, the success `result` MUST
+    contain: app_session_token, app_session_id, daemon_version,
+    schema_version, app_contract_version, supported_minor_range,
+    host_user_id, capability_flags, state.
+    """
+    result.setdefault(
+        "app_session_token",
+        fixture.get("app_session_token", "00000000-0000-4000-8000-000000000001"),
+    )
+    result.setdefault("app_session_id", fixture.get("app_session_id", 1))
+    result.setdefault(
+        "daemon_version", fixture.get("daemon_version", "0.0.0-mock")
+    )
+    result.setdefault("schema_version", fixture.get("schema_version", 1))
+    contract_version = fixture.get(
+        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
+    )
+    result.setdefault("app_contract_version", contract_version)
+    result.setdefault(
+        "supported_minor_range",
+        fixture.get(
+            "supported_minor_range",
+            {"min": contract_version, "max": contract_version},
+        ),
+    )
+    result.setdefault("host_user_id", fixture.get("host_user_id", "1000"))
+    result.setdefault("capability_flags", fixture.get("capability_flags", {}))
+    result.setdefault("state", "ok")
 
 
 async def handle_client(reader, writer, fixture):
@@ -52,53 +131,71 @@ async def handle_client(reader, writer, fixture):
             if not line:
                 break
             if len(line) > REQUEST_CAP:
-                err = {
-                    "ok": False,
-                    "app_contract_version": fixture.get(
-                        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
-                    ),
-                    "error": {
-                        "code": "payload_too_large",
-                        "message": f"Request exceeds {REQUEST_CAP}-byte cap (FR-003a)",
-                        "details": {"actual_bytes": len(line)},
+                err = _envelope_failure(
+                    fixture,
+                    "payload_too_large",
+                    f"Request exceeds {REQUEST_CAP}-byte cap (FR-003a)",
+                    {
+                        "size_limit_bytes": REQUEST_CAP,
+                        "actual_size_bytes": len(line),
                     },
-                }
+                )
                 writer.write((json.dumps(err) + "\n").encode("utf-8"))
                 await writer.drain()
                 continue
 
             # FR-003b strictness: reject \r or \x00 in the request line.
             stripped = line.rstrip(b"\n")
-            if b"\r" in stripped or b"\x00" in stripped:
-                err = {
-                    "ok": False,
-                    "app_contract_version": fixture.get(
-                        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
-                    ),
-                    "error": {
-                        "code": "malformed_request",
-                        "message": "Request contains forbidden control character (FR-003b)",
-                        "details": {},
-                    },
-                }
+            if b"\r" in stripped:
+                err = _envelope_failure(
+                    fixture,
+                    "malformed_request",
+                    "Request contains stray carriage return (FR-003b)",
+                    {"reason": "stray_carriage_return"},
+                )
+                writer.write((json.dumps(err) + "\n").encode("utf-8"))
+                await writer.drain()
+                continue
+            if b"\x00" in stripped:
+                err = _envelope_failure(
+                    fixture,
+                    "malformed_request",
+                    "Request contains embedded NUL byte (FR-003b)",
+                    {"reason": "embedded_nul"},
+                )
+                writer.write((json.dumps(err) + "\n").encode("utf-8"))
+                await writer.drain()
+                continue
+            if not stripped:
+                err = _envelope_failure(
+                    fixture,
+                    "malformed_request",
+                    "Empty request line (FR-003b)",
+                    {"reason": "empty_line"},
+                )
                 writer.write((json.dumps(err) + "\n").encode("utf-8"))
                 await writer.drain()
                 continue
 
             try:
                 req = json.loads(stripped.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as e:
-                err = {
-                    "ok": False,
-                    "app_contract_version": fixture.get(
-                        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
-                    ),
-                    "error": {
-                        "code": "malformed_request",
-                        "message": f"Failed to parse JSON: {e}",
-                        "details": {},
-                    },
-                }
+            except UnicodeDecodeError as e:
+                err = _envelope_failure(
+                    fixture,
+                    "malformed_request",
+                    f"Request is not valid UTF-8: {e}",
+                    {"reason": "invalid_utf8"},
+                )
+                writer.write((json.dumps(err) + "\n").encode("utf-8"))
+                await writer.drain()
+                continue
+            except json.JSONDecodeError as e:
+                err = _envelope_failure(
+                    fixture,
+                    "malformed_request",
+                    f"Failed to parse JSON: {e}",
+                    {"reason": "json_decode_error"},
+                )
                 writer.write((json.dumps(err) + "\n").encode("utf-8"))
                 await writer.drain()
                 continue
@@ -106,55 +203,54 @@ async def handle_client(reader, writer, fixture):
             method = req.get("method", "")
             req_id = req.get("id")
 
-            # Look up fixture response; fall back to method_not_found.
+            # Look up fixture response; fall back to unknown_method per FR-034b.
             response_template = fixture.get("responses", {}).get(method)
             if response_template is None:
-                response = {
-                    "ok": False,
-                    "app_contract_version": fixture.get(
-                        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
-                    ),
-                    "error": {
-                        "code": "method_not_found",
-                        "message": f"Mock daemon has no fixture for {method}",
-                        "details": {"method": method},
-                    },
-                }
+                response = _envelope_failure(
+                    fixture,
+                    "unknown_method",
+                    f"Mock daemon has no fixture for {method}",
+                )
             else:
-                # Deep-copy + stamp contract version + correlate by id.
-                response = dict(response_template)
+                # Deep-copy so tests that mutate response_template via setdefault
+                # below don't corrupt the next call's template.
+                response = copy.deepcopy(response_template)
+                # If a fixture explicitly opts into the helper-built failure,
+                # rebuild it now so client_app_contract_major is plumbed through.
+                if (
+                    response.get("ok") is False
+                    and response.get("_use_helper")
+                    == "app_contract_major_unsupported"
+                ):
+                    client_major = (
+                        req.get("params", {}).get("client_app_contract_major")
+                    )
+                    response = _envelope_app_contract_major_unsupported(
+                        fixture, client_major
+                    )
                 response.setdefault(
                     "app_contract_version",
-                    fixture.get("app_contract_version", APP_CONTRACT_VERSION_DEFAULT),
+                    fixture.get(
+                        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
+                    ),
                 )
 
             if req_id is not None:
                 response["id"] = req_id
 
-            # Special-case app.hello to inject session_token.
+            # Special-case app.hello to inject the full FEAT-011 success shape.
             if method == "app.hello" and response.get("ok"):
                 result = response.setdefault("result", {})
-                result.setdefault(
-                    "session_token", fixture.get("session_token", "mock-session-token")
-                )
-                result.setdefault(
-                    "daemon_version", fixture.get("daemon_version", "0.0.0-mock")
-                )
+                _stamp_app_hello_result(result, fixture)
 
             line_out = (json.dumps(response) + "\n").encode("utf-8")
             if len(line_out) > RESPONSE_CAP:
                 # Shouldn't happen in tests; fixtures should keep responses small.
-                err = {
-                    "ok": False,
-                    "app_contract_version": fixture.get(
-                        "app_contract_version", APP_CONTRACT_VERSION_DEFAULT
-                    ),
-                    "error": {
-                        "code": "internal_error",
-                        "message": "Mock-daemon response exceeds 8 MiB cap",
-                        "details": {},
-                    },
-                }
+                err = _envelope_failure(
+                    fixture,
+                    "internal_error",
+                    "Mock-daemon response exceeds 8 MiB cap",
+                )
                 writer.write((json.dumps(err) + "\n").encode("utf-8"))
             else:
                 writer.write(line_out)

@@ -66,7 +66,7 @@ class UxStateRepository {
 
     Map<String, dynamic> root;
     try {
-      final decoded = json.decode(contents);
+      final Object? decoded = json.decode(contents);
       if (decoded is! Map<String, dynamic>) throw const FormatException();
       root = decoded;
     } catch (_) {
@@ -150,13 +150,23 @@ class UxStateRepository {
       final dst = paths.uxStateFile;
       try {
         await tmp.writeAsString(encoded, flush: true);
-        if (dst.existsSync()) {
-          await dst.delete();
-        }
+        // Atomic replacement: rename() on POSIX is `rename(2)` which atomically
+        // replaces the destination. The previous delete-then-rename sequence
+        // (review fix S2) left a window in which a crash between the delete
+        // and the rename would lose the previous file outright. On Windows,
+        // File.rename falls back to MoveFileEx with MOVEFILE_REPLACE_EXISTING
+        // semantics, so the atomicity property holds there too.
         await tmp.rename(dst.path);
         _hasUnflushed = false;
       } catch (_) {
-        // Leave _hasUnflushed = true so next change retries.
+        // Leave _hasUnflushed = true so next change retries. Best-effort
+        // cleanup of the staging file so a half-written .tmp doesn't
+        // accumulate after a transient failure.
+        try {
+          if (tmp.existsSync()) await tmp.delete();
+        } catch (_) {
+          // ignore — recovery on next flush
+        }
       }
     });
   }

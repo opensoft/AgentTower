@@ -43,14 +43,19 @@ class Doctor {
       }
     }));
 
-    // 2. Peer UID match (FR-061). Cross-platform abstraction TBD; for now
-    //    we simply report the current process UID as a placeholder.
+    // 2. Peer UID match (FR-061). The real check requires SO_PEERCRED
+    //    (Linux), LOCAL_PEERCRED (macOS), or the Windows AF_UNIX file ACL
+    //    probe — all of which need platform-channel plumbing that lands in
+    //    T030. Until then this row MUST report `skipped`, not `pass`, so
+    //    operators are not given a false sense of security.
     checks.add(await _timedCheck('peer_uid_match', () async {
-      if (Platform.isLinux || Platform.isMacOS) {
-        final uid = Platform.environment['UID'] ?? 'unknown';
-        return _ok('Current process UID: $uid (full peer-UID check lands in T030)');
-      }
-      return _ok('Windows AF_UNIX file ACL inherits current-user permission');
+      final uid = Platform.isLinux || Platform.isMacOS
+          ? (Platform.environment['UID'] ?? 'unknown')
+          : 'n/a';
+      return _skipped(
+        'Peer-UID verification not yet implemented (lands in T030). '
+        'Process UID: $uid',
+      );
     }));
 
     // 3. app_contract_version satisfies surfaces

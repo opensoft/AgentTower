@@ -13,7 +13,25 @@ import 'dart:typed_data';
 /// transport. Satisfies FR-001 + FR-060 (refuses any non-local target —
 /// no host/port field is exposed anywhere in the client API).
 class SocketClient {
-  SocketClient(this._socketPath);
+  SocketClient(this._socketPath) {
+    // Most platforms cap the Unix-socket file path at a small length
+    // (Linux: 108, macOS / BSD: 104, Windows: 260 via AF_UNIX). A long
+    // path silently truncates and connect() fails with an obscure
+    // ENOENT. Surface the limit clearly instead so a misconfigured
+    // Settings → connection path produces a useful error in the
+    // FR-001 retry banner (review fix M-S2).
+    final byteLen = utf8.encode(_socketPath).length;
+    const maxSocketPathBytes = 104;
+    if (byteLen > maxSocketPathBytes) {
+      throw ArgumentError.value(
+        _socketPath,
+        'socketPath',
+        'Unix socket path is $byteLen bytes; OS-level cap is '
+            '$maxSocketPathBytes bytes on macOS/BSD and 108 on Linux. '
+            'Pick a shorter path (e.g. under \$XDG_RUNTIME_DIR).',
+      );
+    }
+  }
 
   static const int requestCapBytes = 1024 * 1024; // 1 MiB per FR-003a
   static const int responseCapBytes = 8 * 1024 * 1024; // 8 MiB per FR-003a
@@ -76,8 +94,15 @@ class SocketClient {
         jsonLine,
       );
     }
-    socket.add(bytes);
-    socket.add(const [0x0A]); // '\n'
+    // Single-write framing (review fix M-S1): emit `<json>\n` as one
+    // contiguous buffer so the underlying TCP/Unix-socket layer never
+    // observes a `<json>` chunk without its terminator. Two separate
+    // `add()` calls were vulnerable to a partial flush leaving the
+    // daemon waiting on a newline it would never receive.
+    final framed = Uint8List(bytes.length + 1);
+    framed.setRange(0, bytes.length, bytes);
+    framed[bytes.length] = 0x0A;
+    socket.add(framed);
     await socket.flush();
   }
 

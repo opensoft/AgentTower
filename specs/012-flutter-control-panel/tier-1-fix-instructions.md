@@ -1,5 +1,9 @@
 # Tier-1 Plan-Side Fix Instructions
 
+> **Status: HISTORICAL** — all F-A1 / F-A2 / F-A11 + F1..F12 items closed
+> via direct plan-side edits and the `spec-quality-pass-feat-012`
+> OpenSpec change. Preserved for audit; not a current source of truth.
+
 **Date**: 2026-05-23
 **Source findings**: Round-2 checklist walk (`/speckit-checklist` re-verification pass) — see [alignment.md](./checklists/alignment.md), [quickstart-quality.md](./checklists/quickstart-quality.md).
 **Scope**: Three Tier-1 findings (F-A1, F-A2, F-A11).
