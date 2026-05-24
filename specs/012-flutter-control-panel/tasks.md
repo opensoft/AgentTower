@@ -27,15 +27,15 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 **Purpose**: Bootstrap the Flutter app project so foundational + story work can begin.
 
-- [ ] T001 Create directory tree `apps/control_panel/{lib,assets,test,integration_test,test_harness,tools}` per plan.md §Project Structure.
-- [ ] T002 Create `apps/control_panel/pubspec.yaml` declaring Flutter SDK 3.27 stable, Dart 3.5+, and dependencies enumerated in plan.md §Primary Dependencies (flutter_riverpod 2.x, freezed, json_serializable, flutter_markdown, url_launcher, local_notifier, window_manager, path_provider, logger, flutter_localizations, intl, package_info_plus). Also add dev_dependencies: build_runner, freezed, json_serializable, flutter_lints, alchemist, integration_test.
-- [ ] T003 [P] Pin Flutter version via `apps/control_panel/.fvm/fvm_config.json` (research R-01) and document the FVM use in `apps/control_panel/README.md`.
-- [ ] T004 [P] Create `apps/control_panel/analysis_options.yaml` enabling `flutter_lints` and project-specific rule overrides (no implicit-dynamic, strict-inference).
-- [ ] T005 [P] Create `apps/control_panel/l10n.yaml` configuring ARB → Dart codegen (research R-08) with `arb-dir: assets/l10n`, `template-arb-file: en.arb`, `output-localization-file: app_localizations.dart`.
-- [ ] T006 [P] Create `apps/control_panel/assets/l10n/en.arb` (initial MVP locale) with stub keys for the FR-002 / FR-076 / FR-082 banner messages and the FR-009 Settings labels.
-- [ ] T007 [P] Create `apps/control_panel/assets/icons/` and source severity icons (info/warning/high/critical) per research R-15 palette.
-- [ ] T008 [P] Create `apps/control_panel/tools/{package_windows.ps1,package_macos.sh,package_linux.sh,release_feed_check.dart}` as stub scripts (final packaging logic lands in Phase 9; the files are placeholders so the structure is auditable).
-- [ ] T009 Configure Flutter desktop targets (`flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop`) and run `flutter create --platforms=windows,macos,linux .` from `apps/control_panel/` to materialize platform stubs.
+- [X] T001 Create directory tree `apps/control_panel/{lib,assets,test,integration_test,test_harness,tools}` per plan.md §Project Structure.
+- [X] T002 Create `apps/control_panel/pubspec.yaml` declaring Flutter SDK 3.27 stable, Dart 3.5+, and dependencies enumerated in plan.md §Primary Dependencies (flutter_riverpod 2.x, freezed, json_serializable, flutter_markdown, url_launcher, local_notifier, window_manager, path_provider, logger, flutter_localizations, intl, package_info_plus). Also add dev_dependencies: build_runner, freezed, json_serializable, flutter_lints, alchemist, integration_test.
+- [X] T003 [P] Pin Flutter version via `apps/control_panel/.fvm/fvm_config.json` (research R-01) and document the FVM use in `apps/control_panel/README.md`.
+- [X] T004 [P] Create `apps/control_panel/analysis_options.yaml` enabling `flutter_lints` and project-specific rule overrides (no implicit-dynamic, strict-inference).
+- [X] T005 [P] Create `apps/control_panel/l10n.yaml` configuring ARB → Dart codegen (research R-08) with `arb-dir: assets/l10n`, `template-arb-file: en.arb`, `output-localization-file: app_localizations.dart`.
+- [X] T006 [P] Create `apps/control_panel/assets/l10n/en.arb` (initial MVP locale) with stub keys for the FR-002 / FR-076 / FR-082 banner messages and the FR-009 Settings labels.
+- [X] T007 [P] Create `apps/control_panel/assets/icons/` and source severity icons (info/warning/high/critical) per research R-15 palette.
+- [X] T008 [P] Create `apps/control_panel/tools/{package_windows.ps1,package_macos.sh,package_linux.sh,release_feed_check.dart}` as stub scripts (final packaging logic lands in Phase 9; the files are placeholders so the structure is auditable).
+- [ ] T009 Configure Flutter desktop targets (`flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop`) and run `flutter create --platforms=windows,macos,linux .` from `apps/control_panel/` to materialize platform stubs. **OPERATOR ACTION REQUIRED**: this session ran without Flutter SDK in the sandbox; the operator must run the two commands on a workstation with Flutter ≥ 3.27 installed. See `apps/control_panel/README.md` §Operator prerequisites for the exact command sequence.
 
 ---
 

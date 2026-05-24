@@ -1,0 +1,54 @@
+{
+  "@@locale": "en",
+  "@@author": "AgentTower FEAT-012 team",
+
+  "appTitle": "AgentTower Control Panel",
+  "@appTitle": {
+    "description": "Application title shown in window chrome (FR-010)."
+  },
+
+  "bannerContractVersionIncompatible": "Daemon contract version {currentVersion} is below the required minimum {requiredVersion}. Update the daemon or downgrade the app.",
+  "@bannerContractVersionIncompatible": {
+    "description": "Global banner per FR-002 when bootstrap finds the daemon's app_contract_version below the app's minimum required version.",
+    "placeholders": {
+      "currentVersion": { "type": "String", "example": "1.0" },
+      "requiredVersion": { "type": "String", "example": "1.1" }
+    }
+  },
+
+  "bannerProjectNotResolved": "Last-active project \"{projectLabel}\" could not be restored. Select a project from the Projects view to continue.",
+  "@bannerProjectNotResolved": {
+    "description": "Non-blocking banner per FR-076 when the persisted last-active project no longer resolves on launch.",
+    "placeholders": {
+      "projectLabel": { "type": "String", "example": "agenttower" }
+    }
+  },
+
+  "settingsSectionDisplay": "Display",
+  "@settingsSectionDisplay": { "description": "Settings group label per Round-3 R-25 (Display)." },
+
+  "settingsSectionNotifications": "Notifications",
+  "@settingsSectionNotifications": { "description": "Settings group label per Round-3 R-25 (Notifications)." },
+
+  "settingsSectionConnection": "Connection",
+  "@settingsSectionConnection": { "description": "Settings group label per Round-3 R-25 (Connection)." },
+
+  "settingsSectionPrivacy": "Privacy",
+  "@settingsSectionPrivacy": { "description": "Settings group label per Round-3 R-25 (Privacy)." },
+
+  "settingsSectionDiagnostics": "Diagnostics",
+  "@settingsSectionDiagnostics": { "description": "Settings group label per Round-3 R-25 (Diagnostics)." },
+
+  "settingsResetToDefaults": "Reset to defaults",
+  "@settingsResetToDefaults": { "description": "Settings global reset button per Round-3 R-25." },
+
+  "trustModelFirstLaunchStatement": "This app talks only to a daemon running as your local user via a Unix socket. It does not connect to remote services. It does not authenticate users beyond your operating-system user.",
+  "@trustModelFirstLaunchStatement": {
+    "description": "First-launch trust model statement per FR-061 (verbatim text from Round-3 R-30)."
+  },
+
+  "attentionQueueEmpty": "All clear — no actionable items",
+  "@attentionQueueEmpty": {
+    "description": "Empty-state copy for the attention queue per Round-3 R-33."
+  }
+}
