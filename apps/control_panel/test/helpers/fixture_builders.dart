@@ -657,6 +657,60 @@ class Fixtures {
         'linked_feature_ids': linkedFeatureIds,
       };
 
+  // ---- Attention item (Phase 8 US6 / T131) ----
+  static Map<String, dynamic> attentionItem({
+    String attentionId = 'att-1',
+    String attentionClass = 'blocked_queue_row',
+    String severity = 'warning',
+    String? ageStartedAt,
+    String oneLineSummary = 'Queue row blocked awaiting approval',
+    Map<String, dynamic>? resolutionTarget,
+  }) =>
+      {
+        'attention_id': attentionId,
+        'attention_class': attentionClass,
+        'severity': severity,
+        'age_started_at':
+            ageStartedAt ?? DateTime.now().toUtc().toIso8601String(),
+        'one_line_summary': oneLineSummary,
+        'resolution_target': resolutionTarget ??
+            const {'runtimeType': 'queueRow', 'queueRowId': 'msg-1'},
+      };
+
+  /// Convenience builders for the `ResolutionTarget` sealed-class
+  /// freezed wire shape. The freezed sealed class emits
+  /// `runtimeType` as the discriminator; build.yaml's snake_case
+  /// rename turns the constructor params into snake_case wire fields.
+  static Map<String, dynamic> resolutionQueueRow(String queueRowId) =>
+      {'runtimeType': 'queueRow', 'queue_row_id': queueRowId};
+  static Map<String, dynamic> resolutionHealthSubsystem(String subsystemId) =>
+      {'runtimeType': 'healthSubsystem', 'subsystem_id': subsystemId};
+  static Map<String, dynamic> resolutionDriftFinding(String findingId) =>
+      {'runtimeType': 'driftFinding', 'finding_id': findingId};
+  static Map<String, dynamic> resolutionValidationRun(String runId) =>
+      {'runtimeType': 'validationRun', 'run_id': runId};
+
+  // ---- Operator history entry (Phase 8 US6 / T133) ----
+  static Map<String, dynamic> operatorHistoryEntry({
+    String entryId = 'hist-1',
+    String kind = 'resolved_attention',
+    String? occurredAt,
+    String parentAgentId = 'agent-1',
+    String? subAgentId,
+    String summary = 'Resolved blocked queue row',
+    Map<String, dynamic>? details,
+  }) =>
+      {
+        'entry_id': entryId,
+        'kind': kind,
+        'occurred_at':
+            occurredAt ?? DateTime.now().toUtc().toIso8601String(),
+        'parent_agent_id': parentAgentId,
+        if (subAgentId != null) 'sub_agent_id': subAgentId,
+        'summary': summary,
+        if (details != null) 'details': details,
+      };
+
   // ---- Capability registry (Phase 4 US2 / T086) ----
   static Map<String, dynamic> capabilityRegistryResult({
     List<String> masterClass = const ['claude', 'codex', 'gemini'],

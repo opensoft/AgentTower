@@ -518,6 +518,85 @@ class AppClient {
     return _unwrapRow(env);
   }
 
+  // -------- attention + notifications + operator history (T134 — Phase 8 US6)
+
+  Future<PagedResult> attentionList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+    String? severity,
+    String? attentionClass,
+  }) =>
+      _list(
+        'app.attention.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {
+          if (projectId != null) 'project_id': projectId,
+          if (severity != null) 'severity': severity,
+          if (attentionClass != null) 'attention_class': attentionClass,
+        },
+      );
+
+  Future<Map<String, dynamic>> attentionDetail(String attentionId) =>
+      _detail('app.attention.detail', {'attention_id': attentionId});
+
+  Future<PagedResult> notificationList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+    String? severity,
+    String? lifecycle,
+  }) =>
+      _list(
+        'app.notification.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {
+          if (projectId != null) 'project_id': projectId,
+          if (severity != null) 'severity': severity,
+          if (lifecycle != null) 'lifecycle': lifecycle,
+        },
+      );
+
+  Future<PagedResult> notificationHistory({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+  }) =>
+      _list(
+        'app.notification.history',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {if (projectId != null) 'project_id': projectId},
+      );
+
+  Future<Map<String, dynamic>> notificationAcknowledge({
+    required String notificationId,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.notification.acknowledge',
+      params: {
+        'notification_id': notificationId,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  Future<PagedResult> operatorHistoryList({
+    String? cursorNext,
+    int? limit,
+    String? parentAgentId,
+  }) =>
+      _list(
+        'app.operator_history.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {if (parentAgentId != null) 'parent_agent_id': parentAgentId},
+      );
+
   // -------- helper policies (T101 — Phase 5 US3, per FR-038a + R-19)
 
   /// `app.helper_policies.list` — enumerates available policies for

@@ -326,31 +326,31 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 6
 
-- [ ] T130 [P] [US6] Write `apps/control_panel/integration_test/us6_attention_notifications.dart` covering US6 §1-§5 + the F1-added FR-057 grouping rule scenario. Include SC-008a stability test (100 simulated live-update bursts with synthetic hover pattern; no position change under pointer for ≥ 2 s).
+- [X] T130 [P] [US6] Write `apps/control_panel/integration_test/us6_attention_notifications.dart` covering US6 §1-§5 + the F1-added FR-057 grouping rule scenario. Include SC-008a stability test (100 simulated live-update bursts with synthetic hover pattern; no position change under pointer for ≥ 2 s).
 
 ### Domain models for US6
 
-- [ ] T131 [P] [US6] Implement `apps/control_panel/lib/domain/models/attention_item.dart` — `AttentionItem` freezed class with `ResolutionTarget` sealed class (queueRow | healthSubsystem | driftFinding | validationRun) per data-model.md §1.13.
-- [ ] T132 [P] [US6] Implement `apps/control_panel/lib/domain/models/notification.dart` — `Notification` freezed class per data-model.md §1.14 carrying the fields the FR-057 grouping rule keys on.
-- [ ] T133 [P] [US6] Implement `apps/control_panel/lib/domain/models/operator_history_entry.dart` — `OperatorHistoryEntry` freezed class per data-model.md §1.15 with parent/sub-agent rollup per FR-055.
+- [X] T131 [P] [US6] Implement `apps/control_panel/lib/domain/models/attention_item.dart` — `AttentionItem` freezed class with `ResolutionTarget` sealed class (queueRow | healthSubsystem | driftFinding | validationRun) per data-model.md §1.13.
+- [X] T132 [P] [US6] Implement `apps/control_panel/lib/domain/models/notification.dart` — `Notification` freezed class per data-model.md §1.14 carrying the fields the FR-057 grouping rule keys on.
+- [X] T133 [P] [US6] Implement `apps/control_panel/lib/domain/models/operator_history_entry.dart` — `OperatorHistoryEntry` freezed class per data-model.md §1.15 with parent/sub-agent rollup per FR-055.
 
 ### Daemon-client extensions for US6
 
-- [ ] T134 [US6] Extend `app_client.dart` with: `app.attention.list/.detail`, `app.notification.list/.history/.acknowledge`, `app.operator_history.list`.
+- [X] T134 [US6] Extend `app_client.dart` with: `app.attention.list/.detail`, `app.notification.list/.history/.acknowledge`, `app.operator_history.list`.
 
 ### Attention queue (FR-052..FR-055)
 
-- [ ] T135 [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/attention_queue_view.dart` — FR-052 actionable-items queue with icon (class) + color (severity) + age + one-line summary. Default sort severity-then-age.
-- [ ] T136 [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/interaction_stability.dart` — FR-053 2-second interaction-stability window. Defer reorders / item changes while operator hovers / clicks / presses keys on the queue.
-- [ ] T137 [P] [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/resolution_navigation.dart` — FR-054 click → resolution surface dispatch per `ResolutionTarget` variant.
-- [ ] T138 [P] [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/operator_history_view.dart` — FR-055 durable operator history rolled up by agent with sub-agents nested.
+- [X] T135 [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/attention_queue_view.dart` — FR-052 actionable-items queue with icon (class) + color (severity) + age + one-line summary. Default sort severity-then-age.
+- [X] T136 [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/interaction_stability.dart` — FR-053 2-second interaction-stability window. Defer reorders / item changes while operator hovers / clicks / presses keys on the queue.
+- [X] T137 [P] [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/resolution_navigation.dart` — FR-054 click → resolution surface dispatch per `ResolutionTarget` variant.
+- [X] T138 [P] [US6] Implement `apps/control_panel/lib/features/agent_ops/attention/operator_history_view.dart` — FR-055 durable operator history rolled up by agent with sub-agents nested.
 
 ### Notifications panel + history (FR-008/056/057/058)
 
-- [ ] T139 [US6] Implement `apps/control_panel/lib/features/notifications/notifications_panel.dart` — FR-008/FR-056 notifications panel. Apply the FR-057 grouping rule (T032) as a view-layer projection.
-- [ ] T140 [P] [US6] Implement `apps/control_panel/lib/features/notifications/notification_history_view.dart` — FR-056 history surface; processed → history.
-- [ ] T141 [P] [US6] Implement `apps/control_panel/lib/features/notifications/badges.dart` — FR-025/FR-056 unread notification count badges at project-card level + global level.
-- [ ] T142 [US6] Implement `apps/control_panel/lib/features/notifications/os_native_integration.dart` — wire T033 OS-native dispatcher: fires only for high/critical severities, only when the FR-058 toggle is enabled.
+- [X] T139 [US6] Implement `apps/control_panel/lib/features/notifications/notifications_panel.dart` — FR-008/FR-056 notifications panel. Apply the FR-057 grouping rule (T032) as a view-layer projection.
+- [X] T140 [P] [US6] Implement `apps/control_panel/lib/features/notifications/notification_history_view.dart` — FR-056 history surface; processed → history.
+- [X] T141 [P] [US6] Implement `apps/control_panel/lib/features/notifications/badges.dart` — FR-025/FR-056 unread notification count badges at project-card level + global level.
+- [X] T142 [US6] Implement `apps/control_panel/lib/features/notifications/os_native_integration.dart` — wire T033 OS-native dispatcher: fires only for high/critical severities, only when the FR-058 toggle is enabled.
 
 **Checkpoint**: Attention queue + notifications + history live. All 6 user stories work independently.
 

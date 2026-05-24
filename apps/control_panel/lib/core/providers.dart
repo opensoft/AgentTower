@@ -5,6 +5,7 @@ import 'daemon/preflight_client.dart';
 import 'daemon/session.dart';
 import 'daemon/socket_client.dart';
 import 'logging/rotating_file_logger.dart';
+import 'notifications/os_native_dispatcher.dart';
 import 'persistence/ux_state_repository.dart';
 import 'persistence/paths.dart';
 
@@ -55,6 +56,15 @@ final appClientProvider = Provider<AppClient>((ref) => _unwired('appClient'));
 /// failure of — the main `DaemonSession.bootstrap()`.
 final preflightClientProvider =
     Provider<PreflightClient>((ref) => _unwired('preflightClient'));
+
+/// FR-058 — OS-native notification dispatcher (T033 / Phase 2).
+/// Phase 8 wires this into the notification fan-out via
+/// `features/notifications/os_native_integration.dart`. The
+/// dispatcher's `initialize()` is idempotent.
+final osNativeNotificationDispatcherProvider =
+    Provider<OsNativeNotificationDispatcher>(
+  (ref) => OsNativeNotificationDispatcher(),
+);
 
 // The command-palette registry provider (`commandRegistryProvider`) lives
 // in `shortcuts/command_palette.dart` next to the Notifier it wraps so
