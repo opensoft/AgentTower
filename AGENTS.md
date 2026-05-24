@@ -16,6 +16,51 @@ Read these project docs before creating or implementing specs:
 
 Spec Kit lives under `.specify/`. OpenSpec lives under `openspec/`.
 
+## Host Path & Command Execution
+
+Why: absolute host paths baked into repo files (or pointer files like `.git`)
+silently break when the repo moves on disk — symlink swap, bind-mount change,
+new host, rsync to a new directory. The stale `git worktree` pointer breakage
+between `/home/brett/projects/AgentTower*` and `/workspace/projects/AgentTower*`
+is the canonical example.
+
+**Rule 1 — Never write host-absolute paths into repo files.** When editing or
+creating any committed file (source, config, script, spec, doc, fixture), do
+not write `/home/<user>/...`, `/workspace/...`, `C:\Users\...`, or any other
+host-specific absolute path. Use one of:
+
+- Relative paths from the repo root or the file's own location.
+- Project-defined env vars (`$REPO_ROOT`, `$AGENTTOWER_ROOT`); define one at
+  the entry point if none exists rather than inlining a host path.
+- Runtime resolution (`git rev-parse --show-toplevel`,
+  `Path(__file__).resolve().parents[N]`, etc.).
+
+If you find an existing host-specific path while editing nearby code, treat it
+as a bug: don't propagate it, and flag it to the user. Exceptions: machine-
+managed git plumbing under `.git/`, lockfiles, and files explicitly marked
+host-local and gitignored.
+
+**Rule 2 — Run codebase commands inside the devBench container.** For build,
+test, lint, run, migrations, code generation, and any command that resolves
+project paths, execute inside the project's dev container (devBench) rather
+than the host shell. Container-internal paths are stable; host paths vary by
+machine, mount layout, and WSL configuration, which is exactly the variability
+Rule 1 is protecting against.
+
+Exceptions where host execution is correct:
+
+- `git` operations on the host checkout (status, log, worktree management,
+  fetch/push).
+- OS-level inspection and anything that talks to the host's Docker/devBench
+  daemon itself.
+- The Spec Kit `pwd` / `git rev-parse` worktree checks above.
+
+In all such host-side cases, Rule 1 still applies to whatever gets written
+back into committed files.
+
+If the right devBench invocation isn't obvious from project tooling, stop and
+ask before defaulting to the host shell.
+
 ## Claude Launch Rule
 
 When starting a new Claude session for AgentTower bench work, always start it
