@@ -229,6 +229,153 @@ class AppClient {
     return _unwrapResult(env);
   }
 
+  // -------- handoff (T101 — Phase 5 US3)
+  //
+  // Per contracts/app-methods-consumed.md §4 these are anticipated v1.x
+  // additions to FEAT-011. If absent at runtime, calls surface as
+  // FailureEnvelope and the handoff surfaces degrade per FR-002.
+
+  Future<PagedResult> handoffList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+    String? targetMasterAgentId,
+    String? featureChangeId,
+    String? assignmentState,
+    String? createdAfter,
+    String? createdBefore,
+  }) =>
+      _list(
+        'app.handoff.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {
+          if (projectId != null) 'project_id': projectId,
+          if (targetMasterAgentId != null)
+            'target_master_agent_id': targetMasterAgentId,
+          if (featureChangeId != null) 'feature_change_id': featureChangeId,
+          if (assignmentState != null) 'assignment_state': assignmentState,
+          if (createdAfter != null) 'created_after': createdAfter,
+          if (createdBefore != null) 'created_before': createdBefore,
+        },
+      );
+
+  Future<Map<String, dynamic>> handoffDetail(String handoffId) =>
+      _detail('app.handoff.detail', {'handoff_id': handoffId});
+
+  /// `app.handoff.preview` — FR-040 dry-run. Returns the rendered
+  /// prompt + resolved work items without persisting anything. The
+  /// preview surface (T107) uses this to satisfy SC-004 (preview
+  /// resolved list matches submitted prompt byte-for-byte).
+  Future<Map<String, dynamic>> handoffPreview({
+    required Map<String, dynamic> draft,
+  }) async {
+    final env = await session.call(
+      'app.handoff.preview',
+      params: {'draft': draft},
+    );
+    return _unwrapResult(env);
+  }
+
+  /// `app.handoff.submit` — durable persist + queue-delivery initiation
+  /// (FR-042 / FR-043). Returns the new Handoff row (post-id-assignment).
+  /// On submission failure the daemon returns a FailureEnvelope; the
+  /// caller is expected to attach the failure to the draft per FR-072(a).
+  Future<Map<String, dynamic>> handoffSubmit({
+    required Map<String, dynamic> draft,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.handoff.submit',
+      params: {
+        'draft': draft,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  /// `app.handoff.cancel` — operator-initiated cancellation. Allowed
+  /// from `submitted` / `accepted` / `active` / `waiting` / `blocked`
+  /// per FR-044.
+  Future<Map<String, dynamic>> handoffCancel({
+    required String handoffId,
+    String? reason,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.handoff.cancel',
+      params: {
+        'handoff_id': handoffId,
+        if (reason != null) 'reason': reason,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  /// `app.handoff.supersede` — FR-081. The prior handoff transitions
+  /// to `superseded`; the daemon stamps `supersededByHandoffId` on the
+  /// prior record and `supersedesHandoffId` on the new record. Returns
+  /// the new handoff row.
+  Future<Map<String, dynamic>> handoffSupersede({
+    required String priorHandoffId,
+    required Map<String, dynamic> newDraft,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.handoff.supersede',
+      params: {
+        'prior_handoff_id': priorHandoffId,
+        'new_draft': newDraft,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  /// `app.handoff.retry_delivery` — FR-072(b). Re-queues delivery for
+  /// a handoff stuck in `submitted` with delivery-failure status.
+  Future<Map<String, dynamic>> handoffRetryDelivery({
+    required String handoffId,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.handoff.retry_delivery',
+      params: {
+        'handoff_id': handoffId,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  // -------- helper policies (T101 — Phase 5 US3, per FR-038a + R-19)
+
+  /// `app.helper_policies.list` — enumerates available policies for
+  /// the handoff-flow policy picker.
+  Future<PagedResult> helperPolicyList({String? cursorNext, int? limit}) =>
+      _list('app.helper_policies.list', cursorNext: cursorNext, limit: limit);
+
+  /// `app.helper_policies.resolve` — returns the snapshot a handoff
+  /// would embed if submitted now (with the optional operator
+  /// override applied). Daemon-side resolution honors FR-038a sources
+  /// (baked default → operator override → repo override).
+  Future<Map<String, dynamic>> helperPolicyResolve({
+    required String projectId,
+    String? operatorOverrideOfPolicyId,
+  }) async {
+    final env = await session.call(
+      'app.helper_policies.resolve',
+      params: {
+        'project_id': projectId,
+        if (operatorOverrideOfPolicyId != null)
+          'operator_override_of_policy_id': operatorOverrideOfPolicyId,
+      },
+    );
+    return _unwrapResult(env);
+  }
+
   // ================================================================ Mutations
 
   // -------- agent

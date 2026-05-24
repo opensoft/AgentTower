@@ -120,34 +120,12 @@ class Fixtures {
         'evidence': [],
       };
 
-  // ---- Handoff ----
-  static Map<String, dynamic> handoff({
-    String? handoffId,
-    String? draftId,
-    String targetMasterAgentId = 'agent-1',
-    String projectId = 'proj-1',
-    HandoffMode mode = HandoffMode.engineeringExecution,
-    AssignmentState state = AssignmentState.drafted,
-  }) =>
-      {
-        if (handoffId != null) 'handoff_id': handoffId,
-        if (draftId != null) 'draft_id': draftId,
-        'created_at': DateTime.now().toUtc().toIso8601String(),
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-        'operator': 'test-operator',
-        'target_master_agent_id': targetMasterAgentId,
-        'project_id': projectId,
-        'mode': mode.wireValue,
-        'assignment_state': state.wireValue,
-        'selected_work_items': [
-          {'kind': 'feature', 'display_id': 'FEAT-012'}
-        ],
-        'resolved_work_items': [
-          {'kind': 'feature', 'display_id': 'FEAT-012', 'exclusion': null}
-        ],
-        'primary_work_item': {'kind': 'feature', 'display_id': 'FEAT-012'},
-        'helper_policy_id': 'baked-default-1',
-      };
+  // ---- Handoff (real shape lives further down at Phase-5 US3 builder) ----
+  // The Phase-2 stub here was a placeholder before the data-model §1.6
+  // requirements were fleshed out. The current Handoff freezed class
+  // requires nested context_bundle, helper_policy_snapshot, lifecycle
+  // timestamps, etc. The Phase-5 builder added by T097 below is the
+  // single source of truth.
 
   // ---- Validation Run ----
   static Map<String, dynamic> validationRun({
@@ -488,6 +466,116 @@ class Fixtures {
         if (drivingMasterAgentId != null)
           'driving_master_agent_id': drivingMasterAgentId,
         if (drivingHandoffId != null) 'driving_handoff_id': drivingHandoffId,
+      };
+
+  // ---- Handoff (Phase 5 US3 / T098) ----
+  /// Mirrors `app.handoff`. The shape matches data-model §1.6 and the
+  /// freezed `Handoff` class; nested helper-policy + context-bundle
+  /// maps are passed-through opaquely so tests can wire either real
+  /// snapshots or fixture-built ones.
+  static Map<String, dynamic> handoff({
+    String? handoffId = 'handoff-1',
+    String? draftId,
+    String? createdAt,
+    String? updatedAt,
+    String operatorLabel = 'brett',
+    String targetMasterAgentId = 'agent-1',
+    String targetMasterLabel = 'claude-master-1',
+    String projectId = 'proj-1',
+    String projectLabel = 'agenttower',
+    String mode = 'engineering_execution',
+    String? priority,
+    String? deadline,
+    String assignmentState = 'submitted',
+    List<Map<String, dynamic>>? selectedWorkItems,
+    List<Map<String, dynamic>>? resolvedWorkItems,
+    Map<String, dynamic>? primaryWorkItem,
+    List<String> linkedFeatureIds = const <String>[],
+    List<String> linkedChangeIds = const <String>[],
+    Map<String, dynamic>? contextBundle,
+    String helperPolicyId = 'baked-default',
+    Map<String, dynamic>? helperPolicySnapshot,
+    String generatedPromptText =
+        '## Assignment\n\n- Target master: claude-master-1\n',
+    String? operatorNotes,
+    String? submittedAt,
+    String? acceptedAt,
+    String? completedAt,
+    String? cancelledAt,
+    String? supersededByHandoffId,
+    String? supersedesHandoffId,
+    Map<String, dynamic>? deliveryStatus,
+    Map<String, dynamic>? failureContext,
+  }) {
+    final now = DateTime.now().toUtc().toIso8601String();
+    return {
+      if (handoffId != null) 'handoff_id': handoffId,
+      if (draftId != null) 'draft_id': draftId,
+      'created_at': createdAt ?? now,
+      'updated_at': updatedAt ?? now,
+      'operator_label': operatorLabel,
+      'target_master_agent_id': targetMasterAgentId,
+      'target_master_label': targetMasterLabel,
+      'project_id': projectId,
+      'project_label': projectLabel,
+      'mode': mode,
+      if (priority != null) 'priority': priority,
+      if (deadline != null) 'deadline': deadline,
+      'assignment_state': assignmentState,
+      'selected_work_items': selectedWorkItems ?? const <Map<String, dynamic>>[],
+      'resolved_work_items': resolvedWorkItems ??
+          const [
+            {'display_id': 'FEAT-12', 'kind': 'feature'},
+          ],
+      'primary_work_item': primaryWorkItem ??
+          const {'display_id': 'FEAT-12', 'kind': 'feature'},
+      'linked_feature_ids': linkedFeatureIds,
+      'linked_change_ids': linkedChangeIds,
+      'context_bundle': contextBundle ??
+          {
+            'repository_path': '/work/agenttower',
+            'active_branch': 'main',
+          },
+      'helper_policy_id': helperPolicyId,
+      'helper_policy_snapshot': helperPolicySnapshot ??
+          helperPolicySnapshotResult(),
+      'generated_prompt_text': generatedPromptText,
+      if (operatorNotes != null) 'operator_notes': operatorNotes,
+      if (submittedAt != null) 'submitted_at': submittedAt,
+      if (acceptedAt != null) 'accepted_at': acceptedAt,
+      if (completedAt != null) 'completed_at': completedAt,
+      if (cancelledAt != null) 'cancelled_at': cancelledAt,
+      if (supersededByHandoffId != null)
+        'superseded_by_handoff_id': supersededByHandoffId,
+      if (supersedesHandoffId != null)
+        'supersedes_handoff_id': supersedesHandoffId,
+      if (deliveryStatus != null) 'delivery_status': deliveryStatus,
+      if (failureContext != null) 'failure_context': failureContext,
+    };
+  }
+
+  /// Mirrors `HelperPolicySnapshot` (data-model §1.8 / Phase 5 T100).
+  static Map<String, dynamic> helperPolicySnapshotResult({
+    String policyId = 'baked-default',
+    String defaultHelperCapability = 'shell',
+    List<String> allowedHelperCapabilities = const <String>['shell'],
+    String policySource = 'baked_default',
+    String? snapshottedAt,
+    String? operatorOverrideOfPolicyId,
+    String? repoOverridePath,
+  }) =>
+      {
+        'resolved_policy': {
+          'policy_id': policyId,
+          'allowed_helper_capabilities': allowedHelperCapabilities,
+          'default_helper_capability': defaultHelperCapability,
+          'policy_source': policySource,
+        },
+        'snapshotted_at':
+            snapshottedAt ?? DateTime.now().toUtc().toIso8601String(),
+        if (operatorOverrideOfPolicyId != null)
+          'operator_override_of_policy_id': operatorOverrideOfPolicyId,
+        if (repoOverridePath != null) 'repo_override_path': repoOverridePath,
       };
 
   // ---- Capability registry (Phase 4 US2 / T086) ----
