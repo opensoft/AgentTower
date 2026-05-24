@@ -291,4 +291,4 @@ Per research §R12:
 
 ## Versioning
 
-FEAT-013 is additive within FEAT-011's `app_contract_version = "1.0"`. No major bump; clients that ignore unknown methods (per FEAT-011's compat rule) treat FEAT-013 as a no-op until they update. The `app.managed_*` methods are listed in the `app.hello` response's `capability_flags` (which is `{}` in FEAT-011 v1.0 — FEAT-013 leaves it `{}` because every method is required when present; a major bump or new minor would gate optional methods).
+FEAT-013 is additive within FEAT-011's `app_contract_version = "1.0"`. No major bump; clients that ignore unknown methods (per FEAT-011's compat rule) treat FEAT-013 as a no-op until they update. The `app.managed_*` methods are **required FEAT-013 surfaces, not optional capabilities**. They are NOT advertised in the `app.hello` response's `capability_flags`, which remains `{}` at v1.0 per FEAT-011 (`capability_flags` is reserved for gating *optional* methods in a future minor bump; required methods of any FEAT shipped at the current `app_contract_version` are discovered via the version itself, not via the flag map). FEAT-013 makes no change to `app.hello` semantics.

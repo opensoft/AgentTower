@@ -93,3 +93,26 @@
 - [ ] CHK035 Is the `promoted_from_adopted` reserved transition's eligible source-state set defined (which adopted-pane states are eligible)? [Gap, Spec §FR-007]
 - [ ] CHK036 Are the relationships between layout-level state and pane-level state defined (e.g., a layout is `ready` iff all panes are `ready` or `degraded`)? [Gap]
 
+---
+
+## Cross-Cutting Post-Tasks Audit (Session 2026-05-24, after `/speckit.tasks`)
+
+**Purpose**: Cross-cutting requirements-quality items that the post-tasks lens surfaces. Tasks.md now exists with 56 tasks (T001–T056); these items test the requirements-side completeness from the new vantage point.
+
+- [ ] CHK037 Is every functional requirement FR-001..FR-024 reachable from at least one task in tasks.md (forward traceability)? [Traceability, Spec §FR vs Tasks]
+- [ ] CHK038 Is every success criterion SC-001..SC-009 covered by either an explicit perf verification task or a test that asserts its bound? [Traceability, Spec §SC vs Tasks T054/T055/T056]
+- [ ] CHK039 Are tasks-driven implementation footprints (sweep loop, recovery boot wiring, detail-surface fields) reflected back into the spec as testable acceptance shapes, or are they implementation-only? [Completeness, Spec §FR-022/FR-020/SC-009 vs Tasks]
+- [ ] CHK040 Does the spec define what counts as an "operator-overridable" template/profile precisely enough for tasks.md to test the override resolution rule (FR-024)? [Clarity, Spec §FR-024 vs Tasks T008/T009/T017]
+- [ ] CHK041 Is the spec's notion of "actionable diagnostic" (FR-013/FR-016) specified concretely enough that contract tests can assert the diagnostic content (code, message, hint fields)? [Measurability, Spec §FR-013/FR-016 vs Tasks T016/T036]
+- [ ] CHK042 Does the spec's Edge Cases section list every concurrency / race / failure mode the task plan tests, or do tasks.md tests cover scenarios the spec hasn't named? [Consistency, Spec §Edge Cases vs Tasks T020/T051]
+- [ ] CHK043 Is the launch-command profile schema specified clearly enough in spec.md/Assumptions/Research that the YAML loader test (in T009/T017) has unambiguous expectations? [Clarity, Spec §Assumptions vs Research §R9 vs Tasks T009]
+- [ ] CHK044 Are the per-method idempotency semantics (FR-014; M1, M7) specified clearly enough for tests to assert "in-flight match" vs "completed match" vs "no key" branches independently? [Clarity, Spec §FR-014 vs Contracts §M1/M7 vs Tasks T016/T036]
+- [x] CHK045 Does the spec carry enough detail about FEAT-011 `app.hello` capability_flags semantics to know whether `app.managed_*` needs to be declared there, or is the additive evolution rule sufficient? [Gap, Spec vs FEAT-011 contract] — **Resolved 2026-05-24**: same decision as tasks-readiness CHK048/CHK056 — `capability_flags` stays `{}`; the new `app.managed_*` methods are required FEAT-013 surfaces (not optional capabilities). Rationale in contracts/managed-methods.md §Versioning; tasks.md Notes forbids adding a `capability_flags` task.
+- [ ] CHK046 Are user stories US1/US2/US3 acceptance scenarios specified at a level that maps 1:1 to integration tests in tasks.md (T021/T028/T041)? [Measurability, Spec §US vs Tasks]
+- [ ] CHK047 Are tasks.md's existing-file modifications (T025/T031/T034/T047) covered by the spec only at the requirement level (FR-008 same-surfaces, FR-014 scan integration, FR-020 boot reconcile), or does the spec name the touched modules? [Consistency, Spec §FR vs Plan §Project Structure vs Tasks]
+- [ ] CHK048 Does the spec specify whether the FR-022 TTL sweep itself is an operator-observable event, or is it daemon-internal only? [Clarity, Spec §FR-022 vs Contracts §Events]
+- [ ] CHK049 Does spec.md make clear whether the SC-009 5-second visibility window includes the time to query the M3/M5 endpoint, or only the time for the daemon to populate the row? [Clarity, Spec §SC-009 vs Tasks T056]
+- [ ] CHK050 Is the relationship between FR-014 pending-managed-marker idempotency (operation dedupe) and FR-019 per-container serialization (request ordering) explained clearly so tests can target each independently? [Clarity, Spec §FR-014 vs §FR-019 vs Tasks T019/T020]
+- [ ] CHK051 Are all spec terms that have a code-level identifier (`predecessor_id`, `pending_marker_token`, `chain_depth`, `failed_stage`, `container_id`) introduced in spec.md before they're used in plan/data-model/contracts/tasks? [Consistency, Spec vs downstream]
+
+

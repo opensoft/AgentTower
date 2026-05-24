@@ -117,6 +117,8 @@ tests/contract/
 ├── test_managed_recovery_visibility.py      # SC-009 ≤5s post-restart visibility via M3/M5 detail surfaces (recovery_reattach failed_stage readable without log inspection)
 ├── test_managed_protect_adopted.py          # FR-012; adopted pane not removable via managed path
 ├── test_managed_templates.py                # FR-001 templates; YAML override merge
+├── test_managed_launch_profiles.py          # FR-002 + FR-024 launch profile YAML; R9 argv-shape; managed_launch_command_not_found
+├── test_managed_migration.py                # T007 migration idempotency smoke (CREATE ... IF NOT EXISTS; second-run no-op)
 └── test_managed_promote_stub.py             # FR-018; not_implemented response shape
 
 tests/integration/
