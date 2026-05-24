@@ -411,6 +411,113 @@ class AppClient {
     return _unwrapRow(env);
   }
 
+  // -------- validation (T123 — Phase 7 US5)
+  //
+  // Per FR-049 the app NEVER executes runners locally: trigger +
+  // cancel go through the daemon, which owns the subprocess
+  // lifecycle. List/detail/demo-readiness are read-only.
+
+  Future<PagedResult> validationEntrypointList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+    String? scopeKind,
+    bool? enabled,
+  }) =>
+      _list(
+        'app.validation.entrypoint.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {
+          if (projectId != null) 'project_id': projectId,
+          if (scopeKind != null) 'scope_kind': scopeKind,
+          if (enabled != null) 'enabled': enabled,
+        },
+      );
+
+  Future<Map<String, dynamic>> validationEntrypointDetail(
+    String entrypointId,
+  ) =>
+      _detail(
+        'app.validation.entrypoint.detail',
+        {'entrypoint_id': entrypointId},
+      );
+
+  Future<PagedResult> validationRunList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+    String? entrypointId,
+    String? state,
+    String? branch,
+  }) =>
+      _list(
+        'app.validation.run.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {
+          if (projectId != null) 'project_id': projectId,
+          if (entrypointId != null) 'entrypoint_id': entrypointId,
+          if (state != null) 'state': state,
+          if (branch != null) 'branch': branch,
+        },
+      );
+
+  Future<Map<String, dynamic>> validationRunDetail(String runId) =>
+      _detail('app.validation.run.detail', {'run_id': runId});
+
+  /// `app.validation.run.trigger` — FR-049. Returns the new run row
+  /// (initially in `queued` state). SC-006 requires the daemon to
+  /// transition to `running` within ≤ 2 s — that's the daemon's
+  /// invariant, not the app's, but the UI polls the run-list to
+  /// surface the transition.
+  Future<Map<String, dynamic>> validationRunTrigger({
+    required String entrypointId,
+    required String targetKind,
+    required String targetId,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.validation.run.trigger',
+      params: {
+        'entrypoint_id': entrypointId,
+        'target': {'kind': targetKind, 'id': targetId},
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  /// `app.validation.run.cancel` — FR-049 cancel half. Legal only
+  /// from `queued` / `running` per FR-048. Daemon enforces; the app
+  /// pre-checks via ValidationRunStateValidator.
+  Future<Map<String, dynamic>> validationRunCancel({
+    required String runId,
+    String? reason,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.validation.run.cancel',
+      params: {
+        'run_id': runId,
+        if (reason != null) 'reason': reason,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  Future<Map<String, dynamic>> demoReadinessDetail({
+    required String projectId,
+    required String branch,
+  }) async {
+    final env = await session.call(
+      'app.demo_readiness.detail',
+      params: {'project_id': projectId, 'branch': branch},
+    );
+    return _unwrapRow(env);
+  }
+
   // -------- helper policies (T101 — Phase 5 US3, per FR-038a + R-19)
 
   /// `app.helper_policies.list` — enumerates available policies for

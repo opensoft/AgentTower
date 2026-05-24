@@ -293,26 +293,26 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 5
 
-- [ ] T119 [P] [US5] Write `apps/control_panel/integration_test/us5_validation_demo.dart` covering US5 §1-§5 acceptance scenarios.
+- [X] T119 [P] [US5] Write `apps/control_panel/integration_test/us5_validation_demo.dart` covering US5 §1-§5 acceptance scenarios.
 
 ### Domain models for US5
 
-- [ ] T120 [P] [US5] Implement `apps/control_panel/lib/domain/models/validation_entrypoint.dart` — `ValidationEntrypoint` freezed class per data-model.md §1.10 (label, type, scope, description, blocking_level, estimated_duration, enabled).
-- [ ] T121 [P] [US5] Implement `apps/control_panel/lib/domain/models/validation_run.dart` — `ValidationRun` freezed class per data-model.md §1.11 with state/result/timestamps/summary/artifacts/triggered_by/linked refs.
-- [ ] T122 [P] [US5] Implement `apps/control_panel/lib/domain/models/demo_readiness_summary.dart` — `DemoReadinessSummary` freezed class per data-model.md §1.12 with overall_state / summary / blocking_findings / recommended_next_runs / recent_run_ids / linked_feature_ids. Encode the "at most at_risk if any required entrypoint has not run" invariant.
+- [X] T120 [P] [US5] Implement `apps/control_panel/lib/domain/models/validation_entrypoint.dart` — `ValidationEntrypoint` freezed class per data-model.md §1.10 (label, type, scope, description, blocking_level, estimated_duration, enabled).
+- [X] T121 [P] [US5] Implement `apps/control_panel/lib/domain/models/validation_run.dart` — `ValidationRun` freezed class per data-model.md §1.11 with state/result/timestamps/summary/artifacts/triggered_by/linked refs.
+- [X] T122 [P] [US5] Implement `apps/control_panel/lib/domain/models/demo_readiness_summary.dart` — `DemoReadinessSummary` freezed class per data-model.md §1.12 with overall_state / summary / blocking_findings / recommended_next_runs / recent_run_ids / linked_feature_ids. Encode the "at most at_risk if any required entrypoint has not run" invariant.
 
 ### Daemon-client extensions for US5
 
-- [ ] T123 [US5] Extend `app_client.dart` with: `app.validation.entrypoint.list/.detail`, `app.validation.run.list/.detail/.trigger/.cancel`, `app.demo_readiness.detail`.
+- [X] T123 [US5] Extend `app_client.dart` with: `app.validation.entrypoint.list/.detail`, `app.validation.run.list/.detail/.trigger/.cancel`, `app.demo_readiness.detail`.
 
 ### Testing & Demo workspace (FR-046..FR-051)
 
-- [ ] T124 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/available_validation/available_validation_view.dart` — FR-046/FR-047 grouped by scope; each card shows label, type, scope, description, blocking level, estimated duration, enabled state.
-- [ ] T125 [US5] Implement `apps/control_panel/lib/features/testing_demo/available_validation/trigger_run.dart` — entrypoint-card "Run" action calling `app.validation.run.trigger`. ≤ 2 s to `running` state per SC-006. Satisfies FR-049 trigger half — execution is invoked through the daemon; the app NEVER executes runners locally.
-- [ ] T126 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/runs/runs_view.dart` — FR-048 Runs view with the 5-state vocabulary + 5-result vocabulary; virtualized per FR-080.
-- [ ] T127 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/runs/cancel_run.dart` — cancel `running` / `queued` runs via `app.validation.run.cancel`. Uses T042 validator. Satisfies FR-049 cancel half — cancellation is invoked through the daemon; the app does NOT terminate any local subprocess.
-- [ ] T128 [US5] Implement `apps/control_panel/lib/features/testing_demo/demo_readiness/demo_readiness_view.dart` — FR-050 overall state + summary + blocking findings + recommended next runs + recent run refs. Updates within 5 s of a run resolving per SC-007.
-- [ ] T129 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/demo_readiness/readiness_computation.dart` — local rendering helper that respects the FR-050 "at most at_risk if required entrypoint missing" invariant when displaying.
+- [X] T124 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/available_validation/available_validation_view.dart` — FR-046/FR-047 grouped by scope; each card shows label, type, scope, description, blocking level, estimated duration, enabled state.
+- [X] T125 [US5] Implement `apps/control_panel/lib/features/testing_demo/available_validation/trigger_run.dart` — entrypoint-card "Run" action calling `app.validation.run.trigger`. ≤ 2 s to `running` state per SC-006. Satisfies FR-049 trigger half — execution is invoked through the daemon; the app NEVER executes runners locally.
+- [X] T126 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/runs/runs_view.dart` — FR-048 Runs view with the 5-state vocabulary + 5-result vocabulary; virtualized per FR-080.
+- [X] T127 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/runs/cancel_run.dart` — cancel `running` / `queued` runs via `app.validation.run.cancel`. Uses T042 validator. Satisfies FR-049 cancel half — cancellation is invoked through the daemon; the app does NOT terminate any local subprocess.
+- [X] T128 [US5] Implement `apps/control_panel/lib/features/testing_demo/demo_readiness/demo_readiness_view.dart` — FR-050 overall state + summary + blocking findings + recommended next runs + recent run refs. Updates within 5 s of a run resolving per SC-007.
+- [X] T129 [P] [US5] Implement `apps/control_panel/lib/features/testing_demo/demo_readiness/readiness_computation.dart` — local rendering helper that respects the FR-050 "at most at_risk if required entrypoint missing" invariant when displaying.
 
 **Checkpoint**: Testing & Demo workspace live. US1..US5 all work independently.
 

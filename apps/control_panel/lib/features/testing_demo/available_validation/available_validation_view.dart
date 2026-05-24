@@ -1,0 +1,237 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../domain/models/common_enums.dart';
+import '../../../domain/models/validation_entrypoint.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
+import '../../project_specs/providers.dart' as project_providers;
+import '../providers.dart';
+import 'trigger_run.dart';
+
+/// FR-046 + FR-047 — Available Validation view. T124 (Phase 7 US5).
+///
+/// Renders entrypoints grouped by [EntrypointScope.kind]. Each card
+/// shows label / type / scope / description / blocking level /
+/// estimated duration / enabled state and an inline Run button.
+class AvailableValidationView extends ConsumerWidget {
+  const AvailableValidationView({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedId = ref.watch(project_providers.selectedProjectIdProvider);
+    if (selectedId == null) return const _NoProjectSelected();
+    final query = EntrypointListQuery(projectId: selectedId);
+    final list = ref.watch(validationEntrypointListProvider(query));
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Available Validation'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh),
+            onPressed: () =>
+                ref.invalidate(validationEntrypointListProvider(query)),
+          ),
+        ],
+      ),
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Available Validation',
+          onRetry: () =>
+              ref.invalidate(validationEntrypointListProvider(query)),
+        ),
+        onIncompatible: (s) => ContractIncompatStateView(
+          state: s,
+          surfaceLabel: 'Available Validation',
+        ),
+        child: list.when(
+          data: (rows) {
+            if (rows.isEmpty) {
+              return const HealthyEmptyStateView(
+                message:
+                    'No validation entrypoints registered for this project.',
+                icon: Icons.science_outlined,
+              );
+            }
+            return _GroupedList(entries: rows, projectId: selectedId);
+          },
+          loading: () => const LoadingStateView(),
+          error: (err, _) => ErrorStateView(
+            error: err,
+            surfaceLabel: 'available validation',
+            onRetry: () =>
+                ref.invalidate(validationEntrypointListProvider(query)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupedList extends StatelessWidget {
+  const _GroupedList({required this.entries, required this.projectId});
+  final List<ValidationEntrypoint> entries;
+  final String projectId;
+
+  @override
+  Widget build(BuildContext context) {
+    // Group by scope kind. Sort within group by blocking level
+    // descending (required first), then by label.
+    final byScope = <String, List<ValidationEntrypoint>>{};
+    for (final e in entries) {
+      final key = e.scope.kind.wireValue;
+      (byScope[key] ??= []).add(e);
+    }
+    for (final list in byScope.values) {
+      list.sort((a, b) {
+        final ar = _blockingRank(a.blockingLevel);
+        final br = _blockingRank(b.blockingLevel);
+        if (ar != br) return br - ar;
+        return a.label.compareTo(b.label);
+      });
+    }
+    final orderedScopes = byScope.keys.toList()..sort();
+    return ListView.builder(
+      itemCount: orderedScopes.length,
+      itemBuilder: (_, scopeIdx) {
+        final scope = orderedScopes[scopeIdx];
+        final group = byScope[scope]!;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Scope: $scope',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              for (final e in group)
+                _EntrypointCard(entrypoint: e, projectId: projectId),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static int _blockingRank(BlockingLevel b) => switch (b) {
+        BlockingLevel.required => 3,
+        BlockingLevel.recommended => 2,
+        BlockingLevel.informational => 1,
+      };
+}
+
+class _EntrypointCard extends StatelessWidget {
+  const _EntrypointCard({required this.entrypoint, required this.projectId});
+  final ValidationEntrypoint entrypoint;
+  final String projectId;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final duration = entrypoint.estimatedDuration;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        entrypoint.label,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      const SizedBox(width: 8),
+                      _BlockingChip(level: entrypoint.blockingLevel),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'type: ${entrypoint.type.wireValue} · '
+                    'scope: ${entrypoint.scope.kind.wireValue}'
+                    '${entrypoint.scope.id != null ? ":${entrypoint.scope.id}" : ""} · '
+                    'enabled: ${entrypoint.enabled} '
+                    '${duration != null ? "· ~${duration.inSeconds}s" : ""}',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(entrypoint.description),
+                  if (entrypoint.recommendedWhen != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Recommended when: ${entrypoint.recommendedWhen}',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            TriggerRunButton(
+              entrypoint: entrypoint,
+              projectId: projectId,
+              // Default target is the project; richer pickers land in
+              // a future polish item if operators want branch-scoped
+              // triggers from this surface.
+              targetKind: 'project',
+              targetId: projectId,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BlockingChip extends StatelessWidget {
+  const _BlockingChip({required this.level});
+  final BlockingLevel level;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final (color, label) = switch (level) {
+      BlockingLevel.required => (theme.colorScheme.error, 'required'),
+      BlockingLevel.recommended => (theme.colorScheme.tertiary, 'recommended'),
+      BlockingLevel.informational => (theme.colorScheme.secondary, 'info'),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 11),
+      ),
+    );
+  }
+}
+
+class _NoProjectSelected extends StatelessWidget {
+  const _NoProjectSelected();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Text(
+          'No project selected.\n\n'
+          'Pick a project from the Projects view to see its validation '
+          'entrypoints.',
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}

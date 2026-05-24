@@ -155,25 +155,10 @@ class Fixtures {
         'triggered_by': triggeredBy,
       };
 
-  // ---- Validation Entrypoint ----
-  static Map<String, dynamic> validationEntrypoint({
-    String entrypointId = 'ep-1',
-    String label = 'unit tests',
-    EntrypointType type = EntrypointType.unitTest,
-    BlockingLevel blockingLevel = BlockingLevel.required,
-    bool enabled = true,
-  }) =>
-      {
-        'entrypoint_id': entrypointId,
-        'label': label,
-        'type': type.wireValue,
-        'scope': 'project',
-        'description': '',
-        'estimated_duration_ms': 30000,
-        'blocking_level': blockingLevel.wireValue,
-        'tags': [],
-        'enabled': enabled,
-      };
+  // ---- Validation Entrypoint stub removed; Phase-7 builder lives further down
+  // (was a flat-string Phase-2 placeholder that didn't deserialize to the
+  // ValidationEntrypoint freezed shape — Phase-7 T119 introduces the
+  // contract-correct builder with nested scope map).
 
   // ---- Notification ----
   static Map<String, dynamic> notification({
@@ -586,6 +571,90 @@ class Fixtures {
         if (operatorOverrideOfPolicyId != null)
           'operator_override_of_policy_id': operatorOverrideOfPolicyId,
         if (repoOverridePath != null) 'repo_override_path': repoOverridePath,
+      };
+
+  // ---- Validation entrypoint (Phase 7 US5 / T120) ----
+  static Map<String, dynamic> validationEntrypoint({
+    String entrypointId = 'ep-1',
+    String label = 'Run unit tests',
+    String type = 'unit_test',
+    Map<String, dynamic>? scope,
+    String description = 'Run the project unit-test suite.',
+    String? recommendedWhen,
+    int? estimatedDurationMs = 60000,
+    String blockingLevel = 'required',
+    List<String> tags = const <String>[],
+    bool enabled = true,
+  }) =>
+      {
+        'entrypoint_id': entrypointId,
+        'label': label,
+        'type': type,
+        'scope': scope ?? const {'kind': 'project', 'id': 'proj-1'},
+        'description': description,
+        if (recommendedWhen != null) 'recommended_when': recommendedWhen,
+        if (estimatedDurationMs != null)
+          'estimated_duration_ms': estimatedDurationMs,
+        'blocking_level': blockingLevel,
+        'tags': tags,
+        'enabled': enabled,
+      };
+
+  // ---- Validation run shape (Phase 7 US5 / T121) ----
+  static Map<String, dynamic> validationRunV2({
+    String runId = 'run-1',
+    String entrypointId = 'ep-1',
+    Map<String, dynamic>? target,
+    String state = 'queued',
+    String? result,
+    String? startedAt,
+    String? completedAt,
+    String summary = 'queued for execution',
+    String? logReference,
+    List<Map<String, dynamic>>? artifacts,
+    String triggeredBy = 'brett',
+    List<String> linkedFeatureIds = const <String>[],
+    List<String> linkedChangeIds = const <String>[],
+  }) =>
+      {
+        'run_id': runId,
+        'entrypoint_id': entrypointId,
+        'target': target ?? const {'kind': 'project', 'id': 'proj-1'},
+        'state': state,
+        if (result != null) 'result': result,
+        if (startedAt != null) 'started_at': startedAt,
+        if (completedAt != null) 'completed_at': completedAt,
+        'summary': summary,
+        if (logReference != null) 'log_reference': logReference,
+        'artifacts': artifacts ?? const <Map<String, dynamic>>[],
+        'triggered_by': triggeredBy,
+        'linked_feature_ids': linkedFeatureIds,
+        'linked_change_ids': linkedChangeIds,
+      };
+
+  // ---- Demo readiness (Phase 7 US5 / T122) ----
+  static Map<String, dynamic> demoReadiness({
+    String projectId = 'proj-1',
+    String branch = 'main',
+    String? updatedAt,
+    String overallState = 'ready',
+    String summary = 'All required entrypoints have passed on current branch.',
+    List<Map<String, dynamic>> blockingFindings = const <Map<String, dynamic>>[],
+    List<Map<String, dynamic>> recommendedNextRuns =
+        const <Map<String, dynamic>>[],
+    List<String> recentRunIds = const <String>[],
+    List<String> linkedFeatureIds = const <String>[],
+  }) =>
+      {
+        'project_id': projectId,
+        'branch': branch,
+        'updated_at': updatedAt ?? DateTime.now().toUtc().toIso8601String(),
+        'overall_state': overallState,
+        'summary': summary,
+        'blocking_findings': blockingFindings,
+        'recommended_next_runs': recommendedNextRuns,
+        'recent_run_ids': recentRunIds,
+        'linked_feature_ids': linkedFeatureIds,
       };
 
   // ---- Capability registry (Phase 4 US2 / T086) ----
