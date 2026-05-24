@@ -28,7 +28,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 **Purpose**: Bootstrap the Flutter app project so foundational + story work can begin.
 
 - [X] T001 Create directory tree `apps/control_panel/{lib,assets,test,integration_test,test_harness,tools}` per plan.md §Project Structure.
-- [X] T002 Create `apps/control_panel/pubspec.yaml` declaring Flutter SDK 3.27 stable, Dart 3.5+, and dependencies enumerated in plan.md §Primary Dependencies (flutter_riverpod 2.x, freezed, json_serializable, flutter_markdown, url_launcher, local_notifier, window_manager, path_provider, logger, flutter_localizations, intl, package_info_plus). Also add dev_dependencies: build_runner, freezed, json_serializable, flutter_lints, alchemist, integration_test.
+- [X] T002 Create `apps/control_panel/pubspec.yaml` declaring Flutter SDK 3.27 stable, Dart 3.5+, and dependencies enumerated in plan.md §Primary Dependencies (flutter_riverpod 2.x, freezed, json_serializable, flutter_markdown, url_launcher, local_notifier, window_manager, path_provider, logger, flutter_localizations, intl, package_info_plus). Also add dev_dependencies: build_runner, freezed, json_serializable, flutter_lints, alchemist, integration_test. **Known bench deviation (2026-05-23):** the Phase 3 T009 `flutter create` step was run against bench-global Flutter 3.44.0 because `fvm install 3.27.0` was not viable in the bench (FVM clone path blocked by a bench-global git rewrite of `https://github.com/`). The `pubspec.yaml` pin remains 3.27 stable; T160 (added below) tracks re-pinning the bench. See `flutter-testing-plan.md` §"2026-05-23 execution notes" for full context.
 - [X] T003 [P] Pin Flutter version via `apps/control_panel/.fvm/fvm_config.json` (research R-01) and document the FVM use in `apps/control_panel/README.md`.
 - [X] T004 [P] Create `apps/control_panel/analysis_options.yaml` enabling `flutter_lints` and project-specific rule overrides (no implicit-dynamic, strict-inference).
 - [X] T005 [P] Create `apps/control_panel/l10n.yaml` configuring ARB → Dart codegen (research R-08) with `arb-dir: assets/l10n`, `template-arb-file: en.arb`, `output-localization-file: app_localizations.dart`.
@@ -95,7 +95,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Domain model scaffolding (data-model.md §1-3)
 
-- [X] T037 Configure `build_runner` in `apps/control_panel/build.yaml` and verify `flutter pub run build_runner watch` generates freezed/json_serializable code into `*.freezed.dart` and `*.g.dart`.
+- [X] T037 Configure `build_runner` in `apps/control_panel/build.yaml` and verify `flutter pub run build_runner watch` generates freezed/json_serializable code into `*.freezed.dart` and `*.g.dart`. **Operator note:** any freezed-model field change (e.g. the Phase 3 review-fix-up rename of `QueueRow.queueRowId → messageId`, addition of `Pane.tmuxSocket`, change of `Pane.tmuxWindowIndex/PaneIndex` to `int`, rename of `Route.targetRule → target` + addition of `Route.template`) requires `dart run build_runner build --delete-conflicting-outputs` before `flutter analyze` / `flutter test` will compile. CI must include a build_runner step before the analyze/test invocations.
 - [X] T038 [P] Implement `apps/control_panel/lib/domain/models/common_enums.dart` — shared enums referenced across entities (AgentRole, AgentState, MasterStatus, Stage, ExecutionStatus, AssignmentState, RunState, RunResult, DriftStatus, DriftSeverity, DriftSource, DriftConfidence, EntrypointType, BlockingLevel, DemoReadinessState, AttentionSeverity, NotificationSeverity, AttentionClass, HandoffMode, HandoffPriority, PolicySource, ResolvedExclusion, WorkItemKind, OnboardingMilestone, Workspace, ThemeMode, DensityMode, SortDirection). State values in prose use hyphenated form per FR-014; Dart enum variants use camelCase per Dart convention.
 - [X] T039 [P] Implement `apps/control_panel/lib/domain/lifecycles/pane_state_validator.dart` — encode FR-014 transition matrix per data-model.md §1.4 as `bool isValidTransition(PaneState from, PaneState to)`.
 - [X] T040 [P] Implement `apps/control_panel/lib/domain/lifecycles/drift_state_validator.dart` — encode FR-034 transition matrix per data-model.md §1.9.
@@ -155,7 +155,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 - [X] T066 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/containers/containers_view.dart` — FR-013 Containers view (label, discovered status, project path).
 - [X] T067 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/panes_view.dart` — FR-014 Panes view with the four-state vocabulary (discovered-and-unmanaged | discovered-and-registered | inactive/stale | discovery-degraded) and per-state next-action affordance.
 - [X] T068 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/adopt_flow.dart` — FR-016 adopt-existing-pane form (label, role, capability, project_path, attach_log_now). Reject role/capability incompatible with discovered pane class. Calls `app.agent.register_from_pane`. ≤ 5 s budget per FR-065.
-- [X] T069 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/agents_view.dart` — FR-015 Agents view treating agent + current goal/task as primary unit; render parent/child sub-agent tree limited to 2 visible levels per data-model.md §1.2 with "+N descendants" affordance.
+- [X] T069 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/agents_view.dart` — FR-015 Agents view treating agent + current goal/task as primary unit; render parent/child sub-agent tree limited to 2 visible levels per data-model.md §1.2 with "+N descendants" affordance. Also implement `apps/control_panel/lib/features/agent_ops/agents/edit_agent.dart` (`EditAgentDialog`) wiring `AppClient.agentUpdate` so the operator can mutate label / role / capability / project_path per FR-015 + FR-029a; honor "empty string clears" semantics for `label` / `project_path` and the closed-set rejection for `role` / `capability`.
 - [X] T070 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/log_attach_affordance.dart` — FR-017 log attach/detach available from Agents view and per-pane affordance.
 - [X] T071 [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/direct_send.dart` — FR-018 Direct Send (non-empty payload required, inline daemon response, no silent retry on failure). Uses optional `idempotency_key` per FEAT-011 FR-031a.
 - [X] T072 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/events/events_view.dart` — FR-019 Events view in observed-at order with virtualized infinite scroll per FR-080 + "Jump to most recent" affordance.
@@ -174,7 +174,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 - [X] T080 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/trust_model_statement.dart` — first-launch in-app statement of local-only trust (Unix socket + same-host UID per FR-061). Also reachable from Settings.
 
-**Checkpoint**: User Story 1 (MVP) is fully functional and testable independently. The app delivers a strict-superset replacement for the equivalent CLI adopt-existing-pane workflow.
+**Checkpoint**: Phase 3 source code lands. **Functional sign-off pending** the items captured in T160-T163 below — specifically (a) re-enabling the 4 FR-012 dashboard tiles after the openspec `extend-app-dashboard-fields-for-feat012` proposal archives + bumping the daemon contract to 1.1 (T160), (b) extending T054 with a real SC-001 walk (T161), (c) extending T055 with real SC-010 outage/recovery measurements (T162), and (d) wiring an integration test for onboarding milestone auto-tick (T163). The Phase 3 wire surface IS aligned with FEAT-011 v1.0 per `app-methods.md` post-commit 888b7fc; Phase 4 work may proceed in parallel with T160-T163 since they do not block the US2-US6 implementation paths.
 
 ---
 
@@ -227,7 +227,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 3
 
-- [ ] T097 [P] [US3] Write `apps/control_panel/integration_test/us3_handoff_flow.dart` covering US3 §1-§6 + FR-072 failure tiers + FR-081 supersede scenarios (the F1-added scenarios for handoff failure and supersede). Assert SC-003 budget: single-feature handoff with auto-filled context completes from "open handoff flow" to "submitted" in ≤ 30 s on the mock daemon. Assert SC-004: for a feature range with ≥1 deferred + ≥1 merged intermediate item, the resolved-list shown in preview matches byte-for-byte the resolved-list embedded in the submitted prompt (snapshot diff).
+- [ ] T097 [P] [US3] Write `apps/control_panel/integration_test/us3_handoff_flow.dart` covering US3 §1-§6 + FR-072 failure tiers + FR-081 supersede scenarios (the F1-added scenarios for handoff failure and supersede). Assert SC-003 budget: single-feature handoff with auto-filled context completes from "open handoff flow" to "submitted" in ≤ 30 s on the mock daemon. Assert SC-004: for a feature range with ≥1 deferred + ≥1 merged intermediate item, the resolved-list shown in preview matches byte-for-byte the resolved-list embedded in the submitted prompt (snapshot diff). **The SC-003 assertion MUST drive real taps end-to-end (open handoff modal → pick feature → tick auto-fill checkbox → preview → submit) and measure the wall-clock elapsed across that sequence** — do not ship the vacuous "pump widget, assert elapsed < 30 s" pattern that the post-Phase-3 review flagged on T054/T055 and required T161/T162 follow-ups to repair.
 
 ### Domain models for US3
 
@@ -264,7 +264,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 4
 
-- [ ] T112 [P] [US4] Write `apps/control_panel/integration_test/us4_drift.dart` covering US4 §1-§5 acceptance scenarios. Assert SC-005 budget: after the mock daemon emits a new drift finding for a project, the project card's drift badge updates within 60 s.
+- [ ] T112 [P] [US4] Write `apps/control_panel/integration_test/us4_drift.dart` covering US4 §1-§5 acceptance scenarios. Assert SC-005 budget: after the mock daemon emits a new drift finding for a project, the project card's drift badge updates within 60 s. **The SC-005 assertion MUST observe the actual badge transition (poll `find.text` or watch the badge widget's Riverpod state) within the 60 s window** — do not ship a pump-and-assert-elapsed shape; see the T054/T055 cautionary precedent + T161/T162 below.
 
 ### Domain models for US4
 
@@ -381,6 +381,16 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 - [ ] T158 [P] Annotate non-buildable Success Criteria in `apps/control_panel/test/perf/sc_coverage_map.md` (a doc, not test code): explicitly mark SC-002, SC-008, SC-011, SC-012, SC-013 as user-study or post-launch-survey items deferred to internal Opensoft operator cohort evaluation; reference Assumptions in spec.md. Document SC-006/007/008a as covered by T125/T128/T130, SC-001 by T054 (extended), SC-003/004 by T097 (extended), SC-005 by T112 (extended), SC-009 by T155, SC-010 by T055 (extended). Closes analyze findings C6 + C11.
 - [ ] T159 [P] Update SC coverage references in `specs/012-flutter-control-panel/tasks.md` final footer to reflect post-fix counts (no functional change; documentation-only counter sync).
 
+### Post-Phase-3 review follow-ups (added 2026-05-24)
+
+These five tasks close the HIGH + MEDIUM findings from the post-Phase-3 `/speckit.analyze` audit. They are NOT blocking for Phases 4-8 (US2-US6 implementation paths don't depend on them) but MUST land before final FEAT-012 sign-off.
+
+- [ ] T160 [P] **Re-enable suppressed FR-012 dashboard tiles + bump contract version.** When the openspec change `extend-app-dashboard-fields-for-feat012` archives, (a) update `ContractRegistry.declare('agent_ops/dashboard', ...)` in `apps/control_panel/lib/features/agent_ops/module.dart` from `ContractVersion(1, 0)` to `ContractVersion(1, 1)`, (b) un-comment + wire the 4 TODO-marked tiles in `apps/control_panel/lib/features/agent_ops/dashboard/dashboard_view.dart` (panes-by-state, registered-agents-by-state, recently-skipped-routes, recommended_next_action) against the new `counts.panes.by_state` / `counts.agents.by_state` / `counts.routes.recently_skipped_count` / `recommended_next_action` fields, (c) extend `Fixtures.dashboardResult` in `apps/control_panel/test/helpers/fixture_builders.dart` with optional params for the new fields, (d) update the mock daemon README's `app.dashboard` fixture example, (e) re-pin the bench to Flutter 3.27 stable (the Phase 3 T009 deviation noted in T002) using a fresh `fvm install` once the bench's git-rewrite issue is resolved. Closes analyze finding C1 + C4.
+- [ ] T161 [P] **Extend T054 with a real SC-001 walk.** Rewrite `apps/control_panel/integration_test/us1_adopt_and_operate.dart` to actually drive the 8-milestone walk (containers list → pane discovery → adopt → register agent → log attach → direct send → route add) via `tester.tap` + `tester.pumpAndSettle` between each step, then assert the wall-clock elapsed against the SC-001 ≤ 10 minute budget. The current shape pumps the widget + asserts an unmeasured budget — vacuous per the post-Phase-3 analyze C2 finding. Tap-driving requires the build_runner-generated freezed files (see T037 operator note) and `MockDaemonClient` + `Fixtures` for each post-mutation state transition.
+- [ ] T162 [P] **Extend T055 with real SC-010 outage/recovery measurements.** Rewrite `apps/control_panel/integration_test/runtime_states.dart` to (a) start the mock-daemon harness + bootstrap the session, (b) kill the mock daemon process mid-flight and assert every live-data surface transitions to the documented `runtime-unreachable` empty state within 2 s (FR-004 + SC-010), (c) re-spawn the mock daemon + tap "Retry connection" and assert live state reverts within 5 s, (d) assert no surface displays stale data labelled as live during the outage. The current rewrite preserves only the `ContractCompat.compute` matrix test — the wall-clock budgets are unmeasured. Closes analyze finding C2.
+- [ ] T163 [P] **Onboarding milestone auto-tick integration test.** Write `apps/control_panel/integration_test/us1_onboarding_autotick.dart` driving each of the 8 milestones through its trigger condition (mock-daemon emits a container → `benchContainerCheck` ticks; emits a pane → `paneDiscoveryCheck` ticks; etc.) and assert the milestone enters `onboardingProgressProvider`'s persisted set within one pump tick. Verifies the post-Phase-3 `OnboardingProgressNotifier` `ref.watch` wiring (review fix C9) cannot silently regress. Closes analyze finding M2.
+- [ ] T164 [P] **Write widget tests for the 12 Phase 3 US1 surfaces** in `apps/control_panel/test/widget/agent_ops/` covering: dashboard_view (with + without runtime-unreachable + with all-zero counts), containers_view (empty + populated + load-error), panes_view (per-PaneState row variants + adopt button visibility), adopt_flow (validation + submit + per-error rendering), agents_view (tree depth + descendants overflow), direct_send (empty-payload guard + send-success snack), log_attach_affordance (attach/detach + busy state), events_view (jump-to-most-recent + empty), queue_view (action visibility per state + delay-on-queued correctness post-H8 fix), routes_view (toggle + remove + recent-skip explanation rendering), add_route_flow (template/target submit), health_view (per-state coloring + hints). Each test pumps with `ProviderScope` + override stubs for `appClientProvider`. Closes analyze finding H13 (deferred from Block D in the review fix-up).
+
 ---
 
 ## Dependencies & Execution Order
@@ -428,9 +438,9 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 
 ---
 
-**Total tasks**: 159 (T001..T159)
-**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (17, including 6 verification tasks T154-T159 added per /speckit-analyze).
-**Parallel tasks**: 109 marked [P].
+**Total tasks**: 164 (T001..T164)
+**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (22, including 6 verification tasks T154-T159 from /speckit-analyze Round 1 and 5 post-Phase-3 review follow-ups T160-T164 from /speckit-analyze Round 4).
+**Parallel tasks**: 114 marked [P].
 **Story-labelled tasks**: 89 across US1..US6.
 
 **Verification-task coverage** (added per /speckit-analyze Round 1):
@@ -439,4 +449,11 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 - CLI non-regression: T156 covers Const2 (constitution principle IV).
 - Architectural invariant: T157 covers FR-005 (no local invent/mutate; all mutations via `app.*`).
 - Success-criteria documentation: T158 produces `sc_coverage_map.md` annotating SC-002/008/011/012/013 as user-study or post-launch-survey items and tracing all other SCs to specific tasks.
-- Extended integration tests: T054 asserts SC-001, T055 asserts SC-010, T097 asserts SC-003+SC-004, T112 asserts SC-005.
+- Extended integration tests: T054 asserts SC-001 (extension to come in T161 — current shape is vacuous per the post-Phase-3 analyze), T055 asserts SC-010 (extension to come in T162 — current shape covers only the `ContractCompat.compute` matrix), T097 asserts SC-003+SC-004 (T097 description now mandates real tap-driving — see post-fix M1), T112 asserts SC-005 (same — see post-fix M1).
+
+**Post-Phase-3 review follow-ups** (added per /speckit-analyze Round 4, 2026-05-24):
+- T160 re-enables suppressed FR-012 dashboard tiles + bumps `agent_ops/dashboard` contract version after the openspec change `extend-app-dashboard-fields-for-feat012` archives. Also handles re-pinning the bench Flutter to 3.27 (T002 known deviation).
+- T161 extends T054 with a real SC-001 walk.
+- T162 extends T055 with real SC-010 outage/recovery measurements.
+- T163 wires the integration test for onboarding milestone auto-tick (post-Phase-3 C9 fix).
+- T164 writes widget tests for the 12 Phase 3 US1 surfaces (deferred from Block D in the review fix-up because freezed codegen had to land first).

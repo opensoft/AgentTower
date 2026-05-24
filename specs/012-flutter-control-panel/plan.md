@@ -148,35 +148,58 @@ apps/control_panel/
 ├── l10n.yaml                             # ARB → Dart codegen config (FR-067)
 ├── README.md                             # Build / run / package instructions
 ├── lib/
-│   ├── main.dart                         # App entrypoint, ProviderScope, window setup
+│   ├── main.dart                         # App entrypoint, ProviderScope overrides, WindowListener (FR-082 close handler)
 │   ├── app.dart                          # MaterialApp + routing + theme + locale wiring
 │   ├── core/
+│   │   ├── providers.dart                # Cross-cutting Riverpod provider declarations
+│   │   │                                 # (appPaths, logger, uxStateRepository,
+│   │   │                                 # socketClient, daemonSession, appClient,
+│   │   │                                 # preflightClient) — _unwired() throws if a
+│   │   │                                 # provider is read before main() overrides
 │   │   ├── config/                       # FR-009 Settings model + JSON persistence (FR-069)
 │   │   ├── daemon/                       # Unix socket client, app.* envelope, session lifecycle
 │   │   │   ├── socket_client.dart        # Raw socket framing per FEAT-011 FR-003a/b
-│   │   │   ├── app_client.dart           # app.* method wrappers (typed)
+│   │   │   ├── app_client.dart           # app.* method wrappers (typed), result.row unwrap
+│   │   │   ├── preflight_client.dart     # session-free app.preflight client (carved out
+│   │   │   │                             # of app_client; runs before/after bootstrap)
 │   │   │   ├── session.dart              # app.hello / re-bootstrap / token in-memory only
+│   │   │   │                             # + SessionEvent broadcast stream
 │   │   │   ├── envelope.dart             # {ok, app_contract_version, result|error} parsing
-│   │   │   └── errors.dart               # 27-entry FEAT-011 closed-set codes
+│   │   │   ├── errors.dart               # 27-entry FEAT-011 closed-set codes
+│   │   │   ├── contract_version.dart     # ContractRegistry runtime per-surface declarations
+│   │   │   └── mutation_keys.dart        # UUID v4 via Random.secure() for idempotency_key
 │   │   ├── persistence/                  # ux-state.json read/write (atomic, schema-versioned)
 │   │   ├── logging/                      # Rotating file logger per FR-074 (no telemetry)
 │   │   ├── update/                       # FR-068 release-feed check + version-display state
 │   │   ├── notifications/                # FR-057 grouping rule, FR-058 OS-native dispatch
 │   │   ├── shortcuts/                    # FR-007 Ctrl/Cmd+P, FR-075 Ctrl/Cmd+K palette
+│   │   │                                 # command_palette.dart hosts the Riverpod
+│   │   │                                 # commandRegistryProvider Notifier
 │   │   └── l10n/                         # Generated Dart from ARB files
+│   │       └── l10n_wiring.dart          # Base localization delegates + supported locales
 │   ├── domain/
 │   │   ├── models/                       # freezed models mirroring FEAT-011 read-surface shapes
 │   │   ├── lifecycles/                   # State-machine validators per FR-014/028/034/044/048
 │   │   └── helper_policy/                # FR-038a snapshot + resolution
 │   ├── features/
+│   │   ├── registry.dart                 # WorkspaceRegistry: (workspace, subViewId) →
+│   │   │                                 # WidgetBuilder map looked up by AppShell;
+│   │   │                                 # each US-phase module calls register() at load
 │   │   ├── agent_ops/                    # Workspace 1: dashboard, containers, panes, agents,
-│   │   │                                 # events, queue, routes, health, attention queue
+│   │   │   │                             # events, queue, routes, health, attention queue
+│   │   │   ├── module.dart               # registerAgentOps() bootstrap — wires all 8
+│   │   │   │                             # sub-views + ContractRegistry declarations
+│   │   │   ├── providers.dart            # autoDispose FutureProviders for every US1
+│   │   │   │                             # list + family providers for detail surfaces
+│   │   │   └── agents/edit_agent.dart    # EditAgentDialog → app.agent.update (FR-015)
 │   │   ├── project_specs/                # Workspace 2: projects, current work, specs, changes,
 │   │   │                                 # drift, handoff flow, project removal
 │   │   ├── testing_demo/                 # Workspace 3: available validation, runs, demo readiness
 │   │   ├── notifications/                # Shared: panel, history, badges, OS-native integration
 │   │   ├── settings/                     # Shared: Settings surface, doctor / preflight
 │   │   ├── onboarding/                   # First-launch flow + Dashboard nudges (FR-010)
+│   │   │   └── onboarding_provider.dart  # Notifier that ref.watches container/pane/agent/
+│   │   │                                 # queue/route providers and auto-ticks milestones
 │   │   └── shell/                        # Top-level nav, project switcher, command palette,
 │   │                                     # global banners, contract-version-incompatible state
 │   ├── ui/
@@ -184,6 +207,8 @@ apps/control_panel/
 │   │   ├── widgets/                      # Reusable card, badge, virtualized list, doc viewer
 │   │   └── a11y/                         # Focus, semantic labels, contrast utilities (FR-066)
 │   └── routing/                          # App-level routing + workspace + sub-view registry
+│       ├── router.dart                   # onGenerateRoute → AppShell with parsed RoutePath
+│       └── route_paths.dart              # Typed parser/serializer for /workspace/subview
 ├── assets/
 │   ├── l10n/                             # ARB source (en.arb at MVP per FR-067)
 │   └── icons/                            # Severity icons (FR-052), workspace nav icons
@@ -196,13 +221,16 @@ apps/control_panel/
 │   └── helpers/                          # In-test mock-daemon, freezed fixture builders
 ├── integration_test/                     # End-to-end flows against the mock-daemon harness
 │   ├── us1_adopt_and_operate.dart        # Mirrors US1 acceptance scenarios
+│   ├── us1_smoke_walk.dart               # Wire-level walk of every US1 surface end-to-end
+│   │                                     # (bootstrap → dashboard → list → adopt → send → route);
+│   │                                     # added in the post-Phase-3 review fix-up
 │   ├── us2_project_and_master.dart       # Mirrors US2 acceptance scenarios
 │   ├── us3_handoff_flow.dart             # Mirrors US3 + FR-072 failure tiers + FR-081 supersede
 │   ├── us4_drift.dart                    # Mirrors US4 acceptance scenarios
 │   ├── us5_validation_demo.dart          # Mirrors US5 acceptance scenarios
 │   ├── us6_attention_notifications.dart  # Mirrors US6 + FR-053 stability + FR-057 grouping
 │   ├── contract_version_skew.dart        # FR-002 banner + per-surface read-only mode
-│   ├── runtime_states.dart               # FR-004 five-state distinction
+│   ├── runtime_states.dart               # FR-004 five-state distinction (ContractCompat matrix)
 │   └── persistence.dart                  # FR-069/FR-070/FR-076/FR-077 across-launch behavior
 ├── test_harness/
 │   └── mock_daemon/                      # Python script that speaks FEAT-011 app.* over a
