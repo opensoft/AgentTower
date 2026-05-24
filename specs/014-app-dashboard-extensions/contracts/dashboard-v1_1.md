@@ -101,7 +101,7 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
 
 ### `counts.routes.recently_skipped_window_ms` (integer, required)
 
-- Type: fixed integer `300000` (5 minutes; Clarifications Q6).
+- Type: fixed integer `300000` (5 minutes; Clarifications Q6). The same value appears as `300_000` in the Python-audience documents (`data-model.md` §RecentlySkippedRoutesWindow, `research.md` §RB) — the two literals are **equivalent**, differing only in the optional underscore separator that JSON does not permit. The daemon constant is `300_000` in source; the wire transmits `300000`.
 - Not client-tunable in v1.1; no per-request override.
 - v1.x future minors MAY change this value (clients should read it, not hardcode 300000).
 
