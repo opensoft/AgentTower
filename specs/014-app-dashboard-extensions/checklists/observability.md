@@ -23,13 +23,13 @@
 
 ## Operator-Action Mapping
 
-- [ ] CHK009 - Is each recommendation code mapped to a documented operator next-step (so the dashboard's recommendation is actionable, not just a label)? [Completeness, Spec §FR-011, §FR-016]
+- [ ] CHK009 - Is each recommendation code mapped to a documented operator next-step (so the dashboard's recommendation is actionable, not just a label)? [Completeness, Spec §FR-011, §FR-016] [NEEDS-CLARIFY-R2]
 - [ ] CHK010 - Is the relationship between `target` and operator actionability stated (e.g., `target.kind == container` implies "operator should inspect that container next")? [Clarity, Spec §FR-011]
 
 ## Data Retention vs Snapshot Semantics
 
 - [ ] CHK011 - Is "process-local, resets on daemon restart" stated as both a feature AND a constraint operators should understand? [Clarity, Spec §FR-008, §Assumptions]
-- [ ] CHK012 - Is the requirement defined that operators must not infer trend or history from `recently_skipped_count` alone? [Gap]
+- [ ] CHK012 - Is the requirement defined that operators must not infer trend or history from `recently_skipped_count` alone? [Gap] [NEEDS-CLARIFY-R2]
 
 ## Coverage of Scenario Classes
 
@@ -47,5 +47,5 @@
 
 - [ ] CHK019 - Is the WARN log event name `app_dashboard_recommendation_compute_failed` (Research §FE) declared in a single canonical location so other consumers (alerts, dashboards) can grep for it? [Clarity, Research §FE]
 - [ ] CHK020 - Is the timestamp format (Research §TS: ISO-8601 UTC ms) consistent with other FEAT-011 observability surfaces (cited in research.md)? [Consistency, Research §TS]
-- [ ] CHK021 - Do research.md or data-model.md state that the WARN log is the ONLY operator-visible signal of recommendation compute failure (no metric, no JSONL event)? [Boundary, Research §FE]
+- [x] CHK021 - Do research.md or data-model.md state that the WARN log is the ONLY operator-visible signal of recommendation compute failure (no metric, no JSONL event)? [Boundary, Research §FE] [NEEDS-CLARIFY-R1, R1-resolved: Clarifications §Session 2026-05-24-r1 Q4 — WARN log only in v1.1]
 - [ ] CHK022 - Is the determinism guarantee (Research §CC) observable — i.e., can an operator infer that the same dashboard state will yield the same recommendation without reading source code? [Clarity, Research §CC]

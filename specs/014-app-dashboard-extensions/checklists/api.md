@@ -17,7 +17,7 @@
 - [ ] CHK006 - Are the closed-set values for `recommended_next_action.code` listed exhaustively in FR-010 and matched in the Clarifications precedence note? [Completeness, Spec §FR-010, §Clarifications]
 - [ ] CHK007 - Is the closed set for `target.kind` listed exhaustively, including the v1.1 addition `subsystem`? [Completeness, Spec §FR-011]
 - [ ] CHK008 - Is the meaning of `target.id` per `target.kind` documented (e.g., for `target.kind == subsystem` what string forms are valid)? [Ambiguity, Spec §FR-011]
-- [ ] CHK009 - Are `title` and `detail` distinguishable in purpose so two different writers would generate the same prose for the same condition? [Clarity, Spec §FR-011]
+- [x] CHK009 - Are `title` and `detail` distinguishable in purpose so two different writers would generate the same prose for the same condition? [Clarity, Spec §FR-011] [EDIT-applied: contracts/closed-sets-v1_1.md §Per-code title/detail Templates]
 
 ## Idempotency & Determinism
 
@@ -36,7 +36,7 @@
 ## Error Envelope & Exception Flow
 
 - [ ] CHK018 - Are dashboard read errors (e.g., method-level failure) specified separately from "recommendation compute failed" (which is success with nulls)? [Clarity, Spec §FR-021]
-- [ ] CHK019 - Is the response shape when the daemon advertises only v1.0 but is asked for v1.1 fields specified, or is it impossible by handshake construction? [Gap, Spec §FR-013]
+- [x] CHK019 - Is the response shape when the daemon advertises only v1.0 but is asked for v1.1 fields specified, or is it impossible by handshake construction? [Gap, Spec §FR-013] [EDIT-applied: contracts/dashboard-v1_1.md §Versioning Behavior now covers v1.0-daemon + v1.1-aware client]
 
 ## Scenario Coverage
 

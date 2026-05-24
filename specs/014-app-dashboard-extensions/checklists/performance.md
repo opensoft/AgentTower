@@ -7,7 +7,7 @@
 ## Latency Specification
 
 - [ ] CHK001 - Is the FEAT-011 dashboard latency budget cited by name or by numeric value in this spec? [Measurability, Spec §SC-006]
-- [ ] CHK002 - Is the latency budget specified as a percentile (p50/p95/p99) or only a mean? [Clarity, Spec §SC-006]
+- [x] CHK002 - Is the latency budget specified as a percentile (p50/p95/p99) or only a mean? [Clarity, Spec §SC-006] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §SC-006 — p95 ≤ 500ms]
 - [ ] CHK003 - Is the latency budget specified for the new v1.1 fields specifically (additive cost ≤ X ms), or only for the overall response envelope? [Gap, Spec §SC-006]
 
 ## Throughput & Concurrency
@@ -22,8 +22,8 @@
 
 ## Degradation Under Load
 
-- [ ] CHK008 - Is the requirement defined for what the dashboard does when it cannot meet the latency budget (return stale, return partial, exceed budget gracefully)? [Gap, Spec §SC-006]
-- [ ] CHK009 - Is the requirement defined for whether dashboard latency SLOs still apply during a degraded subsystem state? [Gap, Spec §FR-010]
+- [x] CHK008 - Is the requirement defined for what the dashboard does when it cannot meet the latency budget (return stale, return partial, exceed budget gracefully)? [Gap, Spec §SC-006] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §FR-027 — best-effort + WARN]
+- [x] CHK009 - Is the requirement defined for whether dashboard latency SLOs still apply during a degraded subsystem state? [Gap, Spec §FR-010] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §SC-006 — budget waived during subsystem_degraded]
 
 ## Measurability
 
@@ -32,9 +32,9 @@
 
 ## Boundary & Stress Scenarios
 
-- [ ] CHK012 - Is the boundary case "very large pane/agent count" addressed by either a stated limit or a stated graceful behavior? [Gap]
+- [x] CHK012 - Is the boundary case "very large pane/agent count" addressed by either a stated limit or a stated graceful behavior? [Gap] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §Assumptions — beyond fixture scale undefined]
 - [ ] CHK013 - Is the boundary case "high skip rate filling the ring buffer faster than it ages out" addressed? [Gap, Spec §FR-008]
-- [ ] CHK014 - Is the non-functional requirement for daemon CPU usage during dashboard calls under load specified, or is it implicitly bounded by the latency budget alone? [Gap]
+- [x] CHK014 - Is the non-functional requirement for daemon CPU usage during dashboard calls under load specified, or is it implicitly bounded by the latency budget alone? [Gap] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §Assumptions — no separate CPU budget]
 
 ## Plan & Design Alignment (re-verify 2026-05-24)
 

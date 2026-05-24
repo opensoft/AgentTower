@@ -51,6 +51,27 @@ Values for `recommended_next_action.code` (exactly 7, snake_case, in precedence 
 
 **Future evolution**: v1.x MAY add codes (clients ignore unknown — FR-012). v1.x MUST NOT renumber, rename, or remove existing codes.
 
+### Per-code `title` / `detail` Templates
+
+The daemon emits `title` and `detail` strings per recommendation code from the following **fixed templates**. `{N}` is the relevant integer count appearing in the matching state bucket; `{subsystem_name}` is one of the values from §TargetKind's `target.kind == subsystem` row. Templates MUST NOT be altered free-form by daemon implementers — all v1.1 daemons emit identical prose for the same code so two operators observing the same daemon state see identical recommendation text (this is what FR-011 §Per-code title/detail Templates incorporates by reference).
+
+| Code | `title` (≤ 128 chars) | `detail` (≤ 512 chars or `null`) |
+|---|---|---|
+| `subsystem_degraded` | `"Subsystem degraded: {subsystem_name}"` | `"The {subsystem_name} subsystem is reporting degraded health. Inspect daemon readiness or the relevant subsystem before relying on other dashboard signals."` |
+| `no_containers` | `"No bench containers"` | `"The daemon does not see any bench containers. Start a container (or check Docker connectivity)."` |
+| `no_panes_discovered` | `"No panes discovered"` | `"Containers exist but no tmux panes were discovered. Check tmux discovery health and the container's bench user."` |
+| `unadopted_panes_present` | `"Unadopted panes need attention"` | `"{N} pane(s) are discovered but not yet registered with an agent. Adopt them to enable routing."` |
+| `blocked_queue_drain` | `"Blocked queue rows"` | `"{N} queue row(s) are blocked and need operator action (approve, delay, or cancel)."` |
+| `no_routes_configured` | `"No routes configured"` | `"The route catalog is empty. Configure at least one route to enable arbitration."` |
+| `all_clear` | `"All clear"` | `null` |
+
+**Substitution rules**:
+
+- `{N}` — the daemon performs integer substitution once per response with the actual count. There is no plural agreement on the wire ("pane(s)" / "row(s)" is literal); clients localize for plural if they wish.
+- `{subsystem_name}` — drawn from §TargetKind `target.kind == subsystem` row. When multiple subsystems are degraded, the daemon picks the first in that probe-name order (deterministic per Research §SS).
+
+**Future evolution**: v1.x MAY refine the prose but MUST keep the `code` → `(title template, detail template)` mapping deterministic per-code (no per-call randomness, no localization in v1.x — English only).
+
 ## §TargetKind
 
 Values for `recommended_next_action.target.kind` (the v1.0 hint-target closed set + one v1.1 addition):

@@ -15,7 +15,7 @@
 ## Downstream Consumers (What FEAT-014 Provides)
 
 - [ ] CHK006 - Is FEAT-012 named as the primary consumer and the contract surface FEAT-012 will read enumerated? [Completeness, Spec §Assumptions]
-- [ ] CHK007 - Are requirements stated for *other* potential consumers (CLI, monitoring scripts, future apps) using the same fields, or is FEAT-012 declared the sole v1.1 consumer? [Gap]
+- [ ] CHK007 - Are requirements stated for *other* potential consumers (CLI, monitoring scripts, future apps) using the same fields, or is FEAT-012 declared the sole v1.1 consumer? [Gap] [NEEDS-CLARIFY-R2]
 
 ## Contract Versioning Touchpoints
 
@@ -24,7 +24,7 @@
 
 ## Failure Mode Propagation
 
-- [ ] CHK010 - Is the requirement defined for how an upstream failure (e.g., container scanner unavailable) translates into v1.1 field values (`discovery-degraded`, `subsystem_degraded` recommendation)? [Coverage, Spec §FR-002, §FR-010]
+- [x] CHK010 - Is the requirement defined for how an upstream failure (e.g., container scanner unavailable) translates into v1.1 field values (`discovery-degraded`, `subsystem_degraded` recommendation)? [Coverage, Spec §FR-002, §FR-010] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §FR-008 extension]
 - [ ] CHK011 - Is the requirement defined for how an upstream FEAT-010 ring buffer reset (daemon restart) is observable to clients (just a `0` count) versus needing a separate "buffer reset" indicator? [Clarity, Spec §FR-008]
 
 ## External Format Stability
@@ -35,7 +35,7 @@
 
 - [ ] CHK013 - Is the integration scenario "v1.1 daemon + v1.0 client" covered by a dedicated requirement and acceptance scenario? [Coverage, Spec §US4, §FR-014]
 - [ ] CHK014 - Is the integration scenario "v1.0 daemon + v1.1-aware client" specified, or explicitly declared out of scope? [Gap]
-- [ ] CHK015 - Is the integration scenario "FEAT-010 emitting unknown skip event shape" handled by the ring buffer model, or does it require a contract guarantee at the FEAT-010 boundary? [Gap, Spec §FR-008]
+- [x] CHK015 - Is the integration scenario "FEAT-010 emitting unknown skip event shape" handled by the ring buffer model, or does it require a contract guarantee at the FEAT-010 boundary? [Gap, Spec §FR-008] [NEEDS-CLARIFY-R1, R1-resolved: Clarifications §Session 2026-05-24-r1 Q3 — FEAT-010 opaque caller]
 
 ## Plan & Design Alignment (re-verify 2026-05-24)
 

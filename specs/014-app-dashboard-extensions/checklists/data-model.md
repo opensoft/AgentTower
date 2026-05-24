@@ -26,8 +26,8 @@
 
 ## Lifecycle & State Transitions
 
-- [ ] CHK012 - Are transitions between `PaneState` values described, or explicitly declared out of scope since this is a read-side derived view? [Coverage, Gap]
-- [ ] CHK013 - Are transitions between `AgentState` values described, or explicitly declared derived purely from container state plus configuration completeness? [Coverage, Spec §FR-020]
+- [x] CHK012 - Are transitions between `PaneState` values described, or explicitly declared out of scope since this is a read-side derived view? [Coverage, Gap] [EDIT-applied: data-model.md §PaneState now has a Lifecycle "derived view, no transitions" statement]
+- [x] CHK013 - Are transitions between `AgentState` values described, or explicitly declared derived purely from container state plus configuration completeness? [Coverage, Spec §FR-020] [EDIT-applied: data-model.md §AgentState now has a Lifecycle "derived view, no transitions" statement]
 - [ ] CHK014 - Is the lifecycle of `RecentlySkippedRoutes Window` (insertion on FEAT-010 skip, expiration at window edge, reset on restart) described with matching precision? [Completeness, Spec §FR-008]
 - [ ] CHK015 - Is the lifecycle of `RecommendedNextAction` (recomputed per call, never persisted) stated such that a future "persisted history" requirement would clearly be out of scope? [Clarity, Spec §FR-018, §Clarifications Q8]
 

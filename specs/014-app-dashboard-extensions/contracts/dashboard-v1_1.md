@@ -111,7 +111,7 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
 - `code`: one of the seven closed-set strings in `closed-sets-v1_1.md` §RecommendationCode, evaluated top-to-bottom by the daemon, first match wins.
 - `title`: short operator-facing label, ≤ 128 chars. Never null.
 - `detail`: longer operator-facing prose, ≤ 512 chars, or `null` when the code has no useful detail (the daemon SHOULD provide detail where the operator can act on it).
-- `target`: closed-shape sub-object or `null`. The per-code target rule is documented in `data-model.md` §RecommendedNextAction. When the target value would be ambiguous (e.g., multiple unadopted panes), the daemon picks the first per FEAT-011's normative orderings.
+- `target`: closed-shape sub-object or `null`. The per-code target rule is documented in `data-model.md` §RecommendedNextAction. When the target value would be ambiguous (e.g., multiple unadopted panes), the daemon picks the first per FEAT-011's normative orderings. **`target.id` opacity** (FR-011, Clarifications R1 Q14): `target.id` values are opaque internal identifiers — clients MUST NOT assume any human-readable structure and MUST resolve a `target.id` to a display name via separate `app.<entity>.detail` calls.
 - When `recommended_next_action == null`, the rest of the v1.1 fields are still required and well-typed.
 
 ### `recommended_next_action_refreshed_at` (string | null, required)
@@ -125,6 +125,7 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
 - A daemon advertising `app_contract_version == "1.1"` MUST emit every v1.1 field on every `app.dashboard` response, regardless of `client_app_contract_major` (Clarifications Q10, FR-013).
 - A v1.0 client receives the v1.1 fields and ignores unknown keys per FEAT-011's additive-minor rule (FR-012, FR-014).
 - A v1.0 daemon advertising `"1.0"` MUST NOT emit any v1.1 field — the new keys appear if and only if the advertised version is ≥ 1.1.
+- A v1.1-aware client connecting to a v1.0 daemon receives only the v1.0 fields (no `by_state`, no `recently_skipped_*`, no `recommended_next_action`). The daemon does not signal v1.0 vs v1.1 to the client beyond the existing `app_contract_version` field returned in `app.hello`; graceful degradation in that direction is the client's responsibility per FEAT-011's additive-minor rules. The v1.1-aware client SHOULD inspect `app_contract_version` once at session start and adapt its UI accordingly.
 
 ## Error Behavior
 

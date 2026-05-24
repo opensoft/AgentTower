@@ -50,7 +50,7 @@ This section uses the "unit tests for English" framing: every item asks whether 
 - [ ] CHK002 - Is every closed-set value the spec relies on (`PaneState`, `AgentState`, recommendation `code`, `target.kind`, container `state`) enumerated in the spec or in a referenced contract document? [Completeness, Spec §FR-002, §FR-005, §FR-010, §FR-011]
 - [ ] CHK003 - Are requirements present for the daemon-side default value of every tunable-looking field (e.g., `recently_skipped_window_ms`, recommendation cache TTL)? [Completeness, Spec §FR-008]
 - [ ] CHK004 - Are requirements present for the *absence* of behavior that v1.0 had but v1.1 must NOT change (fields, methods, error codes, capability flags)? [Completeness, Spec §FR-014, §FR-015]
-- [ ] CHK005 - Are requirements present for the failure mode of every newly added field, not only the happy path? [Completeness, Spec §FR-021, §Clarifications]
+- [x] CHK005 - Are requirements present for the failure mode of every newly added field, not only the happy path? [Completeness, Spec §FR-021, §Clarifications] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §FR-025]
 
 ## Clarity
 
@@ -82,8 +82,8 @@ This section uses the "unit tests for English" framing: every item asks whether 
 
 ## Ambiguities & Conflicts
 
-- [ ] CHK022 - Are there any FRs that say "as appropriate" or "or no target as appropriate" without enumerating the cases? [Ambiguity, Spec §FR-011]
-- [ ] CHK023 - Does the spec resolve whether `partially_configured` agents are still counted as `registered` for the pane's `discovered-and-registered` bucket (the agent row exists, but configuration is incomplete)? [Conflict, Spec §FR-020, §FR-002]
+- [x] CHK022 - Are there any FRs that say "as appropriate" or "or no target as appropriate" without enumerating the cases? [Ambiguity, Spec §FR-011] [EDIT-applied: spec.md §FR-011 now incorporates the per-code target rule by reference]
+- [x] CHK023 - Does the spec resolve whether `partially_configured` agents are still counted as `registered` for the pane's `discovered-and-registered` bucket (the agent row exists, but configuration is incomplete)? [Conflict, Spec §FR-020, §FR-002] [EDIT-applied: spec.md §FR-019 now states the partially_configured pane carve-out]
 - [ ] CHK024 - Is "recomputed on every `app.dashboard` call" reconciled with "fixed-order, deterministic" by an explicit same-input-same-output guarantee, so two concurrent dashboard calls observe identical recommendation output when underlying state is unchanged? [Ambiguity, Spec §Clarifications Q8, §FR-010]
 
 ## Plan & Design Alignment (re-verify 2026-05-24)

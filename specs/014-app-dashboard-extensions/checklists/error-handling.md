@@ -6,8 +6,8 @@
 
 ## Failure Mode Enumeration
 
-- [ ] CHK001 - Are all failure modes that can affect a v1.1 dashboard response enumerated (compute failure, scanner degraded, container inactive, no containers, no panes, no routes, blocked queue, daemon restart)? [Completeness, Spec §FR-010, §FR-021]
-- [ ] CHK002 - Is the difference between "field not yet populated" (e.g., post-restart zero count) and "field cannot be computed" (compute failure) clearly distinguished in the contract? [Clarity, Spec §FR-008, §FR-021]
+- [x] CHK001 - Are all failure modes that can affect a v1.1 dashboard response enumerated (compute failure, scanner degraded, container inactive, no containers, no panes, no routes, blocked queue, daemon restart)? [Completeness, Spec §FR-010, §FR-021] [NEEDS-CLARIFY-R1, R1-resolved: Clarifications §Session 2026-05-24-r1 Q5 — reuse FEAT-011 readiness semantics]
+- [x] CHK002 - Is the difference between "field not yet populated" (e.g., post-restart zero count) and "field cannot be computed" (compute failure) clearly distinguished in the contract? [Clarity, Spec §FR-008, §FR-021] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §FR-025]
 - [ ] CHK003 - Are upstream-dependency failures (FEAT-010 worker stalled, container scanner returns no data) specified to bucket into `discovery-degraded` / `subsystem_degraded` rather than crash the dashboard? [Coverage, Spec §FR-002, §FR-010]
 
 ## Compute-Failure Fallback
@@ -19,20 +19,20 @@
 ## Degraded-State Semantics
 
 - [ ] CHK007 - Is "degraded subsystem must win by precedence" expressed both as an Edge Case bullet and as a testable FR/SC pair? [Consistency, Spec §Edge Cases, §FR-010, §SC-003]
-- [ ] CHK008 - Is the requirement defined for whether a degraded subsystem suppresses *other* v1.1 fields (e.g., are `panes.by_state` counts still trustworthy when `subsystem_degraded`)? [Gap, Spec §FR-010, §FR-002]
+- [x] CHK008 - Is the requirement defined for whether a degraded subsystem suppresses *other* v1.1 fields (e.g., are `panes.by_state` counts still trustworthy when `subsystem_degraded`)? [Gap, Spec §FR-010, §FR-002] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §FR-026]
 - [ ] CHK009 - Is "`subsystem_degraded` always has `target: null`" stated in the spec? (Clarifications Q9 Option B's wording mentioned it but Option A was chosen — confirm the constraint is captured somewhere durable.) [Gap, Spec §Clarifications Q9, §FR-011]
 
 ## Recovery Requirements
 
 - [ ] CHK010 - Are the post-daemon-restart requirements specified for every transient state (`recently_skipped_count` → 0, recommendation cache → none-by-design, all other dashboard fields → recomputed from current daemon state)? [Coverage, Spec §FR-008, §Clarifications Q7]
-- [ ] CHK011 - Is the requirement defined for whether a partially-restarted daemon (some subsystems up, others down) must coherently report `subsystem_degraded`, or whether it may emit inconsistent partials? [Gap, Spec §FR-010]
+- [x] CHK011 - Is the requirement defined for whether a partially-restarted daemon (some subsystems up, others down) must coherently report `subsystem_degraded`, or whether it may emit inconsistent partials? [Gap, Spec §FR-010] [NEEDS-CLARIFY-R1, R1-resolved: spec.md §FR-026 partial-restart coherence]
 
 ## Edge Cases
 
 - [ ] CHK012 - Are zero-row edge cases (no panes, no agents, no routes, no recent skips, no recommendation) all enumerated with required output values? [Completeness, Spec §Edge Cases, §FR-003]
 - [ ] CHK013 - Are boundary-time edge cases (skip event exactly at the window edge, recommendation recomputed at exactly the same timestamp) specified? [Coverage, Spec §Edge Cases]
 - [ ] CHK014 - Is the edge case "future recommendation code emitted to older client" covered by an existing FR (FR-012)? [Coverage, Spec §FR-012, §Edge Cases]
-- [ ] CHK015 - Is the edge case "reserved state bucket exists before populated" specified — it's named in Edge Cases but is the FR/SC consequence stated? [Coverage, Spec §Edge Cases]
+- [x] CHK015 - Is the edge case "reserved state bucket exists before populated" specified — it's named in Edge Cases but is the FR/SC consequence stated? [Coverage, Spec §Edge Cases] [EDIT-applied: spec.md §FR-003 now covers reserved future buckets emitting 0]
 
 ## Error Propagation Boundaries
 

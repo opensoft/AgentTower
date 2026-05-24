@@ -37,6 +37,8 @@ This file captures the v1.1 entities, closed-set vocabularies, and derived-aggre
 
 These are enforced *by construction* — the v1.1 aggregator partitions the same row set the v1.0 counts partition.
 
+**Lifecycle**: `PaneState` is a purely derived view computed once per `app.dashboard` request from the FEAT-003 / FEAT-004 service-layer accessors. PaneState has no state transitions and no per-instance persistence — there is no entity to "transition" between buckets; each call partitions the current row set anew. A pane that moves from one bucket to another between two consecutive `app.dashboard` calls is simply observed in a different bucket on the second call; nothing is logged or transitioned at the PaneState layer itself.
+
 ---
 
 ## Entity: `AgentState` (closed set)
@@ -58,6 +60,8 @@ These are enforced *by construction* — the v1.1 aggregator partitions the same
 - `active + inactive + partially_configured` == total registered agents (strict partition).
 - `log-attached + log-detached` == total registered agents (strict partition, but independent of the above).
 - The sum of all five keys MAY exceed total agents (FR-006); the response MUST document this in `dashboard-v1_1.md`.
+
+**Lifecycle**: `AgentState` is a purely derived view computed once per `app.dashboard` request from the FEAT-003 (container state) / FEAT-006 (registration + role/capability/label) / FEAT-007 (log attachment) service-layer accessors. AgentState has no state transitions and no per-instance persistence — each call partitions and computes the current agent rows anew. An agent that moves between buckets (e.g., from `partially_configured` to `active` when its `role` is set) is simply observed in a different bucket on the next call.
 
 ---
 
@@ -103,6 +107,8 @@ These are enforced *by construction* — the v1.1 aggregator partitions the same
 "First" means *deterministic-first by FEAT-011's normative orderings* (Research §CC).
 
 **Compute-failure null fallback** (FR-021, Research §FE): if the recommendation function raises, both `recommended_next_action` and `recommended_next_action_refreshed_at` are `null` in the response envelope. The dashboard call still succeeds; no new error code is emitted. The daemon logs `app_dashboard_recommendation_compute_failed` at WARN.
+
+**`target.id` opacity** (FR-011, Clarifications R1 Q14): `target.id` values are opaque internal identifiers in FEAT-003 / FEAT-004 / FEAT-006 / FEAT-008 / FEAT-009 / FEAT-010 internal-id format (whichever corresponds to `target.kind`), or — for `target.kind == "subsystem"` — one of the FEAT-011 readiness probe names per Research §SS. They MUST NOT carry operator-readable display names, host metadata, paths, credentials, or PII. Clients render `target.id` opaquely or resolve it to a display name via separate `app.<entity>.detail` calls.
 
 ---
 
