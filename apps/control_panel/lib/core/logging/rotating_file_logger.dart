@@ -50,6 +50,11 @@ class RotatingFileLogger {
     'prompt_text',
     'operator_notes',
     'payload',
+    // Swarm-review M-16: handoff submit envelope carries the rendered
+    // prompt body verbatim. Redact defense-in-depth in case a future
+    // log site stringifies the envelope.
+    'generated_prompt_text',
+    'helper_policy_snapshot',
   };
 
   /// Compiled regex set for the string-scrub pass. Pre-built once because

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/json_utils.dart';
 import '../../../domain/models/handoff.dart';
 
 /// Riverpod providers for handoff list + detail surfaces. T110 / T111
@@ -18,14 +19,14 @@ final handoffListProvider = FutureProvider.autoDispose
       );
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => Handoff.fromJson(_withAsOf(m, asOf)))
+      .map((m) => Handoff.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
 final handoffDetailProvider =
     FutureProvider.autoDispose.family<Handoff, String>((ref, handoffId) async {
   final raw = await ref.watch(appClientProvider).handoffDetail(handoffId);
-  return Handoff.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
+  return Handoff.fromJson(withAsOfDefault(raw, DateTime.now().toUtc()));
 });
 
 class HandoffListQuery {
@@ -64,9 +65,4 @@ class HandoffListQuery {
         createdAfter,
         createdBefore,
       );
-}
-
-Map<String, dynamic> _withAsOf(Map<String, dynamic> raw, DateTime asOf) {
-  if (raw.containsKey('as_of')) return raw;
-  return {...raw, 'as_of': asOf.toIso8601String()};
 }

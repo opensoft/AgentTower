@@ -47,4 +47,60 @@ class MasterSummary with _$MasterSummary {
 
   factory MasterSummary.fromJson(Map<String, dynamic> json) =>
       _$MasterSummaryFromJson(json);
+
+  /// Swarm-review H-G1 — FR-071 qualification gate. Use this instead
+  /// of the raw freezed factory whenever constructing a MasterSummary
+  /// from an [AdoptedAgent]-derived shape: returns `null` if the
+  /// agent does NOT pass FR-071 (role + master-class capability),
+  /// preventing accidental construction of "master" rows for plain
+  /// agents.
+  ///
+  /// The full set of FR-030 fields (workflow phase, attention
+  /// severity, sub-agent rollup, etc.) are not derivable from an
+  /// AdoptedAgent alone — they come from the daemon's master-summary
+  /// projection. This helper exists for the rare cases where the
+  /// app must synthesize a minimal MasterSummary (e.g. the
+  /// drift-repair launcher in `drift_repair_handoff_launch.dart`).
+  /// Callers MUST supply the projection fields explicitly.
+  static MasterSummary? tryFromAgent({
+    required String agentId,
+    required String label,
+    required String capability,
+    required AgentRole role,
+    required Set<String> masterClassCapabilities,
+    required String assignedProjectId,
+    required ActiveInactiveBadge activeBadge,
+    required MasterStatus currentStatus,
+    required WorkflowPhase workflowPhase,
+    required SubAgentRollup subAgentRollup,
+    required AttentionSeverity attentionSeverity,
+    required CompactValidationBadge validationBadge,
+    required DateTime asOf,
+    String? primaryAssignedFeatureChangeId,
+    int primaryAssignedOverflowCount = 0,
+    int openActionableCount = 0,
+    DateTime? lastMeaningfulActivityAt,
+  }) {
+    if (role != AgentRole.master) return null;
+    if (masterClassCapabilities.isEmpty) return null;
+    if (!masterClassCapabilities.contains(capability)) return null;
+    return MasterSummary(
+      agentId: agentId,
+      label: label,
+      capability: capability,
+      role: role,
+      activeBadge: activeBadge,
+      currentStatus: currentStatus,
+      assignedProjectId: assignedProjectId,
+      primaryAssignedFeatureChangeId: primaryAssignedFeatureChangeId,
+      primaryAssignedOverflowCount: primaryAssignedOverflowCount,
+      workflowPhase: workflowPhase,
+      subAgentRollup: subAgentRollup,
+      attentionSeverity: attentionSeverity,
+      openActionableCount: openActionableCount,
+      lastMeaningfulActivityAt: lastMeaningfulActivityAt,
+      validationBadge: validationBadge,
+      asOf: asOf,
+    );
+  }
 }

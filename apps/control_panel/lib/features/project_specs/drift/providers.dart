@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/json_utils.dart';
 import '../../../domain/models/drift_signal.dart';
 
 /// Riverpod providers for drift surfaces. T115/T116 (Phase 6 US4).
@@ -14,14 +15,14 @@ final driftListProvider = FutureProvider.autoDispose
       );
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => DriftSignal.fromJson(_withAsOf(m, asOf)))
+      .map((m) => DriftSignal.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
 final driftDetailProvider =
     FutureProvider.autoDispose.family<DriftSignal, String>((ref, id) async {
   final raw = await ref.watch(appClientProvider).driftDetail(id);
-  return DriftSignal.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
+  return DriftSignal.fromJson(withAsOfDefault(raw, DateTime.now().toUtc()));
 });
 
 class DriftListQuery {
@@ -39,9 +40,4 @@ class DriftListQuery {
 
   @override
   int get hashCode => Object.hash(projectId, status, severity);
-}
-
-Map<String, dynamic> _withAsOf(Map<String, dynamic> raw, DateTime asOf) {
-  if (raw.containsKey('as_of')) return raw;
-  return {...raw, 'as_of': asOf.toIso8601String()};
 }

@@ -24,16 +24,56 @@ import 'models/common_enums.dart';
 /// renders as the plain Agent fallback. That degrades cleanly without
 /// throwing, consistent with FR-002 contract-version-incompatible
 /// behavior on the surfaces that consume this provider.
+/// Result type that distinguishes "the daemon returned an empty set"
+/// from "the daemon does not yet expose the registry method". Phase 4
+/// surfaces consume the boolean degraded flag (H-G2) to render a
+/// banner / log entry rather than silently failing every Master row.
+class MasterClassCapabilities {
+  const MasterClassCapabilities({
+    required this.capabilities,
+    required this.degraded,
+    this.degradedReason,
+  });
+
+  final Set<String> capabilities;
+  final bool degraded;
+  final String? degradedReason;
+
+  /// Convenience for places that just need the Set.
+  bool contains(String capability) => capabilities.contains(capability);
+  bool get isEmpty => capabilities.isEmpty;
+}
+
 final masterClassCapabilitiesProvider =
-    FutureProvider<Set<String>>((ref) async {
+    FutureProvider<MasterClassCapabilities>((ref) async {
   try {
     final result = await ref.watch(appClientProvider).capabilityRegistry();
     final raw = result['master_class'] ?? const <dynamic>[];
-    if (raw is! Iterable) return const <String>{};
-    return raw.whereType<String>().toSet();
-  } catch (_) {
-    // Method missing or other failure — degrade silently per R-19.
-    return const <String>{};
+    if (raw is! Iterable) {
+      // The daemon answered but the shape is wrong — surface as
+      // degraded so the operator sees a banner.
+      return const MasterClassCapabilities(
+        capabilities: <String>{},
+        degraded: true,
+        degradedReason:
+            'app.capability.registry returned a malformed master_class field',
+      );
+    }
+    return MasterClassCapabilities(
+      capabilities: raw.whereType<String>().toSet(),
+      degraded: false,
+    );
+  } catch (e) {
+    // Swarm-review H-G2: previously silent. Now we attach a reason
+    // so surfaces (Agents view, Project card master strip) can render
+    // a banner naming the missing method.
+    return MasterClassCapabilities(
+      capabilities: const <String>{},
+      degraded: true,
+      degradedReason:
+          'app.capability.registry unavailable ($e); all Master qualifications '
+          'will fail until the daemon exposes the v1.x registry method (R-19).',
+    );
   }
 });
 
@@ -48,4 +88,12 @@ bool qualifiesAsMaster(
   if (agent.role != AgentRole.master) return false;
   if (masterClassCapabilities.isEmpty) return false;
   return masterClassCapabilities.contains(agent.capability);
+}
+
+/// Overload accepting a [MasterClassCapabilities] envelope (H-G2 path).
+bool qualifiesAsMasterEnvelope(
+  AdoptedAgent agent,
+  MasterClassCapabilities envelope,
+) {
+  return qualifiesAsMaster(agent, envelope.capabilities);
 }

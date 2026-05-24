@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/master_qualification.dart';
 import '../../../domain/models/badges.dart';
@@ -10,6 +9,7 @@ import '../../../domain/models/drift_supporting.dart';
 import '../../../domain/models/master_summary.dart';
 import '../../../domain/models/project.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
+import '../../../ui/widgets/safe_url_launcher.dart';
 import '../providers.dart' as project_providers;
 import 'drift_repair_handoff_launch.dart';
 import 'drift_transition.dart';
@@ -185,31 +185,38 @@ class _Body extends ConsumerWidget {
     // affordance; for now we surface the no-driver state clearly.
     final driverId = project.currentDrivingMasterAgentId;
     if (driverId == null) return null;
-    final masterClass =
+    final envelope =
         await ref.read(masterClassCapabilitiesProvider.future);
-    // Synthesize a minimal MasterSummary view from the driver id.
-    // The handoff flow only needs (agentId, label, capability,
-    // currentStatus) for its step 1 confirmation; the heavier fields
-    // come from the handoff context bundle the daemon builds at
-    // submit time. If the driver capability doesn't pass FR-071
-    // qualification, return null so the caller surfaces the error.
-    final placeholder = MasterSummary(
-      agentId: driverId,
-      label: driverId,
-      capability: masterClass.isNotEmpty ? masterClass.first : 'claude',
-      role: AgentRole.master,
-      activeBadge: const ActiveInactiveBadge(active: true),
-      currentStatus: MasterStatus.active,
-      assignedProjectId: project.projectId,
-      workflowPhase:
-          const WorkflowPhase(humanLabel: 'Drift repair (in progress)'),
-      subAgentRollup: const SubAgentRollup(),
-      attentionSeverity: AttentionSeverity.warning,
-      validationBadge:
-          const CompactValidationBadge(kind: ValidationBadgeKind.unknown),
-      asOf: DateTime.now().toUtc(),
-    );
-    return placeholder;
+    // Synthesize a minimal MasterSummary via the FR-071 gate
+    // (MasterSummary.tryFromAgent). When the daemon's capability
+    // registry is unreachable (envelope.degraded) we fall back to
+    // the first known master-class capability or 'claude' so the
+    // drift-repair launch isn't completely blocked, while the
+    // ContextBundle the daemon assembles at submit time will use
+    // the real capability of the resolved agent.
+    return MasterSummary.tryFromAgent(
+          agentId: driverId,
+          label: driverId,
+          capability: envelope.capabilities.isNotEmpty
+              ? envelope.capabilities.first
+              : 'claude',
+          role: AgentRole.master,
+          masterClassCapabilities: envelope.capabilities.isEmpty
+              ? const {'claude'}
+              : envelope.capabilities,
+          assignedProjectId: project.projectId,
+          activeBadge: const ActiveInactiveBadge(active: true),
+          currentStatus: MasterStatus.active,
+          workflowPhase: const WorkflowPhase(
+            humanLabel: 'Drift repair (in progress)',
+          ),
+          subAgentRollup: const SubAgentRollup(),
+          attentionSeverity: AttentionSeverity.warning,
+          validationBadge: const CompactValidationBadge(
+            kind: ValidationBadgeKind.unknown,
+          ),
+          asOf: DateTime.now().toUtc(),
+        );
   }
 
   Widget _section(ThemeData theme, String title) => Padding(
@@ -274,8 +281,12 @@ class _EvidenceItem extends StatelessWidget {
               ),
             if (evidence.url != null)
               TextButton.icon(
+                // Swarm-review H-D1: route daemon-supplied evidence URLs
+                // through SafeUrlLauncher so the scheme allowlist catches
+                // javascript:/data:/vbscript: payloads before reaching the
+                // OS handler.
                 onPressed: () =>
-                    launchUrl(Uri.parse(evidence.url!), mode: LaunchMode.externalApplication),
+                    SafeUrlLauncher.open(context, evidence.url!),
                 icon: const Icon(Icons.link, size: 14),
                 label: Text(evidence.url!),
               ),
@@ -286,13 +297,12 @@ class _EvidenceItem extends StatelessWidget {
   }
 
   Future<void> _openFile(BuildContext context, DriftEvidence e) async {
-    final uri = Uri.file(e.filePath!);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open ${e.filePath}')),
-      );
-    }
+    // Swarm-review H-D2: previously `launchUrl(Uri.file(...))` opened
+    // any daemon-supplied path with the OS default handler. Route
+    // through SafeUrlLauncher.openFile so the operator confirms the
+    // path before launch (the daemon's authority to produce arbitrary
+    // file paths is unbounded).
+    await SafeUrlLauncher.openFile(context, e.filePath!);
   }
 
   static IconData _iconFor(DriftEvidenceKind k) => switch (k) {

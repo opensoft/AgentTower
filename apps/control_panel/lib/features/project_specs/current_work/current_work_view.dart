@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/models/feature_change_status.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
+import '../../../ui/widgets/safe_url_launcher.dart';
 import '../providers.dart';
 import 'driving_master_indicator.dart';
 
@@ -234,12 +234,13 @@ class _DocLinks extends ConsumerWidget {
   }
 
   Future<void> _openExternal(BuildContext context, String path) async {
-    final uri = path.startsWith('file://') ? Uri.parse(path) : Uri.file(path);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open $path')),
-      );
+    // Swarm-review H-D3: route daemon-supplied doc paths through
+    // SafeUrlLauncher's file-confirmation flow so the operator
+    // confirms before the OS handler launches anything.
+    if (path.startsWith('file://')) {
+      await SafeUrlLauncher.open(context, path);
+    } else {
+      await SafeUrlLauncher.openFile(context, path);
     }
   }
 }

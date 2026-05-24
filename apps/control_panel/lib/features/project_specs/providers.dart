@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../../core/json_utils.dart';
 import '../../domain/models/feature_change_status.dart';
 import '../../domain/models/project.dart';
 
@@ -20,14 +21,14 @@ final projectListProvider =
   final page = await ref.watch(appClientProvider).projectList();
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => Project.fromJson(_withAsOf(m, asOf)))
+      .map((m) => Project.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
 final projectDetailProvider =
     FutureProvider.autoDispose.family<Project, String>((ref, projectId) async {
   final raw = await ref.watch(appClientProvider).projectDetail(projectId);
-  return Project.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
+  return Project.fromJson(withAsOfDefault(raw, DateTime.now().toUtc()));
 });
 
 /// Operator-selected current project. `null` while no project is
@@ -57,7 +58,7 @@ final featureChangeListProvider =
         .featureChangeList(projectId: projectId);
     final asOf = DateTime.now().toUtc();
     return page.items
-        .map((m) => FeatureChangeStatus.fromJson(_withAsOf(m, asOf)))
+        .map((m) => FeatureChangeStatus.fromJson(withAsOfDefault(m, asOf)))
         .toList(growable: false);
   },
 );
@@ -69,7 +70,7 @@ final featureChangeDetailProvider =
         .watch(appClientProvider)
         .featureChangeDetail(featureChangeId);
     return FeatureChangeStatus.fromJson(
-      _withAsOf(raw, DateTime.now().toUtc()),
+      withAsOfDefault(raw, DateTime.now().toUtc()),
     );
   },
 );
@@ -86,8 +87,3 @@ final activeFeatureChangeProvider =
   if (activeId == null) return null;
   return ref.watch(featureChangeDetailProvider(activeId).future);
 });
-
-Map<String, dynamic> _withAsOf(Map<String, dynamic> raw, DateTime asOf) {
-  if (raw.containsKey('as_of')) return raw;
-  return {...raw, 'as_of': asOf.toIso8601String()};
-}

@@ -102,6 +102,16 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
       _submitting = true;
       _error = null;
     });
+    // Swarm-review H-G4: reset selectedProjectIdProvider BEFORE the
+    // daemon round-trip so any widget watching projectDetailProvider
+    // does not race against an in-flight detail call that may return
+    // `not_found` after removal. The provider is reset back to null
+    // on failure inside the catch block below.
+    final wasSelected =
+        ref.read(selectedProjectIdProvider) == widget.projectId;
+    if (wasSelected) {
+      ref.read(selectedProjectIdProvider.notifier).state = null;
+    }
     try {
       await ref.read(appClientProvider).projectRemove(
             projectId: widget.projectId,
@@ -109,12 +119,13 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
       ref
           .read(uxStateRepositoryProvider)
           .clearProjectScopedState(widget.projectId);
-      // If the removed project was the active selection, clear it.
-      if (ref.read(selectedProjectIdProvider) == widget.projectId) {
-        ref.read(selectedProjectIdProvider.notifier).state = null;
-      }
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
+      // Restore selection on failure so the user doesn't silently lose
+      // their working project.
+      if (wasSelected) {
+        ref.read(selectedProjectIdProvider.notifier).state = widget.projectId;
+      }
       setState(() {
         _submitting = false;
         _error = e.toString();

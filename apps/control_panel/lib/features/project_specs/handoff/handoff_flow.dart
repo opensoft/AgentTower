@@ -58,6 +58,12 @@ class HandoffFlow extends ConsumerStatefulWidget {
 
 class _HandoffFlowState extends ConsumerState<HandoffFlow> {
   int _step = 0;
+  // Swarm-review H-P1: TextEditingController previously constructed inside
+  // build() so every keystroke + setState produced a fresh controller, lost
+  // cursor position, and leaked the prior one. Hoisted to a member field
+  // with proper dispose lifecycle.
+  late final TextEditingController _workItemController;
+  late final TextEditingController _notesController;
   String _workItemExpr = '';
   HandoffMode _mode = HandoffMode.engineeringExecution;
   HandoffPriority? _priority;
@@ -72,14 +78,24 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
     super.initState();
     if (widget.initialPrimaryWorkItem != null) {
       _workItemExpr = widget.initialPrimaryWorkItem!.displayId;
-      // Swarm-review H-P2: pre-resolve so the Preview affordance enables
-      // without forcing the operator to type into the field first.
-      _resolveRange();
     }
     if (widget.initialMode != null) _mode = widget.initialMode!;
     if (widget.initialOperatorNotes != null) {
       _operatorNotes = widget.initialOperatorNotes!;
     }
+    _workItemController = TextEditingController(text: _workItemExpr);
+    _notesController = TextEditingController(text: _operatorNotes);
+    // Swarm-review H-P2: pre-resolve from any seeded expression so the
+    // Preview affordance enables without forcing the operator to type
+    // into the field first.
+    if (_workItemExpr.isNotEmpty) _resolveRange();
+  }
+
+  @override
+  void dispose() {
+    _workItemController.dispose();
+    _notesController.dispose();
+    super.dispose();
   }
 
   @override
@@ -159,7 +175,7 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
-          controller: TextEditingController(text: _workItemExpr),
+          controller: _workItemController,
           decoration: const InputDecoration(
             labelText: 'Work item or range (e.g. FEAT-12 or FEAT-8..FEAT-12)',
             helperText: 'Canonical syntax FEAT-N..FEAT-M (FR-039).',
@@ -220,6 +236,7 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
         ),
         const SizedBox(height: 12),
         TextField(
+          controller: _notesController,
           decoration: const InputDecoration(
             labelText: 'Operator notes (optional)',
             helperText: 'Preserved through mode changes per FR-040.',

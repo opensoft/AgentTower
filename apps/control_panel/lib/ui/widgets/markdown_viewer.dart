@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:url_launcher/url_launcher.dart';
+
+import 'safe_url_launcher.dart';
 
 /// Safe in-app markdown viewer per FR-079 + research R-09. T095 (Phase 4 US2).
 ///
@@ -38,11 +39,16 @@ class MarkdownViewer extends StatelessWidget {
   /// `url_launcher`. The widget validates the scheme before launching.
   final Uri? externalOpenUri;
 
+  // Swarm-review M-15: dropped `file:` from the in-viewer allowlist.
+  // Daemon-supplied markdown bodies could otherwise embed
+  // `[ssh key](file:///home/op/.ssh/id_rsa)` and the operator click
+  // would open it. Filesystem URLs from daemon-resolved doc paths
+  // (the legitimate use case) now route through SafeUrlLauncher's
+  // file-confirmation modal, so the operator stays in the loop.
   static const Set<String> _allowedSchemes = {
     'http',
     'https',
     'mailto',
-    'file',
   };
 
   @override
@@ -91,33 +97,24 @@ class MarkdownViewer extends StatelessWidget {
   static Future<void> _onTapLink(BuildContext context, String? href) async {
     if (href == null) return;
     final uri = Uri.tryParse(href);
-    if (uri == null || !_allowedSchemes.contains(uri.scheme)) {
-      _showRejected(context, href);
+    if (uri == null || !_allowedSchemes.contains(uri.scheme.toLowerCase())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Link rejected — unsupported scheme: $href')),
+      );
       return;
     }
-    await _openExternal(context, uri);
+    // Delegate to SafeUrlLauncher so the launch + error UX is unified
+    // with the drift/current-work launch paths.
+    await SafeUrlLauncher.openUri(context, uri);
   }
 
   static Future<void> _openExternal(BuildContext context, Uri uri) async {
-    if (!_allowedSchemes.contains(uri.scheme)) {
-      _showRejected(context, uri.toString());
+    if (!_allowedSchemes.contains(uri.scheme.toLowerCase())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Link rejected — unsupported scheme: $uri')),
+      );
       return;
     }
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open $uri externally')),
-      );
-    }
-  }
-
-  static void _showRejected(BuildContext context, String href) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Link rejected — unsupported scheme: $href',
-        ),
-      ),
-    );
+    await SafeUrlLauncher.openUri(context, uri);
   }
 }
