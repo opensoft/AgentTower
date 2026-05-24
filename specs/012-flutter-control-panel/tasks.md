@@ -186,34 +186,34 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 2
 
-- [ ] T081 [P] [US2] Write `apps/control_panel/integration_test/us2_project_and_master.dart` covering US2 §1-§5 acceptance scenarios (including the F1-added scenario for FR-076 first-launch project resolution).
+- [X] T081 [P] [US2] Write `apps/control_panel/integration_test/us2_project_and_master.dart` covering US2 §1-§5 acceptance scenarios (including the F1-added scenario for FR-076 first-launch project resolution).
 
 ### Domain models for US2
 
-- [ ] T082 [P] [US2] Implement `apps/control_panel/lib/domain/models/project.dart` — `Project` freezed class with the FR-025 attribute set per data-model.md §1.1. Include `primaryMasterAgentIds: List<String>` (capped at 2), `masterOverflowCount: int`, `subAgentCount: int` per the Round-2 finding F-A7. Satisfies FR-026 — Project identity uses the canonicalized repository absolute path (one project = one repository); worktrees and branches are subordinate context.
-- [ ] T083 [P] [US2] Implement `apps/control_panel/lib/domain/models/master_summary.dart` — `MasterSummary` freezed class with FR-030 attributes per data-model.md §1.3. Construct ONLY when the underlying AdoptedAgent satisfies FR-071 (role=master AND master-class capability).
-- [ ] T084 [P] [US2] Implement `apps/control_panel/lib/domain/models/feature_change_status.dart` — `FeatureChangeStatus` freezed class with FR-028 three-layer model per data-model.md §1.5. Stage enum includes `deferred` per F7-a; F7-b transition rule already in T043.
+- [X] T082 [P] [US2] Implement `apps/control_panel/lib/domain/models/project.dart` — `Project` freezed class with the FR-025 attribute set per data-model.md §1.1. Include `primaryMasterAgentIds: List<String>` (capped at 2), `masterOverflowCount: int`, `subAgentCount: int` per the Round-2 finding F-A7. Satisfies FR-026 — Project identity uses the canonicalized repository absolute path (one project = one repository); worktrees and branches are subordinate context.
+- [X] T083 [P] [US2] Implement `apps/control_panel/lib/domain/models/master_summary.dart` — `MasterSummary` freezed class with FR-030 attributes per data-model.md §1.3. Construct ONLY when the underlying AdoptedAgent satisfies FR-071 (role=master AND master-class capability).
+- [X] T084 [P] [US2] Implement `apps/control_panel/lib/domain/models/feature_change_status.dart` — `FeatureChangeStatus` freezed class with FR-028 three-layer model per data-model.md §1.5. Stage enum includes `deferred` per F7-a; F7-b transition rule already in T043.
 
 ### Daemon-client extensions for US2
 
-- [ ] T085 [US2] Extend `app_client.dart` with anticipated FEAT-011 methods (per contracts/app-methods-consumed.md §3): `app.project.list/.detail/.add/.remove`, `app.feature_change.list/.detail`. Gate via FR-002 contract-version-incompatible degradation when methods are absent.
-- [ ] T086 [US2] Implement `apps/control_panel/lib/domain/master_qualification.dart` — fetch master-class capability set from daemon once per session; cache; use to gate MasterSummary construction per FR-071.
+- [X] T085 [US2] Extend `app_client.dart` with anticipated FEAT-011 methods (per contracts/app-methods-consumed.md §3): `app.project.list/.detail/.add/.remove`, `app.feature_change.list/.detail`. Gate via FR-002 contract-version-incompatible degradation when methods are absent.
+- [X] T086 [US2] Implement `apps/control_panel/lib/domain/master_qualification.dart` — fetch master-class capability set from daemon once per session; cache; use to gate MasterSummary construction per FR-071.
 
 ### Project + Specs workspace (FR-023..FR-032)
 
-- [ ] T087 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/projects_view.dart` — FR-023/FR-024 Projects view as cards (not a table) sized for ~5 projects.
-- [ ] T088 [US2] Implement `apps/control_panel/lib/features/project_specs/projects/project_card.dart` — FR-025 card with every required attribute (name, repository path, repo state badge, active branch/worktree badge, active feature/change, current phase/status, current driving master, compact master strip up to 2 + overflow, sub-agent count, last activity, validation badge + last run age, drift badge + source + age, attention summary, unread notification count, quick actions).
-- [ ] T089 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/add_project.dart` — explicit "Add Project" action per Assumption: project registration model. Calls `app.project.add`.
-- [ ] T090 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/remove_project.dart` — FR-077 confirmation-gated remove; clears project-scoped UI persistence (last sub-view + sort/filter per FR-078); daemon data untouched.
-- [ ] T091 [US2] Implement `apps/control_panel/lib/features/project_specs/current_work/current_work_view.dart` — FR-027 Current Work view with active feature/change, driving master, workflow phase, recent activity, one-click links to PRD/architecture/roadmap/feature spec/OpenSpec change paths (document open behavior per FR-079).
-- [ ] T092 [US2] Implement `apps/control_panel/lib/features/project_specs/current_work/driving_master_indicator.dart` — FR-029 "agent X is driving FEAT-N under handoff H" indicator on every feature surface, with one-click navigation to master summary + handoff record. Handles multi-driver conflict display.
-- [ ] T093 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/specs/specs_view.dart` — FR-031 Specs view (project-first, then feature). Document list/panel uses FR-079 markdown rendering.
-- [ ] T094 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/changes/changes_view.dart` — FR-032 Changes view for OpenSpec-side proposed/active changes; FR-079 document rendering.
-- [ ] T095 [P] [US2] Implement `apps/control_panel/lib/ui/widgets/markdown_viewer.dart` — `flutter_markdown` viewer per research R-09 + FR-079. Safe-markdown subset (HTML disabled, `javascript:` / `data:` URLs rejected). "Open externally" affordance via `url_launcher`.
+- [X] T087 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/projects_view.dart` — FR-023/FR-024 Projects view as cards (not a table) sized for ~5 projects.
+- [X] T088 [US2] Implement `apps/control_panel/lib/features/project_specs/projects/project_card.dart` — FR-025 card with every required attribute (name, repository path, repo state badge, active branch/worktree badge, active feature/change, current phase/status, current driving master, compact master strip up to 2 + overflow, sub-agent count, last activity, validation badge + last run age, drift badge + source + age, attention summary, unread notification count, quick actions).
+- [X] T089 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/add_project.dart` — explicit "Add Project" action per Assumption: project registration model. Calls `app.project.add`.
+- [X] T090 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/projects/remove_project.dart` — FR-077 confirmation-gated remove; clears project-scoped UI persistence (last sub-view + sort/filter per FR-078); daemon data untouched.
+- [X] T091 [US2] Implement `apps/control_panel/lib/features/project_specs/current_work/current_work_view.dart` — FR-027 Current Work view with active feature/change, driving master, workflow phase, recent activity, one-click links to PRD/architecture/roadmap/feature spec/OpenSpec change paths (document open behavior per FR-079).
+- [X] T092 [US2] Implement `apps/control_panel/lib/features/project_specs/current_work/driving_master_indicator.dart` — FR-029 "agent X is driving FEAT-N under handoff H" indicator on every feature surface, with one-click navigation to master summary + handoff record. Handles multi-driver conflict display.
+- [X] T093 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/specs/specs_view.dart` — FR-031 Specs view (project-first, then feature). Document list/panel uses FR-079 markdown rendering.
+- [X] T094 [P] [US2] Implement `apps/control_panel/lib/features/project_specs/changes/changes_view.dart` — FR-032 Changes view for OpenSpec-side proposed/active changes; FR-079 document rendering.
+- [X] T095 [P] [US2] Implement `apps/control_panel/lib/ui/widgets/markdown_viewer.dart` — `flutter_markdown` viewer per research R-09 + FR-079. Safe-markdown subset (HTML disabled, `javascript:` / `data:` URLs rejected). "Open externally" affordance via `url_launcher`.
 
 ### First-launch project resolution (FR-076)
 
-- [ ] T096 [US2] Implement `apps/control_panel/lib/features/project_specs/projects/first_launch_resolution.dart` — restore persisted last-active project if it still resolves (registered with daemon OR inferable from current adopted agent's `project_path`); otherwise land on Projects view with no selection and FR-076 non-blocking banner.
+- [X] T096 [US2] Implement `apps/control_panel/lib/features/project_specs/projects/first_launch_resolution.dart` — restore persisted last-active project if it still resolves (registered with daemon OR inferable from current adopted agent's `project_path`); otherwise land on Projects view with no selection and FR-076 non-blocking banner.
 
 **Checkpoint**: Project navigation, project cards, current work, specs/changes viewing all work. Operator can re-orient across projects.
 

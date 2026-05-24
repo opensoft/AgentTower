@@ -1,0 +1,135 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../ui/widgets/markdown_viewer.dart';
+import '../providers.dart';
+
+/// FR-032 — Changes view (OpenSpec-side proposed/active changes). T094
+/// (Phase 4 US2).
+///
+/// Same two-pane layout as Specs but scoped to OpenSpec changes
+/// (deltas-only proposals) rather than feature specs. The daemon-side
+/// shape distinguishes the two via the work-item kind (`change`
+/// per [WorkItemKind.change]). Read-only at MVP; refinement is a
+/// `spec_refinement` mode handoff (Phase 5).
+class ChangesView extends ConsumerStatefulWidget {
+  const ChangesView({super.key});
+
+  @override
+  ConsumerState<ChangesView> createState() => _ChangesViewState();
+}
+
+class _ChangesViewState extends ConsumerState<ChangesView> {
+  String? _selectedChangeId;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = ref.watch(selectedProjectIdProvider);
+    if (selectedId == null) return const _NoProjectSelected();
+    final list = ref.watch(featureChangeListProvider(selectedId));
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Changes'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh),
+            onPressed: () =>
+                ref.invalidate(featureChangeListProvider(selectedId)),
+          ),
+        ],
+      ),
+      body: list.when(
+        data: (entries) {
+          // Filter to OpenSpec changes — the daemon returns a mixed
+          // feature/change list; the `displayId` convention is
+          // `FEAT-N` for features and `CHG-N` (or similar) for
+          // changes. Until FEAT-011 exposes a `kind` field, we
+          // pattern-match on `displayId` prefix.
+          final changes = entries
+              .where((e) => !e.displayId.startsWith('FEAT-'))
+              .toList(growable: false);
+          if (changes.isEmpty) return const _EmptyState();
+          return Row(
+            children: [
+              SizedBox(
+                width: 320,
+                child: ListView.builder(
+                  itemCount: changes.length,
+                  itemBuilder: (_, i) {
+                    final c = changes[i];
+                    return ListTile(
+                      selected: c.featureChangeId == _selectedChangeId,
+                      title: Text(c.displayId),
+                      subtitle: Text(c.humanReadableLabel),
+                      onTap: () => setState(
+                        () => _selectedChangeId = c.featureChangeId,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: _selectedChangeId == null
+                    ? const Center(child: Text('Select a change'))
+                    : _ChangePane(changeId: _selectedChangeId!),
+              ),
+            ],
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (err, _) => Center(child: Text('Failed to load changes: $err')),
+      ),
+    );
+  }
+}
+
+class _ChangePane extends ConsumerWidget {
+  const _ChangePane({required this.changeId});
+  final String changeId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final detail = ref.watch(featureChangeDetailProvider(changeId));
+    return detail.when(
+      data: (c) => MarkdownViewer(
+        markdownText:
+            '# ${c.displayId}\n\n${c.humanReadableLabel}\n\n'
+            '_OpenSpec change body rendering pending FEAT-011 v1.x doc-content method._',
+        sourceLabel: 'change ${c.displayId}',
+      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, _) => Center(child: Text('Failed to load change: $err')),
+    );
+  }
+}
+
+class _NoProjectSelected extends StatelessWidget {
+  const _NoProjectSelected();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Text(
+          'No project selected.\n\n'
+          'Pick a project to see its OpenSpec changes.',
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text('No proposed OpenSpec changes for this project.'),
+    );
+  }
+}

@@ -122,6 +122,30 @@ class UxStateRepository {
     _debounceTimer = Timer(_debounceWindow, () => unawaited(_flush()));
   }
 
+  /// FR-077 — clear per-project UI persistence when an operator removes
+  /// a project. Drops the project's sort/filter entries from
+  /// `list_sort_filter_per_project` and clears `last_active_project_id`
+  /// if it pointed at the removed project. Daemon-side data is
+  /// untouched (this method only writes the app's ux-state file).
+  ///
+  /// Safe to call when no state is loaded (no-op). Schedules a normal
+  /// debounced flush.
+  void clearProjectScopedState(String projectId) {
+    final s = _state;
+    if (s == null) return;
+    final perProject = (s['list_sort_filter_per_project']
+            as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    final updatedPerProject = Map<String, dynamic>.from(perProject)
+      ..remove(projectId);
+    final updated = Map<String, dynamic>.from(s)
+      ..['list_sort_filter_per_project'] = updatedPerProject;
+    if (s['last_active_project_id'] == projectId) {
+      updated['last_active_project_id'] = null;
+    }
+    update(updated);
+  }
+
   /// Forces immediate flush. Used by FR-082 close handler.
   Future<void> flushBeforeExit() async {
     _debounceTimer?.cancel();

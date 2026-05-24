@@ -409,6 +409,115 @@ class Fixtures {
         'hints': hints ?? const [],
       };
 
+  // ---- Project (Phase 4 US2 / T085) ----
+  /// Mirrors `app.project` for the Project + Specs workspace. The badge
+  /// sub-maps follow the shapes declared in
+  /// `lib/domain/models/badges.dart`; missing optional fields default
+  /// to the empty/unknown variants so fixtures stay compact.
+  static Map<String, dynamic> project({
+    String projectId = 'proj-1',
+    String label = 'AgentTower',
+    String repositoryPath = '/work/agenttower',
+    String repoStateKind = 'clean',
+    int? aheadCount,
+    int? behindCount,
+    int? dirtyFileCount,
+    String branchName = 'main',
+    String? worktreePath,
+    String? activeFeatureChangeId,
+    String? currentDrivingMasterAgentId,
+    List<String>? primaryMasterAgentIds,
+    int masterOverflowCount = 0,
+    int subAgentCount = 0,
+    String validationKind = 'unknown',
+    String? validationLastRunAt,
+    String driftSeverity = 'info',
+    int driftOpenCount = 0,
+    String? driftSource,
+    String? driftAge,
+    String attentionSeverity = 'info',
+    int attentionOpenCount = 0,
+    int unreadNotificationCount = 0,
+    String? lastActivityAt,
+  }) =>
+      {
+        'project_id': projectId,
+        'label': label,
+        'repository_path': repositoryPath,
+        'repo_state': {
+          'kind': repoStateKind,
+          if (aheadCount != null) 'ahead_count': aheadCount,
+          if (behindCount != null) 'behind_count': behindCount,
+          if (dirtyFileCount != null) 'dirty_file_count': dirtyFileCount,
+        },
+        'active_branch': {
+          'branch_name': branchName,
+          if (worktreePath != null) 'worktree_path': worktreePath,
+          'detached': false,
+        },
+        if (activeFeatureChangeId != null)
+          'active_feature_change_id': activeFeatureChangeId,
+        if (currentDrivingMasterAgentId != null)
+          'current_driving_master_agent_id': currentDrivingMasterAgentId,
+        'primary_master_agent_ids': primaryMasterAgentIds ?? const [],
+        'master_overflow_count': masterOverflowCount,
+        'sub_agent_count': subAgentCount,
+        'validation_badge': {
+          'kind': validationKind,
+          if (validationLastRunAt != null) 'last_run_at': validationLastRunAt,
+        },
+        if (validationLastRunAt != null)
+          'validation_last_run_at': validationLastRunAt,
+        'drift_badge': {
+          'highest_severity': driftSeverity,
+          'open_count': driftOpenCount,
+        },
+        if (driftSource != null) 'drift_source': driftSource,
+        if (driftAge != null) 'drift_age': driftAge,
+        'attention_summary': {
+          'highest_severity': attentionSeverity,
+          'open_count': attentionOpenCount,
+        },
+        'unread_notification_count': unreadNotificationCount,
+        'last_activity_at':
+            lastActivityAt ?? DateTime.now().toUtc().toIso8601String(),
+      };
+
+  // ---- FeatureChange (Phase 4 US2 / T084) ----
+  static Map<String, dynamic> featureChange({
+    String featureChangeId = 'fc-1',
+    String displayId = 'FEAT-012',
+    String stage = 'engineering',
+    String executionStatus = 'active',
+    String? subphaseToken,
+    String humanReadableLabel = 'Engineering / Active',
+    String projectId = 'proj-1',
+    String? drivingMasterAgentId,
+    String? drivingHandoffId,
+  }) =>
+      {
+        'feature_change_id': featureChangeId,
+        'display_id': displayId,
+        'stage': stage,
+        'execution_status': executionStatus,
+        if (subphaseToken != null) 'subphase_token': subphaseToken,
+        'human_readable_label': humanReadableLabel,
+        'project_id': projectId,
+        if (drivingMasterAgentId != null)
+          'driving_master_agent_id': drivingMasterAgentId,
+        if (drivingHandoffId != null) 'driving_handoff_id': drivingHandoffId,
+      };
+
+  // ---- Capability registry (Phase 4 US2 / T086) ----
+  static Map<String, dynamic> capabilityRegistryResult({
+    List<String> masterClass = const ['claude', 'codex', 'gemini'],
+    List<String> slaveClass = const ['claude', 'codex', 'shell'],
+  }) =>
+      {
+        'master_class': masterClass,
+        'slave_class': slaveClass,
+      };
+
   // ---- Paginated list / single-entity result wrappers ----
   /// Wraps a list of entity maps in the FEAT-011 `app.<entity>.list`
   /// success-result shape: `{rows, total, cursor_next, ordering}`. Use this

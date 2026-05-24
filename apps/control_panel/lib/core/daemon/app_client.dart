@@ -147,6 +147,88 @@ class AppClient {
   Future<Map<String, dynamic>> routeDetail(String routeId) =>
       _detail('app.route.detail', {'route_id': routeId});
 
+  // -------- project (T085 — Phase 4 US2)
+  //
+  // Per contracts/app-methods-consumed.md §3, these methods are
+  // anticipated v1.x additions to FEAT-011. If absent at runtime,
+  // calls surface as FailureEnvelope and the Project-Specs surfaces
+  // degrade to `contract-version-incompatible` per FR-002 / FR-004
+  // (handled by the providers, not here — this layer stays neutral).
+
+  Future<PagedResult> projectList({String? cursorNext, int? limit}) =>
+      _list('app.project.list', cursorNext: cursorNext, limit: limit);
+
+  Future<Map<String, dynamic>> projectDetail(String projectId) =>
+      _detail('app.project.detail', {'project_id': projectId});
+
+  /// `app.project.add` — explicit add-project (per Assumption: project
+  /// registration model). Returns the new project row. The daemon
+  /// canonicalizes the path; same path → same `projectId` (FR-026).
+  Future<Map<String, dynamic>> projectAdd({
+    required String repositoryPath,
+    String? label,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.project.add',
+      params: {
+        'repository_path': repositoryPath,
+        if (label != null) 'label': label,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  /// `app.project.remove` — FR-077 removal. The daemon does NOT delete
+  /// the underlying agents/handoffs/drift/runs; it only forgets the
+  /// project registration so it falls off the Projects view (until
+  /// re-inferred from an adopted agent's `project_path`). The app
+  /// clears its own per-project UI persistence separately.
+  Future<Map<String, dynamic>> projectRemove({
+    required String projectId,
+    String? idempotencyKey,
+  }) async {
+    final env = await session.call(
+      'app.project.remove',
+      params: {
+        'project_id': projectId,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
+
+  // -------- feature_change (T085 — Phase 4 US2)
+
+  Future<PagedResult> featureChangeList({
+    String? cursorNext,
+    int? limit,
+    String? projectId,
+  }) =>
+      _list(
+        'app.feature_change.list',
+        cursorNext: cursorNext,
+        limit: limit,
+        extra: {if (projectId != null) 'project_id': projectId},
+      );
+
+  Future<Map<String, dynamic>> featureChangeDetail(String featureChangeId) =>
+      _detail('app.feature_change.detail', {
+        'feature_change_id': featureChangeId,
+      });
+
+  // -------- capability registry (T086 — Phase 4 US2)
+  //
+  // FR-071 master-class lookup. Returns the set of capabilities the
+  // daemon treats as master-eligible. Cached client-side per session
+  // (see master_qualification.dart).
+
+  Future<Map<String, dynamic>> capabilityRegistry() async {
+    final env = await session.call('app.capability.registry');
+    return _unwrapResult(env);
+  }
+
   // ================================================================ Mutations
 
   // -------- agent
