@@ -15,6 +15,15 @@ import 'session.dart';
 ///   log.attach/detach, send_input, queue.approve/delay/cancel,
 ///   route.add/remove/update, scan.containers/panes/status).
 ///
+/// All wire field names / shapes are sourced from
+/// `specs/011-app-backend-contract/contracts/app-methods.md` directly.
+/// Per that contract (line 22): every `.detail` and every mutation
+/// response (except `app.send_input` and the three `app.scan.*`
+/// methods) wraps its single-entity payload under `result.row` — the
+/// singular counterpart of `.list`'s `result.rows[]` array. This
+/// client unwraps the `row` key for callers so consumers see a flat
+/// entity map.
+///
 /// `app.preflight` is intentionally NOT exposed here: it does not require
 /// a session token and must be callable BEFORE bootstrap (review fix
 /// A4). Use [PreflightClient] from `preflight_client.dart` instead.
@@ -34,33 +43,40 @@ class AppClient {
   /// Returns raw result; Health view (T076) interprets fields.
   Future<Map<String, dynamic>> readiness() async {
     final env = await session.call('app.readiness');
-    return _unwrap(env);
+    return _unwrapResult(env);
   }
 
   /// `app.dashboard` — Agent Operations Dashboard counts + recents (FR-012).
   /// Returns raw result; Dashboard view (T065) interprets fields.
+  ///
+  /// Per contract (`app-methods.md` §app.dashboard) the response shape is
+  /// `{counts:{containers,panes,agents,log_attachments,events,queue,routes},
+  ///   recent:{events,queue,routes}, hints:[]}` — no `recommended_next_action`
+  /// field at v1.0. The FR-012 "recommended next action" tile is suppressed
+  /// in the UI until the openspec/extend-app-dashboard-fields-for-feat012
+  /// proposal lands and bumps the contract to 1.1.
   Future<Map<String, dynamic>> dashboard({int recentLimit = 10}) async {
     final env = await session.call(
       'app.dashboard',
       params: {'recent_limit': recentLimit},
     );
-    return _unwrap(env);
+    return _unwrapResult(env);
   }
 
   // ============================================================ Read surfaces
 
   // -------- container
 
-  Future<PagedResult> containerList({String? cursor, int? limit}) =>
-      _list('app.container.list', cursor: cursor, limit: limit);
+  Future<PagedResult> containerList({String? cursorNext, int? limit}) =>
+      _list('app.container.list', cursorNext: cursorNext, limit: limit);
 
   Future<Map<String, dynamic>> containerDetail(String containerId) =>
       _detail('app.container.detail', {'container_id': containerId});
 
   // -------- pane
 
-  Future<PagedResult> paneList({String? cursor, int? limit}) =>
-      _list('app.pane.list', cursor: cursor, limit: limit);
+  Future<PagedResult> paneList({String? cursorNext, int? limit}) =>
+      _list('app.pane.list', cursorNext: cursorNext, limit: limit);
 
   Future<Map<String, dynamic>> paneDetail(String paneId) =>
       _detail('app.pane.detail', {'pane_id': paneId});
@@ -68,13 +84,13 @@ class AppClient {
   // -------- agent
 
   Future<PagedResult> agentList({
-    String? cursor,
+    String? cursorNext,
     int? limit,
     String? projectId,
   }) =>
       _list(
         'app.agent.list',
-        cursor: cursor,
+        cursorNext: cursorNext,
         limit: limit,
         extra: {if (projectId != null) 'project_id': projectId},
       );
@@ -84,8 +100,8 @@ class AppClient {
 
   // -------- log_attachment
 
-  Future<PagedResult> logAttachmentList({String? cursor, int? limit}) =>
-      _list('app.log_attachment.list', cursor: cursor, limit: limit);
+  Future<PagedResult> logAttachmentList({String? cursorNext, int? limit}) =>
+      _list('app.log_attachment.list', cursorNext: cursorNext, limit: limit);
 
   Future<Map<String, dynamic>> logAttachmentDetail(String attachmentId) =>
       _detail('app.log_attachment.detail', {
@@ -94,17 +110,17 @@ class AppClient {
 
   // -------- event
 
-  /// `app.event.list` — observed-at descending per FR-019. Pagination via
-  /// cursor; Events view (T072) calls with `cursor=null` to anchor at
-  /// the head and uses `next_cursor` to scroll backwards in time.
+  /// `app.event.list` — `event_id DESC` per contract (line 205). Events
+  /// view (T072) calls with `cursorNext=null` to anchor at the head
+  /// and uses `cursor_next` to scroll backwards in time.
   Future<PagedResult> eventList({
-    String? cursor,
+    String? cursorNext,
     int? limit,
     String? agentId,
   }) =>
       _list(
         'app.event.list',
-        cursor: cursor,
+        cursorNext: cursorNext,
         limit: limit,
         extra: {if (agentId != null) 'agent_id': agentId},
       );
@@ -114,16 +130,19 @@ class AppClient {
 
   // -------- queue
 
-  Future<PagedResult> queueList({String? cursor, int? limit}) =>
-      _list('app.queue.list', cursor: cursor, limit: limit);
+  Future<PagedResult> queueList({String? cursorNext, int? limit}) =>
+      _list('app.queue.list', cursorNext: cursorNext, limit: limit);
 
-  Future<Map<String, dynamic>> queueDetail(String queueRowId) =>
-      _detail('app.queue.detail', {'queue_row_id': queueRowId});
+  /// `app.queue.detail` is keyed on `message_id` per contract line 225,
+  /// not `queue_row_id` — those are the same logical id but the wire
+  /// name is `message_id`.
+  Future<Map<String, dynamic>> queueDetail(String messageId) =>
+      _detail('app.queue.detail', {'message_id': messageId});
 
   // -------- route
 
-  Future<PagedResult> routeList({String? cursor, int? limit}) =>
-      _list('app.route.list', cursor: cursor, limit: limit);
+  Future<PagedResult> routeList({String? cursorNext, int? limit}) =>
+      _list('app.route.list', cursorNext: cursorNext, limit: limit);
 
   Future<Map<String, dynamic>> routeDetail(String routeId) =>
       _detail('app.route.detail', {'route_id': routeId});
@@ -132,36 +151,57 @@ class AppClient {
 
   // -------- agent
 
-  /// `app.agent.register_from_pane` — adopt-existing-pane (FR-016). On
+  /// `app.agent.register_from_pane` — adopt-existing-pane (FR-016, FR-028a).
+  /// All 6 pane-identity fields are required and MUST match the
+  /// daemon's discovered-pane row byte-for-byte; any single-field
+  /// mismatch returns `pane_not_found.details.mismatch_field`. On
   /// success the daemon returns the freshly-registered agent shape
-  /// usable by [AdoptedAgent.fromJson].
+  /// (already unwrapped from `row` by this client) usable by
+  /// `AdoptedAgent.fromJson`.
   Future<Map<String, dynamic>> agentRegisterFromPane({
     required String paneId,
+    required String containerId,
+    required String tmuxSocket,
+    required String sessionName,
+    required int windowIndex,
+    required int paneIndex,
     required String label,
     required String role,
     required String capability,
-    required String projectPath,
-    bool attachLogNow = true,
+    String? projectPath,
+    String? parentAgentId,
+    bool attachLog = false,
     String? idempotencyKey,
   }) async {
     final env = await session.call(
       'app.agent.register_from_pane',
       params: {
+        'container_id': containerId,
+        'tmux_socket': tmuxSocket,
+        'session_name': sessionName,
+        'window_index': windowIndex,
+        'pane_index': paneIndex,
         'pane_id': paneId,
-        'label': label,
         'role': role,
         'capability': capability,
-        'project_path': projectPath,
-        'attach_log_now': attachLogNow,
+        'label': label,
+        if (projectPath != null) 'project_path': projectPath,
+        if (parentAgentId != null) 'parent_agent_id': parentAgentId,
+        'attach_log': attachLog,
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   /// `app.agent.update` — update label/role/capability/project_path on
   /// an adopted agent (FR-015). Per FEAT-011 FR-030a this method
   /// NEVER returns `stale_object`.
+  ///
+  /// Field semantics per contract §app.agent.update:
+  ///   - Absent fields → no change.
+  ///   - Empty string on `project_path`/`label` → clears the field.
+  ///   - Empty string on `role`/`capability` → `validation_failed`.
   Future<Map<String, dynamic>> agentUpdate({
     required String agentId,
     String? label,
@@ -181,7 +221,7 @@ class AppClient {
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   // -------- log attachment
@@ -197,7 +237,7 @@ class AppClient {
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   Future<Map<String, dynamic>> logDetach({
@@ -211,87 +251,111 @@ class AppClient {
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   // -------- send_input
 
-  /// `app.send_input` — Direct Send (FR-018). Per FEAT-011 FR-031a the
-  /// `idempotency_key` is optional but the FEAT-012 app always sends
-  /// one so retries of the same logical send aren't double-delivered.
+  /// `app.send_input` — Direct Send (FR-018). Per the contract `payload`
+  /// is a structured JSON object that serializes to ≤ 16 KiB; the app
+  /// wraps freeform operator prose under `{"text": "..."}` here. The
+  /// daemon-side response is a FLAT result (no `row` wrap):
+  /// `{message_id, state, deduplicated}`.
   Future<Map<String, dynamic>> sendInput({
     required String targetAgentId,
-    required String payload,
-    String? routeHint,
+    required Map<String, dynamic> payload,
     String? idempotencyKey,
   }) async {
     if (payload.isEmpty) {
-      throw ArgumentError.value(payload, 'payload', 'Direct Send requires a non-empty payload (FR-018)');
+      throw ArgumentError.value(
+        payload,
+        'payload',
+        'Direct Send requires a non-empty structured payload (FR-018)',
+      );
     }
     final env = await session.call(
       'app.send_input',
       params: {
         'target_agent_id': targetAgentId,
         'payload': payload,
-        if (routeHint != null) 'route_hint': routeHint,
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapResult(env);
   }
 
   // -------- queue mutations
 
+  /// All three accept `{message_id}` (not `queue_row_id`). `delay`
+  /// additionally takes `delay_ms` (not `delay_seconds`); `cancel`
+  /// optionally takes `reason`. Returns the post-mutation row.
   Future<Map<String, dynamic>> queueApprove({
-    required String queueRowId,
+    required String messageId,
     String? idempotencyKey,
-  }) =>
-      _queueAction('app.queue.approve', queueRowId, idempotencyKey);
+  }) async {
+    final env = await session.call(
+      'app.queue.approve',
+      params: {
+        'message_id': messageId,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
 
   Future<Map<String, dynamic>> queueDelay({
-    required String queueRowId,
+    required String messageId,
     required Duration by,
     String? idempotencyKey,
   }) async {
     final env = await session.call(
       'app.queue.delay',
       params: {
-        'queue_row_id': queueRowId,
-        'delay_seconds': by.inSeconds,
+        'message_id': messageId,
+        'delay_ms': by.inMilliseconds,
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   Future<Map<String, dynamic>> queueCancel({
-    required String queueRowId,
+    required String messageId,
+    String? reason,
     String? idempotencyKey,
-  }) =>
-      _queueAction('app.queue.cancel', queueRowId, idempotencyKey);
+  }) async {
+    final env = await session.call(
+      'app.queue.cancel',
+      params: {
+        'message_id': messageId,
+        if (reason != null) 'reason': reason,
+        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
+      },
+    );
+    return _unwrapRow(env);
+  }
 
   // -------- route mutations
 
+  /// `app.route.add` takes a full FEAT-010 route definition: `source_scope`,
+  /// `template`, `target`. The operator-facing prose surfaces in
+  /// `add_route_flow.dart` collect these three strings directly.
   Future<Map<String, dynamic>> routeAdd({
     required String sourceScope,
-    required String eventClass,
-    required String targetRule,
-    required String masterRule,
-    bool enabled = true,
+    required String template,
+    required String target,
     String? idempotencyKey,
   }) async {
     final env = await session.call(
       'app.route.add',
       params: {
         'source_scope': sourceScope,
-        'event_class': eventClass,
-        'target_rule': targetRule,
-        'master_rule': masterRule,
-        'enabled': enabled,
+        'template': template,
+        'target': target,
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   Future<Map<String, dynamic>> routeRemove({
@@ -305,86 +369,86 @@ class AppClient {
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
+  /// `app.route.update` accepts ONLY `{route_id, enabled}` at v1.0
+  /// (FR-029, FR-032). Other fields are rejected with `validation_failed`.
   Future<Map<String, dynamic>> routeUpdate({
     required String routeId,
-    bool? enabled,
+    required bool enabled,
     String? idempotencyKey,
   }) async {
     final env = await session.call(
       'app.route.update',
       params: {
         'route_id': routeId,
-        if (enabled != null) 'enabled': enabled,
+        'enabled': enabled,
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   // -------- scans
 
-  /// `app.scan.containers` — re-probe container state (FR-014). On
-  /// success returns the daemon's scan-id so the Panes view can poll
-  /// [scanStatus].
+  /// `app.scan.containers` — re-probe container set (FR-014). The
+  /// contract accepts ONLY `{wait}` — no `container_id` filter at v1.0
+  /// (review fix H7).
   Future<Map<String, dynamic>> scanContainers({
     bool wait = false,
-    Duration? waitTimeout,
     String? idempotencyKey,
   }) =>
       _scanKick(
         'app.scan.containers',
         wait: wait,
-        waitTimeout: waitTimeout,
         idempotencyKey: idempotencyKey,
       );
 
   Future<Map<String, dynamic>> scanPanes({
-    String? containerId,
     bool wait = false,
-    Duration? waitTimeout,
     String? idempotencyKey,
-  }) async {
-    final env = await session.call(
-      'app.scan.panes',
-      params: {
-        if (containerId != null) 'container_id': containerId,
-        'wait': wait,
-        if (waitTimeout != null) 'wait_timeout_seconds': waitTimeout.inSeconds,
-        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
-      },
-    );
-    return _unwrap(env);
-  }
+  }) =>
+      _scanKick(
+        'app.scan.panes',
+        wait: wait,
+        idempotencyKey: idempotencyKey,
+      );
 
-  Future<Map<String, dynamic>> scanStatus(String scanId) =>
-      _detail('app.scan.status', {'scan_id': scanId});
+  /// `app.scan.status` returns a FLAT result (no `row` wrap):
+  /// `{state, scan_kind, started_at, completed_at?, result?}`.
+  Future<Map<String, dynamic>> scanStatus(String scanId) async {
+    final env = await session.call(
+      'app.scan.status',
+      params: {'scan_id': scanId},
+    );
+    return _unwrapResult(env);
+  }
 
   // ====================================================== Internal plumbing
 
   Future<PagedResult> _list(
     String method, {
-    String? cursor,
+    String? cursorNext,
     int? limit,
     Map<String, dynamic>? extra,
   }) async {
     final env = await session.call(
       method,
       params: {
-        if (cursor != null) 'cursor': cursor,
+        if (cursorNext != null) 'cursor_next': cursorNext,
         if (limit != null) 'limit': limit,
         ...?extra,
       },
     );
-    final raw = _unwrap(env);
-    final items = (raw['items'] as List?) ?? const [];
+    final raw = _unwrapResult(env);
+    final rows = (raw['rows'] as List?) ?? const <dynamic>[];
     return PagedResult(
-      items: items
-          .whereType<Map<String, dynamic>>()
-          .toList(growable: false),
-      nextCursor: raw['next_cursor'] as String?,
+      items: rows.whereType<Map<String, dynamic>>().toList(growable: false),
+      cursorNext: raw['cursor_next'] as String?,
+      total: raw['total'] as int?,
+      totalEstimate: raw['total_estimate'] as int?,
+      ordering: raw['ordering'] as String?,
     );
   }
 
@@ -393,60 +457,67 @@ class AppClient {
     Map<String, dynamic> params,
   ) async {
     final env = await session.call(method, params: params);
-    return _unwrap(env);
-  }
-
-  Future<Map<String, dynamic>> _queueAction(
-    String method,
-    String queueRowId,
-    String? idempotencyKey,
-  ) async {
-    final env = await session.call(
-      method,
-      params: {
-        'queue_row_id': queueRowId,
-        'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
-      },
-    );
-    return _unwrap(env);
+    return _unwrapRow(env);
   }
 
   Future<Map<String, dynamic>> _scanKick(
     String method, {
     required bool wait,
-    Duration? waitTimeout,
     String? idempotencyKey,
   }) async {
     final env = await session.call(
       method,
       params: {
         'wait': wait,
-        if (waitTimeout != null) 'wait_timeout_seconds': waitTimeout.inSeconds,
         'idempotency_key': idempotencyKey ?? MutationKeys.fresh(),
       },
     );
-    return _unwrap(env);
+    return _unwrapResult(env);
   }
 
-  /// Unwraps a [SuccessEnvelope] to its result. Throws [AppContractError]
-  /// on [FailureEnvelope]. Caller may catch the error to drive surface-level
-  /// degradation (FR-002, FR-072).
-  static Map<String, dynamic> _unwrap(Envelope env) {
+  /// Unwraps a [SuccessEnvelope] to its flat `result` map. Used for
+  /// `app.dashboard`, `app.readiness`, `app.send_input`, scan kick/status.
+  static Map<String, dynamic> _unwrapResult(Envelope env) {
     return switch (env) {
       SuccessEnvelope(:final result) => result,
       FailureEnvelope(:final error) => throw error,
     };
   }
+
+  /// Unwraps a [SuccessEnvelope] one extra level under `result.row`. Used
+  /// for every `.detail` call and every mutation except `send_input` and
+  /// `scan.*`.
+  static Map<String, dynamic> _unwrapRow(Envelope env) {
+    final result = _unwrapResult(env);
+    final row = result['row'];
+    if (row is! Map<String, dynamic>) {
+      throw FormatException(
+        'Expected `result.row` to be an object per app-methods.md line 22; '
+        'got ${row.runtimeType}',
+      );
+    }
+    return row;
+  }
 }
 
-/// One page of a `*.list` call: items + opaque cursor for the next page.
-/// Per FEAT-011 FR-020a the daemon caps page size at 50; the app never
-/// asks for more.
+/// One page of a `*.list` call. Per contract (`app-methods.md` §app.<entity>.list):
+///   - `cursor_next` is opaque, ≤ 512 chars, daemon-chosen encoding
+///   - exactly one of `total` / `totalEstimate` is non-null per response
+///   - `ordering` echoes the applied `order_by`
 class PagedResult {
-  const PagedResult({required this.items, required this.nextCursor});
+  const PagedResult({
+    required this.items,
+    required this.cursorNext,
+    this.total,
+    this.totalEstimate,
+    this.ordering,
+  });
 
   final List<Map<String, dynamic>> items;
-  final String? nextCursor;
+  final String? cursorNext;
+  final int? total;
+  final int? totalEstimate;
+  final String? ordering;
 
-  bool get hasMore => nextCursor != null;
+  bool get hasMore => cursorNext != null;
 }

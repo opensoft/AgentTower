@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/pane.dart';
+import '../../../routing/route_paths.dart';
 import '../providers.dart';
 import 'adopt_flow.dart';
 
@@ -100,10 +102,14 @@ class _NextAction extends ConsumerWidget {
           label: const Text('Open agent'),
           onPressed: pane.registeredAgentId == null
               ? null
-              : () => Navigator.of(context)
-                  .pushNamed('/agent_ops/agents'),
+              : () => Navigator.of(context).pushReplacementNamed(
+                    const RoutePath(
+                      workspace: Workspace.agentOps,
+                      subViewId: 'agents',
+                    ).toRouteString(),
+                  ),
         );
-      case PaneState.inactiveStale:
+      case PaneState.inactiveOrStale:
       case PaneState.discoveryDegraded:
         return TextButton.icon(
           icon: const Icon(Icons.refresh),
@@ -114,13 +120,26 @@ class _NextAction extends ConsumerWidget {
   }
 
   Future<void> _reprobe(BuildContext context, WidgetRef ref) async {
+    // Capture cross-await dependencies BEFORE awaiting — `_NextAction` is a
+    // ConsumerWidget (stateless), so there is no `mounted` to gate post-await
+    // SnackBar dispatch. Per `app-methods.md` §app.scan.panes the call accepts
+    // ONLY {wait}; the v1.0 contract has no container scoping.
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref.read(appClientProvider).scanPanes(containerId: pane.containerId);
+      await ref.read(appClientProvider).scanPanes();
       ref.invalidate(paneListProvider);
       messenger.showSnackBar(const SnackBar(content: Text('Re-probe queued')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Re-probe failed: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text('Re-probe failed: ${_errorText(e)}')),
+      );
     }
   }
 }
+
+/// Renders a closed-set [AppContractError] using its code-driven message
+/// rather than `e.toString()` (which embeds the code + prose verbatim and
+/// is an injection vector — review fix M1). Falls through to `toString`
+/// for non-contract errors.
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();

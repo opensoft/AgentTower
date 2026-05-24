@@ -52,17 +52,20 @@ The Dart-side helper (`../../test/helpers/mock_daemon_client.dart`, T052) spawns
     "app.pane.list": {
       "ok": true,
       "result": {
-        "items": [
+        "rows": [
           {
             "pane_id": "p1",
             "container_id": "bench-1",
+            "tmux_socket": "/tmp/tmux-1000/default",
             "tmux_session_name": "main",
-            "tmux_window_index": "0",
-            "tmux_pane_index": "0",
+            "tmux_window_index": 0,
+            "tmux_pane_index": 0,
             "state": "discovered-and-unmanaged"
           }
         ],
-        "next_cursor": null
+        "total": 1,
+        "cursor_next": null,
+        "ordering": "default"
       }
     }
   }
@@ -79,6 +82,17 @@ Notes:
 - If a request method is NOT in `responses`, the harness returns
   `unknown_method` (FR-034b) from FEAT-011's closed-set vocabulary with
   `details == {}`.
+- **Envelope shapes** (per `specs/011-app-backend-contract/contracts/app-methods.md`):
+  - `.list` returns `result: {rows: [], total: int|null, total_estimate: int|null, cursor_next: str|null, ordering: str}`
+  - `.detail` returns `result: {row: <EntityViewModel>}`
+  - Every mutation except `app.send_input` and `app.scan.*` also returns
+    `result: {row: <post-mutation EntityViewModel>}`
+  - `app.send_input` returns `result: {message_id, state, deduplicated}` (FLAT)
+  - `app.scan.containers/.panes/.status` return `result: {scan_id, state, ...}` (FLAT)
+- **Pane identity fields**: every `app.pane.*` row exposes all six identity
+  fields (`pane_id`, `container_id`, `tmux_socket`, `tmux_session_name`,
+  `tmux_window_index` as int, `tmux_pane_index` as int) so `app.agent.register_from_pane`
+  can pass them back byte-for-byte (FR-028a).
 
 ## Error injection
 

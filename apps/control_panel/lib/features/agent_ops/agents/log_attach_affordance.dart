@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
 import '../../../domain/models/common_enums.dart';
@@ -44,23 +45,34 @@ class _LogAttachAffordanceState extends ConsumerState<LogAttachAffordance> {
   }
 
   Future<void> _toggle() async {
+    // Capture the pre-await direction so the post-await SnackBar copy is
+    // stable even if the parent rebuilds with a fresh agent mid-flight
+    // (review fix M5 in arch lane / D4 in dart lane).
+    final wasAttached = _isAttached;
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
       final client = ref.read(appClientProvider);
-      if (_isAttached) {
+      if (wasAttached) {
         await client.logDetach(agentId: widget.agent.agentId);
       } else {
         await client.logAttach(agentId: widget.agent.agentId);
       }
       ref.invalidate(agentListProvider);
+      if (!mounted) return;
       messenger.showSnackBar(SnackBar(
-        content: Text(_isAttached ? 'Log detached' : 'Log attached'),
+        content: Text(wasAttached ? 'Log detached' : 'Log attached'),
       ));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Log action failed: $e')));
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Log action failed: ${_errorText(e)}')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 }
+
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();

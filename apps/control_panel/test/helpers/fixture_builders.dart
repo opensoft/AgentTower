@@ -31,12 +31,18 @@ class Fixtures {
       };
 
   // ---- Pane ----
+  /// Mirrors the `app.pane` ViewModel. All 6 identity fields
+  /// (`container_id`, `tmux_socket`, `tmux_session_name`, `tmux_window_index`,
+  /// `tmux_pane_index`, `pane_id`) MUST be present — they are what
+  /// `app.agent.register_from_pane` echoes back at FR-028a-mismatch time.
+  /// `tmux_window_index` and `tmux_pane_index` are ints per the contract.
   static Map<String, dynamic> pane({
     String paneId = 'p1',
     String containerId = 'bench-1',
+    String tmuxSocket = '/tmp/tmux-1000/default',
     String tmuxSession = 'main',
-    String tmuxWindow = '0',
-    String tmuxPane = '0',
+    int tmuxWindow = 0,
+    int tmuxPane = 0,
     PaneState state = PaneState.discoveredAndUnmanaged,
     String? registeredAgentId,
     String? lastSeenAt,
@@ -44,6 +50,7 @@ class Fixtures {
       {
         'pane_id': paneId,
         'container_id': containerId,
+        'tmux_socket': tmuxSocket,
         'tmux_session_name': tmuxSession,
         'tmux_window_index': tmuxWindow,
         'tmux_pane_index': tmuxPane,
@@ -244,56 +251,60 @@ class Fixtures {
       };
 
   // ---- Queue Row (FR-020 5-state safe-prompt queue) ----
-  /// Builder for the `app.queue` list/detail surface (T5 review fix).
+  /// Builder for the `app.queue` list/detail surface.
+  /// Field names match FEAT-011 `app-methods.md` exactly:
+  ///   - `message_id` (not `queue_row_id`)
+  ///   - `payload` is the structured object accepted by `app.send_input`
+  ///     (`{text: "..."}` by convention; arbitrary shape otherwise)
+  ///   - `source_agent_id` / `target_agent_id` (not `from_/to_`)
   static Map<String, dynamic> queueRow({
     String messageId = 'q-1',
     String state = 'blocked',
-    String fromAgentId = 'agent-1',
-    String toAgentId = 'agent-2',
+    String sourceAgentId = 'agent-1',
+    String targetAgentId = 'agent-2',
     String? routeId,
-    String? reason,
+    Map<String, dynamic>? payload,
     String? createdAt,
-    String? lastTransitionAt,
-    Map<String, dynamic>? payloadPreview,
+    String? terminalAt,
   }) =>
       {
         'message_id': messageId,
         'state': state,
-        'from_agent_id': fromAgentId,
-        'to_agent_id': toAgentId,
+        'source_agent_id': sourceAgentId,
+        'target_agent_id': targetAgentId,
         if (routeId != null) 'route_id': routeId,
-        if (reason != null) 'reason': reason,
+        'payload': payload ?? const {'text': 'sample queued prompt'},
         'created_at': createdAt ?? DateTime.now().toUtc().toIso8601String(),
-        'last_transition_at':
-            lastTransitionAt ?? DateTime.now().toUtc().toIso8601String(),
-        'payload_preview': payloadPreview ?? const {},
+        if (terminalAt != null) 'terminal_at': terminalAt,
       };
 
   // ---- Route (FR-021 Routes view) ----
-  /// Builder for the `app.route` list/detail surface (T5 review fix).
+  /// Builder for the `app.route` list/detail surface.
+  /// Field names match the FEAT-010 route definition surfaced by FEAT-011:
+  /// `source_scope`, `template`, `target` (not `from_/to_` agent ids).
+  /// `recent_skip_explanation` and `recent_match_summary` are surface
+  /// fields for the FR-021 + FR-059 explainability pane.
   static Map<String, dynamic> route({
     String routeId = 'route-1',
-    String fromAgentId = 'agent-1',
-    String toAgentId = 'agent-2',
+    String sourceScope = 'agent:claude-master-1',
+    String template = 'forward_event_to',
+    String target = 'agent:codex-slave-1',
+    String masterRule = 'any',
     bool enabled = true,
-    String? label,
-    int matchedCount = 0,
-    int skippedCount = 0,
-    String? lastMatchedAt,
-    String? lastSkippedAt,
-    String? lastSkipReason,
+    String? recentSkipExplanation,
+    String? recentMatchSummary,
   }) =>
       {
         'route_id': routeId,
-        'from_agent_id': fromAgentId,
-        'to_agent_id': toAgentId,
+        'source_scope': sourceScope,
+        'template': template,
+        'target': target,
+        'master_rule': masterRule,
         'enabled': enabled,
-        if (label != null) 'label': label,
-        'matched_count': matchedCount,
-        'skipped_count': skippedCount,
-        if (lastMatchedAt != null) 'last_matched_at': lastMatchedAt,
-        if (lastSkippedAt != null) 'last_skipped_at': lastSkippedAt,
-        if (lastSkipReason != null) 'last_skip_reason': lastSkipReason,
+        if (recentSkipExplanation != null)
+          'recent_skip_explanation': recentSkipExplanation,
+        if (recentMatchSummary != null)
+          'recent_match_summary': recentMatchSummary,
       };
 
   // ---- Log Attachment (FR-017) ----
@@ -320,17 +331,39 @@ class Fixtures {
       };
 
   // ---- Dashboard counts (FR-012 Agent Operations Dashboard) ----
-  /// Builder for the `app.dashboard` result envelope (T5 review fix).
+  /// Builder for the `app.dashboard` result envelope.
+  /// Field names match `specs/011-app-backend-contract/contracts/app-methods.md`
+  /// §app.dashboard exactly:
+  ///   counts.{containers,panes,agents,log_attachments,events,queue,routes}
+  ///   recent.{events,queue,routes}
+  ///   hints
+  ///
+  /// FR-012's "recommended next action" + per-state pane/agent breakdowns
+  /// are NOT in FEAT-011 v1.0 and are tracked by openspec change
+  /// `extend-app-dashboard-fields-for-feat012`. Until that lands the
+  /// dashboard view degrades gracefully (Option A: render only the
+  /// fields the contract actually returns).
   static Map<String, dynamic> dashboardResult({
     int containersActive = 1,
     int containersInactive = 0,
     int containersDegradedScan = 0,
-    Map<String, int>? panesByState,
-    Map<String, int>? agentsByState,
-    int blockedQueue = 0,
-    int recentlySkippedRoutes = 0,
-    List<Map<String, dynamic>>? recents,
-    Map<String, dynamic>? recommendedNextAction,
+    int panesTotal = 1,
+    int panesRegistered = 0,
+    int panesUnregistered = 1,
+    int agentsTotal = 0,
+    Map<String, int>? agentsByRole,
+    int logAttachmentsActive = 0,
+    int logAttachmentsDegraded = 0,
+    int logAttachmentsNone = 0,
+    int eventsTotal = 0,
+    int queueQueued = 0,
+    int queueBlocked = 0,
+    int queueDelivered = 0,
+    int queueCanceled = 0,
+    int queueFailed = 0,
+    int routesEnabled = 0,
+    int routesDisabled = 0,
+    Map<String, dynamic>? recent,
     List<Map<String, dynamic>>? hints,
   }) =>
       {
@@ -340,16 +373,67 @@ class Fixtures {
             'inactive': containersInactive,
             'degraded_scan': containersDegradedScan,
           },
-          'panes_by_state':
-              panesByState ?? const {'discovered-and-unmanaged': 1},
-          'registered_agents_by_state': agentsByState ?? const {},
-          'blocked_queue': blockedQueue,
-          'recently_skipped_routes': recentlySkippedRoutes,
+          'panes': {
+            'total': panesTotal,
+            'registered': panesRegistered,
+            'unregistered': panesUnregistered,
+          },
+          'agents': {
+            'total': agentsTotal,
+            'by_role': agentsByRole ??
+                const {
+                  'master': 0,
+                  'slave': 0,
+                  'swarm': 0,
+                  'test-runner': 0,
+                  'shell': 0,
+                  'unknown': 0,
+                },
+          },
+          'log_attachments': {
+            'active': logAttachmentsActive,
+            'degraded': logAttachmentsDegraded,
+            'none': logAttachmentsNone,
+          },
+          'events': {'total': eventsTotal},
+          'queue': {
+            'queued': queueQueued,
+            'blocked': queueBlocked,
+            'delivered': queueDelivered,
+            'canceled': queueCanceled,
+            'failed': queueFailed,
+          },
+          'routes': {'enabled': routesEnabled, 'disabled': routesDisabled},
         },
-        'recents': recents ?? const [],
-        'recommended_next_action': recommendedNextAction,
+        'recent': recent ?? const {'events': [], 'queue': [], 'routes': []},
         'hints': hints ?? const [],
       };
+
+  // ---- Paginated list / single-entity result wrappers ----
+  /// Wraps a list of entity maps in the FEAT-011 `app.<entity>.list`
+  /// success-result shape: `{rows, total, cursor_next, ordering}`. Use this
+  /// when constructing fixtures so the wire envelope matches contract line
+  /// 184.
+  static Map<String, dynamic> listResult(
+    List<Map<String, dynamic>> rows, {
+    String? cursorNext,
+    int? total,
+    int? totalEstimate,
+    String ordering = 'default',
+  }) =>
+      {
+        'rows': rows,
+        'total': total ?? (totalEstimate == null ? rows.length : null),
+        'total_estimate': totalEstimate,
+        'cursor_next': cursorNext,
+        'ordering': ordering,
+      };
+
+  /// Wraps a single entity map in the FEAT-011 `result.row` envelope
+  /// used by every `.detail` call and every mutation except `send_input`
+  /// and `scan.*` (contract line 22).
+  static Map<String, dynamic> rowResult(Map<String, dynamic> row) =>
+      {'row': row};
 
   // ---- Preflight (FR-009 doctor + Settings) ----
   /// Builder for the `app.preflight` result envelope (T5 review fix).

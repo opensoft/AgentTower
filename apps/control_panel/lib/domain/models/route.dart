@@ -11,19 +11,27 @@ part 'route.g.dart';
 /// enabled but the operator has reason to wonder why a downstream
 /// message didn't fire.
 ///
-/// `sourceScope`, `targetRule`, and `masterRule` are open vocabularies
-/// on the daemon side (FEAT-009 owns them). The app treats them as
-/// opaque strings and renders them verbatim — there is intentionally no
-/// app-side parsing of rule semantics, so future FEAT-009 rule-grammar
-/// changes do not require an app rebuild.
+/// Field names match the FEAT-010 route definition (and the
+/// `app.route.add` request shape on contract line 367):
+///   - `sourceScope` — origin selector
+///   - `template`    — operation template (e.g. `forward_event_to`)
+///   - `target`      — destination selector
+///
+/// The earlier model used `targetRule` + `masterRule`; renamed to
+/// match the contract (review fix C5 / spec-code lane). `masterRule`
+/// is kept as an optional surface-side display field rather than a
+/// wire field — the daemon does not currently echo a separate
+/// `master_rule` key, but the Routes view shows it when present so
+/// fixtures can populate it during US3+ work.
 @freezed
 class Route with _$Route {
   const factory Route({
     required String routeId,
     required String sourceScope,
-    required String targetRule,
-    required String masterRule,
+    required String template,
+    required String target,
     required bool enabled,
+    String? masterRule,
     String? recentSkipExplanation,
     String? recentMatchSummary,
     required DateTime asOf,

@@ -11,7 +11,7 @@ The app is organized into three operator workspaces (Agent Operations, Project a
 
 Technical approach:
 
-- **Flutter 3.27 stable** (Dart 3.5+) for the desktop UI, packaged as a single-window app per supported OS.
+- **Flutter 3.27 stable** (Dart 3.5+) for the desktop UI, packaged as a single-window app per supported OS. (Known bench deviation 2026-05-23: the Phase 3 T009 `flutter create` step was run against the bench-global Flutter 3.44.0 because `fvm install 3.27.0` was not viable in the bench environment; see `flutter-testing-plan.md` §"2026-05-23 execution notes". Re-pinning the bench to 3.27 is a follow-up tracked separately.)
 - **Riverpod 2.x** for state management; **freezed + json_serializable** for immutable domain models that mirror FEAT-011 response shapes.
 - **Built-in `dart:io` `Socket.connect(InternetAddress(…, type: InternetAddressType.unix), …)`** for the daemon connection. Newline-delimited JSON per FEAT-011 FR-003a/b. No third-party RPC framework.
 - **Local user-scoped config store** as a single JSON file at the OS-user app-data path (via `path_provider`), holding only UX state per FR-069. Session token in-memory only per FR-003. No domain-data caching.
@@ -26,7 +26,7 @@ The app sits next to the existing Python sources in a new top-level `apps/contro
 
 ## Technical Context
 
-**Language/Version**: Dart 3.5+ on Flutter 3.27 stable (Flutter desktop targets Windows, macOS, Linux). Pinned via `apps/control_panel/.fvm/fvm_config.json` and `apps/control_panel/pubspec.yaml`.
+**Language/Version**: Dart 3.5+ on Flutter 3.27 stable (Flutter desktop targets Windows, macOS, Linux). Pinned via `apps/control_panel/.fvm/fvm_config.json` and `apps/control_panel/pubspec.yaml`. Phase 3 T009 bench execution used 3.44.0 as a documented deviation (see Summary above + `flutter-testing-plan.md`); the long-running pin remains 3.27.
 
 **Primary Dependencies**:
 - `flutter_riverpod` 2.x — state management and dependency injection.

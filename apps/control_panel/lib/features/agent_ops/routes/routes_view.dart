@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/route.dart' as model;
 import '../providers.dart';
@@ -70,13 +71,14 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
         onChanged: _busy ? null : (v) => _toggle(v),
       ),
       title: Text(
-        '${r.sourceScope}  →  ${r.targetRule}',
+        '${r.sourceScope}  →  ${r.target}',
         style: const TextStyle(fontFamily: 'monospace'),
       ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('master: ${r.masterRule}'),
+          Text('template: ${r.template}'),
+          if (r.masterRule != null) Text('master: ${r.masterRule}'),
           if (r.recentSkipExplanation != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -113,7 +115,9 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
           );
       ref.invalidate(routeListProvider);
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Toggle failed: $e')));
+      if (!mounted) return;
+      messenger
+          .showSnackBar(SnackBar(content: Text('Toggle failed: ${_errorText(e)}')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -127,11 +131,18 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
           .read(appClientProvider)
           .routeRemove(routeId: widget.route.routeId);
       ref.invalidate(routeListProvider);
+      if (!mounted) return;
       messenger.showSnackBar(const SnackBar(content: Text('Route removed')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Remove failed: $e')));
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Remove failed: ${_errorText(e)}')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 }
+
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();

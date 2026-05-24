@@ -33,7 +33,13 @@ final dashboardProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
 final containerListProvider =
     FutureProvider.autoDispose<List<model.Container>>((ref) async {
   final page = await ref.watch(appClientProvider).containerList();
-  return _parseContainers(page);
+  // Stamp asOf ONCE per page rather than per-row (review fix H3 / arch lane).
+  // Per-row stamping defeated freezed equality and forced every downstream
+  // Consumer to rebuild on every refetch.
+  final asOf = DateTime.now().toUtc();
+  return page.items
+      .map((m) => model.Container.fromJson(_withAsOf(m, asOf)))
+      .toList(growable: false);
 });
 
 final containerDetailProvider =
@@ -42,7 +48,7 @@ final containerDetailProvider =
     final raw = await ref
         .watch(appClientProvider)
         .containerDetail(containerId);
-    return model.Container.fromJson(_withAsOf(raw));
+    return model.Container.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
   },
 );
 
@@ -50,15 +56,16 @@ final containerDetailProvider =
 
 final paneListProvider = FutureProvider.autoDispose<List<Pane>>((ref) async {
   final page = await ref.watch(appClientProvider).paneList();
+  final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => Pane.fromJson(_withAsOf(m)))
+      .map((m) => Pane.fromJson(_withAsOf(m, asOf)))
       .toList(growable: false);
 });
 
 final paneDetailProvider =
     FutureProvider.autoDispose.family<Pane, String>((ref, paneId) async {
   final raw = await ref.watch(appClientProvider).paneDetail(paneId);
-  return Pane.fromJson(_withAsOf(raw));
+  return Pane.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
 });
 
 // ================================================================== Agents
@@ -66,8 +73,9 @@ final paneDetailProvider =
 final agentListProvider =
     FutureProvider.autoDispose<List<AdoptedAgent>>((ref) async {
   final page = await ref.watch(appClientProvider).agentList();
+  final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => AdoptedAgent.fromJson(_withAsOf(m)))
+      .map((m) => AdoptedAgent.fromJson(_withAsOf(m, asOf)))
       .toList(growable: false);
 });
 
@@ -75,7 +83,7 @@ final agentDetailProvider =
     FutureProvider.autoDispose.family<AdoptedAgent, String>(
   (ref, agentId) async {
     final raw = await ref.watch(appClientProvider).agentDetail(agentId);
-    return AdoptedAgent.fromJson(_withAsOf(raw));
+    return AdoptedAgent.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
   },
 );
 
@@ -84,8 +92,9 @@ final agentDetailProvider =
 final eventListProvider =
     FutureProvider.autoDispose<List<model.Event>>((ref) async {
   final page = await ref.watch(appClientProvider).eventList();
+  final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => model.Event.fromJson(_withAsOf(m)))
+      .map((m) => model.Event.fromJson(_withAsOf(m, asOf)))
       .toList(growable: false);
 });
 
@@ -94,8 +103,9 @@ final eventListProvider =
 final queueListProvider =
     FutureProvider.autoDispose<List<QueueRow>>((ref) async {
   final page = await ref.watch(appClientProvider).queueList();
+  final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => QueueRow.fromJson(_withAsOf(m)))
+      .map((m) => QueueRow.fromJson(_withAsOf(m, asOf)))
       .toList(growable: false);
 });
 
@@ -104,8 +114,9 @@ final queueListProvider =
 final routeListProvider =
     FutureProvider.autoDispose<List<model.Route>>((ref) async {
   final page = await ref.watch(appClientProvider).routeList();
+  final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => model.Route.fromJson(_withAsOf(m)))
+      .map((m) => model.Route.fromJson(_withAsOf(m, asOf)))
       .toList(growable: false);
 });
 
@@ -117,18 +128,15 @@ final readinessProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
 
 // ====================================================== Internal helpers
 
-/// Stamps an `asOf` field onto an entity payload if the daemon didn't
-/// already supply one. The freezed models all require `asOf`; using
-/// "now" client-side is correct for live data (the daemon's response
-/// IS the most-recent snapshot the app has seen).
-Map<String, dynamic> _withAsOf(Map<String, dynamic> raw) {
+/// Stamps a SHARED `asOf` field onto an entity payload if the daemon
+/// didn't supply one. The freezed models all require `asOf`; the
+/// caller passes a single page-fetch timestamp so every row in the
+/// page shares it. Per-row `DateTime.now()` calls would defeat freezed
+/// equality across rebuilds (review fix H3 / arch lane).
+Map<String, dynamic> _withAsOf(Map<String, dynamic> raw, DateTime asOf) {
   if (raw.containsKey('as_of') || raw.containsKey('asOf')) return raw;
   return {
     ...raw,
-    'as_of': DateTime.now().toUtc().toIso8601String(),
+    'as_of': asOf.toIso8601String(),
   };
 }
-
-List<model.Container> _parseContainers(PagedResult page) => page.items
-    .map((m) => model.Container.fromJson(_withAsOf(m)))
-    .toList(growable: false);

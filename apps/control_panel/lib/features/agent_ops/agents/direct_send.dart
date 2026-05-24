@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
 import '../providers.dart';
@@ -122,9 +123,13 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     try {
+      // Per `app-methods.md` §app.send_input the `payload` is a structured
+      // object that serializes ≤ 16 KiB. Operator prose is wrapped under
+      // `{"text": "..."}` so future fields (attachments, tool_calls, etc.)
+      // can be added additively without changing the wire shape.
       await ref.read(appClientProvider).sendInput(
             targetAgentId: widget.agent.agentId,
-            payload: _payloadCtrl.text,
+            payload: {'text': _payloadCtrl.text.trim()},
           );
       ref.invalidate(queueListProvider);
       if (!mounted) return;
@@ -133,9 +138,12 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Send failed: $e';
+        _error = 'Send failed: ${_errorText(e)}';
         _sending = false;
       });
     }
   }
 }
+
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
+import '../../../domain/lifecycles/pane_state_validator.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/pane.dart';
 import '../providers.dart';
@@ -156,6 +158,19 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    // FR-014 + data-model §3: refuse to submit a transition that the
+    // PaneStateValidator says is invalid. The daemon would reject too,
+    // but a local check spares a round-trip and gives a clearer error
+    // (review fix H9 — wire lifecycle validators into UI mutations).
+    if (!PaneStateValidator.isValidTransition(
+      widget.pane.state,
+      PaneState.discoveredAndRegistered,
+    )) {
+      setState(() => _error =
+          'Pane state ${widget.pane.state.wireValue} cannot transition '
+          'to discovered-and-registered (FR-014).');
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
@@ -163,13 +178,23 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     try {
+      // Per `app-methods.md` §app.agent.register_from_pane FR-028a, the daemon
+      // requires ALL 6 pane-identity fields and rejects on any byte-for-byte
+      // mismatch with `pane_not_found.details.mismatch_field`. We forward the
+      // discovered Pane's fields directly — the operator only chooses
+      // label/role/capability/project_path/attach_log.
       await ref.read(appClientProvider).agentRegisterFromPane(
             paneId: widget.pane.paneId,
+            containerId: widget.pane.containerId,
+            tmuxSocket: widget.pane.tmuxSocket,
+            sessionName: widget.pane.tmuxSessionName,
+            windowIndex: widget.pane.tmuxWindowIndex,
+            paneIndex: widget.pane.tmuxPaneIndex,
             label: _labelCtrl.text.trim(),
             role: _role.wireValue,
             capability: _capability,
             projectPath: _projectPathCtrl.text.trim(),
-            attachLogNow: _attachLogNow,
+            attachLog: _attachLogNow,
           );
       ref.invalidate(paneListProvider);
       ref.invalidate(agentListProvider);
@@ -181,9 +206,14 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Adopt failed: $e';
+        _error = 'Adopt failed: ${_errorText(e)}';
         _submitting = false;
       });
     }
   }
 }
+
+/// Renders a closed-set [AppContractError] using its prose `message` rather
+/// than `e.toString()`. See review fix M1.
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();

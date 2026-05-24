@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/models/adopted_agent.dart';
 import '../providers.dart';
 import 'direct_send.dart';
+import 'edit_agent.dart';
 import 'log_attach_affordance.dart';
 
 /// Agent Operations → Agents. T069 (Phase 3 US1) + FR-015 + FR-030 +
@@ -112,6 +113,12 @@ class _AgentTile extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   LogAttachAffordance(agent: agent),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Edit'),
+                    onPressed: () => EditAgentDialog.show(context, agent: agent),
+                  ),
                 ],
               ),
               if (descendants > 0)

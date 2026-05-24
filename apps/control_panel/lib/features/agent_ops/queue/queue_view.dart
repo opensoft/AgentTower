@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/queue_row.dart';
@@ -59,7 +60,7 @@ class _QueueTile extends ConsumerWidget {
         style: const TextStyle(fontFamily: 'monospace'),
       ),
       subtitle: Text(
-        row.payload,
+        _payloadPreview(row.payload),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
@@ -106,6 +107,12 @@ class _ActionsState extends ConsumerState<_Actions> {
     if (widget.row.state.isTerminal) {
       return const SizedBox.shrink();
     }
+    // Per FEAT-011 §app.queue.* state transitions (Round-5):
+    //   - approve: blocked → queued                  (blocked only)
+    //   - delay:   queued → blocked (operator_delayed) (queued only)
+    //   - cancel:  queued|blocked → canceled        (both non-terminal)
+    // The previous UI offered Delay only on blocked rows, which inverted
+    // the lifecycle — corrected here (review fix H8).
     return Wrap(
       spacing: 4,
       children: [
@@ -115,7 +122,7 @@ class _ActionsState extends ConsumerState<_Actions> {
             icon: const Icon(Icons.check),
             onPressed: _busy ? null : () => _do('approve'),
           ),
-        if (widget.row.state == QueueRowState.blocked)
+        if (widget.row.state == QueueRowState.queued)
           IconButton(
             tooltip: 'Delay 60s',
             icon: const Icon(Icons.snooze),
@@ -132,26 +139,45 @@ class _ActionsState extends ConsumerState<_Actions> {
 
   Future<void> _do(String action) async {
     setState(() => _busy = true);
+    // Capture messenger BEFORE awaits so the SnackBar dispatch is safe even
+    // if the parent rebuilds and detaches our context (review fix H5).
     final messenger = ScaffoldMessenger.of(context);
     try {
       final client = ref.read(appClientProvider);
       switch (action) {
         case 'approve':
-          await client.queueApprove(queueRowId: widget.row.queueRowId);
+          await client.queueApprove(messageId: widget.row.messageId);
         case 'delay':
           await client.queueDelay(
-            queueRowId: widget.row.queueRowId,
+            messageId: widget.row.messageId,
             by: const Duration(seconds: 60),
           );
         case 'cancel':
-          await client.queueCancel(queueRowId: widget.row.queueRowId);
+          await client.queueCancel(messageId: widget.row.messageId);
       }
       ref.invalidate(queueListProvider);
+      if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text('Queue $action ok')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Queue $action failed: $e')));
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Queue $action failed: ${_errorText(e)}')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+}
+
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();
+
+/// Renders the structured `payload` map as a short preview. The convention
+/// is `{"text": "..."}` (see `DirectSendDialog._send`); other shapes fall
+/// back to their JSON string representation so the operator can still see
+/// what was queued.
+String _payloadPreview(Map<String, dynamic> payload) {
+  final text = payload['text'];
+  if (text is String && text.isNotEmpty) return text;
+  return payload.toString();
 }

@@ -37,14 +37,19 @@ class RotatingFileLogger {
   static const int _maxBytesPerFile = 10 * 1024 * 1024; // 10 MiB
   static const int _maxFiles = 5;
 
-  /// The exact denylist documented in R-26 / FR-079. Renaming or extending
-  /// this set is a spec change — coordinate via OpenSpec rather than
-  /// editing in place.
+  /// The denylist documented in R-26 / FR-079, extended in Block E with
+  /// `payload` — the actual wire field that carries Direct Send prompt
+  /// bodies on `app.send_input` (see `app-methods.md` line 319). Without
+  /// `payload` the redaction would miss any future log site that
+  /// stringifies a `send_input` request envelope. Renaming the spec set
+  /// remains a coordinated OpenSpec change; adding NEW field names that
+  /// match the same intent (prompt body content) is local.
   static const Set<String> _redactedKeys = {
     'app_session_token',
     'prompt',
     'prompt_text',
     'operator_notes',
+    'payload',
   };
 
   /// Compiled regex set for the string-scrub pass. Pre-built once because

@@ -114,7 +114,10 @@ class MasterSummary with _$MasterSummary {
 ### 1.4 Pane
 
 **Source**: `app.pane.list` / `app.pane.detail`.
-**Identity**: daemon-issued `pane_id`.
+**Identity**: daemon-issued `pane_id`. The full 6-field tuple
+`(container_id, tmux_socket, tmux_session_name, tmux_window_index,
+tmux_pane_index, pane_id)` is required as input to
+`app.agent.register_from_pane` and is matched byte-for-byte (FR-028a).
 
 ```dart
 @freezed
@@ -122,9 +125,10 @@ class Pane with _$Pane {
   const factory Pane({
     required String paneId,
     required String containerId,
+    required String tmuxSocket,
     required String tmuxSessionName,
-    required String tmuxWindowIndex,
-    required String tmuxPaneIndex,
+    required int tmuxWindowIndex,              // int per FEAT-011 contract
+    required int tmuxPaneIndex,                // int per FEAT-011 contract
     required PaneState state,                  // FR-014: discovered-and-unmanaged | discovered-and-registered | inactive/stale | discovery-degraded
     String? registeredAgentId,                 // populated iff state == discovered-and-registered
     PaneDiscoveredClass? discoveredClass,      // claude | codex | shell | …
@@ -436,8 +440,8 @@ class OperatorHistoryEntry with _$OperatorHistoryEntry {
 The remaining FEAT-011 read-surface entities are mirrored 1:1 as freezed classes with the same `asOf` discipline. They follow FEAT-011's documented response shapes byte-for-byte and add no app-side fields. Listed for completeness:
 
 - **Container** — `containerId`, `name`, `discoveredAt`, `projectPath`, `state` (running | exited | …)
-- **QueueRow** — `queueRowId`, `state` (`queued` | `blocked` | `delivered` | `canceled` | `failed`), `payload`, `sourceAgentId`, `targetAgentId`, `routeId?`, `createdAt`, `terminalAt?`
-- **Route** — `routeId`, `sourceScope`, `targetRule`, `masterRule`, `enabled`, `recentSkipExplanation?`, `recentMatchSummary?`
+- **QueueRow** — `messageId` (daemon-issued; matches the `message_id` wire field used by `app.queue.{detail,approve,delay,cancel}`), `state` (`queued` | `blocked` | `delivered` | `canceled` | `failed`), `payload` (structured `Map<String, dynamic>` — the same shape `app.send_input` accepts, `{"text": "..."}` by convention), `sourceAgentId`, `targetAgentId`, `routeId?`, `createdAt`, `terminalAt?`
+- **Route** — `routeId`, `sourceScope`, `template` (FEAT-010 operation template, e.g. `forward_event_to`), `target`, `masterRule`, `enabled`, `recentSkipExplanation?`, `recentMatchSummary?`
 - **Event** — `eventId`, `observedAt`, `eventType`, `agentId`, `excerpt`, `linkedQueueRowId?`
 
 ---

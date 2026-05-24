@@ -2,6 +2,19 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// Returns `true` iff `python3` resolves on PATH. Used by integration
+/// tests as a `setUpAll` gate so CI environments without Python don't
+/// fail with the confusing "Mock daemon failed to bind socket" error
+/// — they `markTestSkipped` instead (review fix H4 / test lane).
+Future<bool> isPython3Available({String executable = 'python3'}) async {
+  try {
+    final result = await Process.run(executable, ['--version']);
+    return result.exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// Spawns the Python mock-daemon harness (T050) for an integration test.
 /// T052 (Phase 2 Foundational).
 ///

@@ -1,10 +1,12 @@
 import 'package:agenttower_control_panel/app.dart';
 import 'package:agenttower_control_panel/core/daemon/app_client.dart';
+import 'package:agenttower_control_panel/core/daemon/contract_version.dart';
 import 'package:agenttower_control_panel/core/daemon/preflight_client.dart';
 import 'package:agenttower_control_panel/core/daemon/session.dart';
 import 'package:agenttower_control_panel/core/daemon/socket_client.dart';
 import 'package:agenttower_control_panel/core/providers.dart';
 import 'package:agenttower_control_panel/features/agent_ops/module.dart';
+import 'package:agenttower_control_panel/features/registry.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,29 +26,46 @@ import '../test/helpers/mock_daemon_client.dart';
 ///   §5 Direct Send → queue row appears
 ///   §6 Add route + verify it lists
 ///
-/// Asserts SC-001 budget: full 8-milestone onboarding walk completes
-/// in ≤ 10 minutes on the mock daemon. Mock-daemon round-trips are
-/// sub-millisecond, so the budget is a safety net for slow CI hardware.
+/// Asserts SC-001 budget: the mock-daemon walk completes in ≤ 10
+/// minutes. Mock-daemon round-trips are sub-millisecond, so the
+/// budget is a safety net for slow CI hardware. The deeper per-
+/// surface tap-driving lives in `us1_smoke_walk.dart` (Block D
+/// addition) which walks the wire calls without the UI overhead.
+/// Skipped when `python3` is unavailable.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  late bool pythonOk;
+  setUpAll(() async {
+    pythonOk = await isPython3Available();
+  });
+
+  setUp(() {
+    WorkspaceRegistry.resetForTesting();
+    ContractRegistry.resetForTesting();
+  });
+
   testWidgets('US1 adopt-and-operate walk completes in ≤ 10 minutes',
       (tester) async {
+    if (!pythonOk) {
+      markTestSkipped('python3 not on PATH; cannot spawn mock-daemon harness');
+      return;
+    }
     final stopwatch = Stopwatch()..start();
 
-    // Build the mock-daemon fixture covering every US1 surface.
     final fixture = _buildUs1Fixture();
     final harness = await MockDaemonClient.start(fixture: fixture);
-
     addTearDown(harness.stop);
 
     final socketClient = SocketClient(harness.socketPath);
     final session = DaemonSession(client: socketClient);
     await session.bootstrap();
+    addTearDown(session.dispose);
 
     final appClient = AppClient(session: session);
     final preflight = PreflightClient(socketPath: harness.socketPath);
 
+    seedMvpContractDeclarations();
     registerAgentOps();
     await tester.pumpWidget(
       ProviderScope(
@@ -61,15 +80,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // §1 Dashboard renders with daemon counts.
+    // §1 Dashboard chrome renders.
     expect(find.text('Agent Operations'), findsOneWidget);
     expect(find.text('Containers'), findsWidgets);
-
-    // §2-§6 are exercised by tapping through workspace chips and
-    // verifying each surface receives the expected fixture data. The
-    // detailed step-by-step taps live in the per-surface widget tests
-    // under `test/`. This integration test asserts the END-TO-END
-    // budget rather than re-driving every interaction.
 
     stopwatch.stop();
     expect(
@@ -80,8 +93,10 @@ void main() {
   });
 }
 
-/// Fixture covering every US1 surface. Each builder lives in
-/// `test/helpers/fixture_builders.dart` so widget tests can reuse them.
+/// Fixture covering every US1 surface using the canonical FEAT-011 v1.0
+/// envelope shapes via [Fixtures.listResult] / [Fixtures.rowResult]
+/// (review fix C2/C3 — the prior inline `{items, next_cursor}` shape
+/// was wrong; the daemon returns `{rows, cursor_next}`).
 Map<String, dynamic> _buildUs1Fixture() {
   return {
     'app_contract_version': '1.0',
@@ -102,55 +117,31 @@ Map<String, dynamic> _buildUs1Fixture() {
       },
       'app.dashboard': {
         'ok': true,
-        'result': Fixtures.dashboardResult(
-          containersActive: 1,
-          panesByState: const {
-            'discovered-and-unmanaged': 1,
-            'discovered-and-registered': 0,
-          },
-        ),
+        'result': Fixtures.dashboardResult(),
       },
       'app.container.list': {
         'ok': true,
-        'result': {
-          'items': [Fixtures.container()],
-          'next_cursor': null,
-        },
+        'result': Fixtures.listResult([Fixtures.container()]),
       },
       'app.pane.list': {
         'ok': true,
-        'result': {
-          'items': [Fixtures.pane()],
-          'next_cursor': null,
-        },
+        'result': Fixtures.listResult([Fixtures.pane()]),
       },
       'app.agent.list': {
         'ok': true,
-        'result': {
-          'items': [Fixtures.agent()],
-          'next_cursor': null,
-        },
+        'result': Fixtures.listResult([Fixtures.agent()]),
       },
       'app.event.list': {
         'ok': true,
-        'result': {
-          'items': [Fixtures.event()],
-          'next_cursor': null,
-        },
+        'result': Fixtures.listResult([Fixtures.event()]),
       },
       'app.queue.list': {
         'ok': true,
-        'result': {
-          'items': [Fixtures.queueRow()],
-          'next_cursor': null,
-        },
+        'result': Fixtures.listResult([Fixtures.queueRow()]),
       },
       'app.route.list': {
         'ok': true,
-        'result': {
-          'items': [Fixtures.route()],
-          'next_cursor': null,
-        },
+        'result': Fixtures.listResult([Fixtures.route()]),
       },
     },
   };

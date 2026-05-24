@@ -7,22 +7,37 @@ import '../providers.dart';
 
 /// Agent Operations → Dashboard. T065 (Phase 3 US1) + FR-012.
 ///
-/// Renders daemon reachability, contract version, container count,
-/// pane count by state, registered-agent count by state, blocked-queue
-/// count, recently-skipped-route count, and the FR-004 recommended
-/// next action.
+/// Renders the FEAT-011 v1.0 `app.dashboard` payload directly (review
+/// fix C8 / Option A). FR-012 also enumerates "pane count BY STATE",
+/// "registered-agent count BY STATE", "recently-skipped-route count",
+/// and "recommended next action" — none of which `app.dashboard` v1.0
+/// exposes. Those tiles are suppressed (with `TODO(openspec)` markers)
+/// until the openspec change `extend-app-dashboard-fields-for-feat012`
+/// lands and bumps the contract to 1.1. The Dashboard remains
+/// functional against today's daemon; the missing tiles do not block
+/// US1 sign-off.
 ///
-/// On daemon outage the surface degrades to its `runtime-unreachable`
-/// empty state per FR-004 — the empty state is the loading indicator
-/// + a "Retry connection" affordance that re-invalidates the provider.
+/// On daemon outage the surface short-circuits to a `runtime-unreachable`
+/// empty state per FR-004 with an explicit "Retry connection" affordance
+/// (review fix H4 / arch lane).
 class DashboardView extends ConsumerWidget {
   const DashboardView({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final dashboard = ref.watch(dashboardProvider);
     final runtime = ref.watch(runtimeStateProvider);
 
+    // FR-004 short-circuit: when the daemon is unreachable the dashboard
+    // would otherwise spin forever waiting for the FutureProvider. Render
+    // the documented empty state directly + offer Retry connection.
+    if (runtime.kind == RuntimeStateKind.runtimeUnreachable) {
+      return _OutageState(
+        runtime: runtime,
+        onRetry: () => ref.invalidate(dashboardProvider),
+      );
+    }
+
+    final dashboard = ref.watch(dashboardProvider);
     return Padding(
       padding: const EdgeInsets.all(16),
       child: dashboard.when(
@@ -48,16 +63,15 @@ class _DashboardBody extends StatelessWidget {
     final counts = (data['counts'] as Map<String, dynamic>?) ?? const {};
     final containers =
         (counts['containers'] as Map<String, dynamic>?) ?? const {};
-    final panesByState =
-        (counts['panes_by_state'] as Map<String, dynamic>?) ?? const {};
-    final agentsByState =
-        (counts['registered_agents_by_state'] as Map<String, dynamic>?) ??
-            const {};
-    final blockedQueue = counts['blocked_queue'] as int? ?? 0;
-    final recentlySkippedRoutes =
-        counts['recently_skipped_routes'] as int? ?? 0;
-    final recommended =
-        data['recommended_next_action'] as Map<String, dynamic>?;
+    final panes = (counts['panes'] as Map<String, dynamic>?) ?? const {};
+    final agents = (counts['agents'] as Map<String, dynamic>?) ?? const {};
+    final agentsByRole =
+        (agents['by_role'] as Map<String, dynamic>?) ?? const {};
+    final logAttachments =
+        (counts['log_attachments'] as Map<String, dynamic>?) ?? const {};
+    final events = (counts['events'] as Map<String, dynamic>?) ?? const {};
+    final queue = (counts['queue'] as Map<String, dynamic>?) ?? const {};
+    final routes = (counts['routes'] as Map<String, dynamic>?) ?? const {};
 
     return ListView(
       children: [
@@ -95,35 +109,74 @@ class _DashboardBody extends StatelessWidget {
           ),
         ),
         _Section(
-          title: 'Panes by state',
-          child: _BadgeList(map: panesByState),
-        ),
-        _Section(
-          title: 'Registered agents by state',
-          child: _BadgeList(map: agentsByState),
-        ),
-        _Section(
-          title: 'Queue + Routes',
+          title: 'Panes',
           child: Wrap(
             spacing: 24,
+            runSpacing: 8,
             children: [
-              _Stat(label: 'Blocked queue rows', value: '$blockedQueue'),
+              _Stat(label: 'Total', value: '${panes['total'] ?? 0}'),
+              _Stat(label: 'Registered', value: '${panes['registered'] ?? 0}'),
               _Stat(
-                label: 'Recently skipped routes',
-                value: '$recentlySkippedRoutes',
+                label: 'Unregistered',
+                value: '${panes['unregistered'] ?? 0}',
               ),
             ],
           ),
         ),
-        if (recommended != null)
-          Card(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            child: ListTile(
-              leading: const Icon(Icons.lightbulb_outline),
-              title: Text(recommended['title']?.toString() ?? 'Next action'),
-              subtitle: Text(recommended['detail']?.toString() ?? ''),
-            ),
+        // TODO(openspec/extend-app-dashboard-fields-for-feat012):
+        // re-enable a per-state pane breakdown when the contract 1.1
+        // adds counts.panes.by_state.
+        _Section(
+          title: 'Agents',
+          child: Wrap(
+            spacing: 24,
+            runSpacing: 8,
+            children: [
+              _Stat(label: 'Total', value: '${agents['total'] ?? 0}'),
+              for (final entry in agentsByRole.entries)
+                _Stat(label: 'By role · ${entry.key}', value: '${entry.value}'),
+            ],
           ),
+        ),
+        _Section(
+          title: 'Log attachments',
+          child: Wrap(
+            spacing: 24,
+            runSpacing: 8,
+            children: [
+              _Stat(label: 'Active', value: '${logAttachments['active'] ?? 0}'),
+              _Stat(
+                label: 'Degraded',
+                value: '${logAttachments['degraded'] ?? 0}',
+              ),
+              _Stat(label: 'None', value: '${logAttachments['none'] ?? 0}'),
+            ],
+          ),
+        ),
+        _Section(
+          title: 'Events + Queue + Routes',
+          child: Wrap(
+            spacing: 24,
+            runSpacing: 8,
+            children: [
+              _Stat(label: 'Events total', value: '${events['total'] ?? 0}'),
+              _Stat(label: 'Queue queued', value: '${queue['queued'] ?? 0}'),
+              _Stat(label: 'Queue blocked', value: '${queue['blocked'] ?? 0}'),
+              _Stat(
+                label: 'Queue delivered',
+                value: '${queue['delivered'] ?? 0}',
+              ),
+              _Stat(label: 'Routes enabled', value: '${routes['enabled'] ?? 0}'),
+              _Stat(
+                label: 'Routes disabled',
+                value: '${routes['disabled'] ?? 0}',
+              ),
+            ],
+          ),
+        ),
+        // TODO(openspec/extend-app-dashboard-fields-for-feat012):
+        // re-enable the "recommended next action" tile when the contract
+        // 1.1 adds result.recommended_next_action.
       ],
     );
   }
@@ -135,6 +188,52 @@ class _DashboardBody extends StatelessWidget {
         RuntimeStateKind.runtimeHealthyPopulated => 'Healthy',
         RuntimeStateKind.runtimeDegraded => 'Degraded',
       };
+}
+
+class _OutageState extends StatelessWidget {
+  const _OutageState({required this.runtime, required this.onRetry});
+
+  final RuntimeState runtime;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.cloud_off_outlined,
+              size: 48,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Daemon unreachable',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              runtime.lastError == null
+                  ? 'The Control Panel cannot reach `agenttowerd`.\n'
+                      'Check that the daemon is running and that the socket path in '
+                      'Settings → Connection matches.'
+                  : 'Last error: ${runtime.lastError}',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry connection'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _DashboardError extends StatelessWidget {
@@ -199,26 +298,6 @@ class _Stat extends StatelessWidget {
       children: [
         Text(label, style: Theme.of(context).textTheme.labelMedium),
         Text(value, style: Theme.of(context).textTheme.headlineSmall),
-      ],
-    );
-  }
-}
-
-class _BadgeList extends StatelessWidget {
-  const _BadgeList({required this.map});
-  final Map<String, dynamic> map;
-
-  @override
-  Widget build(BuildContext context) {
-    if (map.isEmpty) {
-      return const Text('(none)');
-    }
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final entry in map.entries)
-          Chip(label: Text('${entry.key}: ${entry.value}')),
       ],
     );
   }

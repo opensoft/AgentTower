@@ -23,9 +23,16 @@ AgentTower runs entirely on this machine.
 
   • The desktop app talks to the daemon over a local Unix socket.
     There is no network listener and no remote service.
-  • The daemon enforces a same-host-user check: only your OS account
-    can issue commands. The app's "peer-UID match" doctor check
-    confirms this at every launch.
+  • The daemon and the desktop app both run as your OS user. File
+    permissions on the socket inherit from the per-user app-data
+    directory, so only your OS account can connect.
+
+    A separate peer-UID handshake that VERIFIES the daemon's reported
+    user against your process's UID is on the roadmap (Settings →
+    Doctor → "Peer-UID verification" currently reports "skipped" with
+    a pointer to the task that lands it). Until that ships, the
+    socket-permissions-only barrier is what gates remote access on
+    this machine.
   • The app's only outbound network call is a once-per-launch fetch
     of `releases.opensoft.one/.../latest.json` to see whether a newer
     Control Panel is published. The release-feed URL is hard-coded to

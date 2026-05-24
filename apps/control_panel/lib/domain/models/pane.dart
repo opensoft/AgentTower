@@ -16,14 +16,20 @@ part 'pane.g.dart';
 ///
 /// `registeredAgentId` is populated iff `state == discovered-and-registered`.
 /// The Pane view (T067) uses it to render an inline link to the agent.
+///
+/// Identity fields required by `app.agent.register_from_pane` (FR-028a):
+/// `containerId`, `tmuxSocket`, `tmuxSessionName`, `tmuxWindowIndex` (int),
+/// `tmuxPaneIndex` (int), `paneId` — all six MUST round-trip byte-for-byte
+/// or the daemon rejects with `pane_not_found.details.mismatch_field`.
 @freezed
 class Pane with _$Pane {
   const factory Pane({
     required String paneId,
     required String containerId,
+    required String tmuxSocket,
     required String tmuxSessionName,
-    required String tmuxWindowIndex,
-    required String tmuxPaneIndex,
+    required int tmuxWindowIndex,
+    required int tmuxPaneIndex,
     required PaneState state,
     String? registeredAgentId,
     PaneDiscoveredClass? discoveredClass,

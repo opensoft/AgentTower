@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/daemon/errors.dart';
 import '../../../core/providers.dart';
 import '../providers.dart';
 
 /// Add route modal. T075 (Phase 3 US1) + FR-021.
 ///
-/// Form fields: source_scope, event_class, target_rule, master_rule.
-/// Calls `app.route.add` on submit.
+/// Per FEAT-011 `app.route.add` (contract line 367), the daemon accepts a
+/// full FEAT-010 route definition with exactly three fields:
+///   - `source_scope` — origin selector (e.g. `agent:claude-master-1`)
+///   - `template`     — operation template (e.g. `forward_event_to`)
+///   - `target`       — destination selector (e.g. `agent:codex-slave-1`)
+///
+/// The earlier form collected `event_class` + `*_rule` triplets — those
+/// were not part of the v1.0 contract and the daemon rejected them with
+/// `validation_failed`. Corrected here (review fix C6 / spec-code lane).
 class AddRouteFlow extends ConsumerStatefulWidget {
   const AddRouteFlow({super.key});
 
@@ -26,19 +34,17 @@ class AddRouteFlow extends ConsumerStatefulWidget {
 
 class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
   final _formKey = GlobalKey<FormState>();
-  final _sourceScope = TextEditingController(text: 'agent:*');
-  final _eventClass = TextEditingController(text: 'task_finished');
-  final _targetRule = TextEditingController(text: 'agent:claude-master-1');
-  final _masterRule = TextEditingController(text: 'any');
+  final _sourceScope = TextEditingController(text: 'agent:claude-master-1');
+  final _template = TextEditingController(text: 'forward_event_to');
+  final _target = TextEditingController(text: 'agent:codex-slave-1');
   bool _busy = false;
   String? _error;
 
   @override
   void dispose() {
     _sourceScope.dispose();
-    _eventClass.dispose();
-    _targetRule.dispose();
-    _masterRule.dispose();
+    _template.dispose();
+    _target.dispose();
     super.dispose();
   }
 
@@ -56,14 +62,21 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
               'Add route',
               style: Theme.of(context).textTheme.titleMedium,
             ),
+            const SizedBox(height: 8),
+            Text(
+              'Defines a FEAT-010 routing rule. The daemon owns the rule grammar; '
+              'these three fields are forwarded verbatim.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 16),
-            _field(_sourceScope, 'Source scope', 'e.g. agent:* or container:bench-1'),
+            _field(_sourceScope, 'Source scope',
+                'e.g. agent:claude-master-1 or container:bench-1'),
             const SizedBox(height: 8),
-            _field(_eventClass, 'Event class', 'e.g. task_finished'),
+            _field(_template, 'Template',
+                'e.g. forward_event_to | broadcast_event | …'),
             const SizedBox(height: 8),
-            _field(_targetRule, 'Target rule', 'e.g. agent:claude-master-1'),
-            const SizedBox(height: 8),
-            _field(_masterRule, 'Master rule', 'e.g. any | none | label:foo'),
+            _field(_target, 'Target',
+                'e.g. agent:codex-slave-1 or master:any'),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!,
@@ -117,9 +130,8 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
     try {
       await ref.read(appClientProvider).routeAdd(
             sourceScope: _sourceScope.text.trim(),
-            eventClass: _eventClass.text.trim(),
-            targetRule: _targetRule.text.trim(),
-            masterRule: _masterRule.text.trim(),
+            template: _template.text.trim(),
+            target: _target.text.trim(),
           );
       ref.invalidate(routeListProvider);
       if (!mounted) return;
@@ -128,9 +140,12 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Add failed: $e';
+        _error = 'Add failed: ${_errorText(e)}';
         _busy = false;
       });
     }
   }
 }
+
+String _errorText(Object e) =>
+    e is AppContractError ? e.message : e.toString();

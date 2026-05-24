@@ -1,30 +1,52 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'package:agenttower_control_panel/core/daemon/contract_version.dart';
+import 'package:agenttower_control_panel/domain/models/common_enums.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:agenttower_control_panel/main.dart';
-
+/// Smoke test for the AgentTower Control Panel. Replaces the Flutter
+/// `flutter create` scaffold default that referenced a non-existent
+/// `MyApp` widget (review fix C10 / test lane).
+///
+/// Real widget tests for the 12 US1 surfaces land alongside Block D
+/// hardening. This file's purpose is just to keep `flutter test` from
+/// failing to compile.
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('seedMvpContractDeclarations registers every Phase 3 + 4-8 surface',
+      () {
+    ContractRegistry.resetForTesting();
+    seedMvpContractDeclarations();
+    final declared = ContractRegistry.snapshot();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Phase 3 (US1) surfaces — all on v1.0.
+    for (final id in const [
+      'agent_ops/dashboard',
+      'agent_ops/containers',
+      'agent_ops/panes',
+      'agent_ops/agents',
+      'agent_ops/events',
+      'agent_ops/queue',
+      'agent_ops/routes',
+      'agent_ops/health',
+    ]) {
+      expect(declared[id], const ContractVersion(1, 0),
+          reason: '$id should require contract version 1.0');
+    }
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Phase 4-8 surfaces — anticipated v1.1.
+    for (final id in const [
+      'project_specs/projects',
+      'project_specs/handoff',
+      'testing_demo/runs',
+    ]) {
+      expect(declared[id], const ContractVersion(1, 1),
+          reason: '$id should require contract version 1.1');
+    }
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('OnboardingMilestone wire values are stable across schema migrations',
+      () {
+    expect(OnboardingMilestone.daemonReachable.wireValue, 'daemon_reachable');
+    expect(OnboardingMilestone.firstPaneAdoption.wireValue,
+        'first_pane_adoption');
+    expect(OnboardingMilestone.values.length, 8);
   });
 }
