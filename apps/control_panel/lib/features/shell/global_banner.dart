@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/common_enums.dart';
+import '../project_specs/projects/first_launch_resolution.dart';
 import 'runtime_state_provider.dart';
 
 /// Global banner widget — renders the FR-002 contract-version-incompatible
@@ -15,29 +16,83 @@ class GlobalBanner extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(runtimeStateProvider);
-    if (state.kind != RuntimeStateKind.contractVersionIncompatible) {
-      return const SizedBox.shrink();
+    final firstLaunch = ref.watch(firstLaunchOutcomeProvider);
+
+    // FR-002 banner takes precedence — it blocks mutations.
+    if (state.kind == RuntimeStateKind.contractVersionIncompatible) {
+      final compat = state.contractCompat;
+      final daemonV = compat?.daemonVersion.toString() ?? '?';
+      final requiredV = compat?.appMinimum.toString() ?? '?';
+      return _BannerShell(
+        color: Theme.of(context).colorScheme.errorContainer,
+        onColor: Theme.of(context).colorScheme.onErrorContainer,
+        icon: Icons.warning_amber_outlined,
+        message:
+            'Daemon contract version $daemonV is below the required minimum '
+            '$requiredV. Update the daemon or downgrade the app.',
+      );
     }
-    final compat = state.contractCompat;
-    final daemonV = compat?.daemonVersion.toString() ?? '?';
-    final requiredV = compat?.appMinimum.toString() ?? '?';
+
+    // Swarm-review H-A1: FR-076 first-launch unresolved-project banner.
+    // The resolver writes the outcome via `firstLaunchOutcomeProvider`
+    // during boot; we render the non-blocking banner here when the
+    // persisted project could not be restored.
+    if (firstLaunch != null && firstLaunch.hasUnresolvedBanner) {
+      return _BannerShell(
+        color: Theme.of(context).colorScheme.tertiaryContainer,
+        onColor: Theme.of(context).colorScheme.onTertiaryContainer,
+        icon: Icons.info_outline,
+        message:
+            'Previously-active project "${firstLaunch.unresolvedPersistedProjectId}" '
+            'is not currently registered with the daemon. Pick a project from '
+            'the Projects view to continue, or wait for it to reappear via '
+            'adopted-agent inference.',
+        onDismiss: () {
+          // Clear the banner by clearing the outcome state. Operator
+          // dismisses once they've acknowledged.
+          ref.read(firstLaunchOutcomeProvider.notifier).state = null;
+        },
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+}
+
+class _BannerShell extends StatelessWidget {
+  const _BannerShell({
+    required this.color,
+    required this.onColor,
+    required this.icon,
+    required this.message,
+    this.onDismiss,
+  });
+
+  final Color color;
+  final Color onColor;
+  final IconData icon;
+  final String message;
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
-      color: Theme.of(context).colorScheme.errorContainer,
+      color: color,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            Icon(Icons.warning_amber_outlined,
-                color: Theme.of(context).colorScheme.onErrorContainer),
+            Icon(icon, color: onColor),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                'Daemon contract version $daemonV is below the required minimum $requiredV. Update the daemon or downgrade the app.',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                ),
-              ),
+              child: Text(message, style: TextStyle(color: onColor)),
             ),
+            if (onDismiss != null)
+              IconButton(
+                onPressed: onDismiss,
+                icon: Icon(Icons.close, color: onColor),
+                tooltip: 'Dismiss',
+              ),
           ],
         ),
       ),

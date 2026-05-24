@@ -131,18 +131,22 @@ void main() {
 
     // §4 — Submit.
     final project = _projectFixture();
+    const primary = WorkItemRef(
+      displayId: 'FEAT-12',
+      kind: WorkItemKind.feature,
+    );
     final handoff = await submitHandoff(
       appClient: appClient,
+      operatorLabel: 'brett',
       targetMasterLabel: 'claude-master-1',
       targetMasterAgentId: 'agent-1',
       project: project,
       mode: HandoffMode.engineeringExecution,
       operatorNotes: 'first handoff',
+      selectedWorkItems: const [primary],
       resolved: resolved,
-      primary: const WorkItemRef(
-        displayId: 'FEAT-12',
-        kind: WorkItemKind.feature,
-      ),
+      primary: primary,
+      linkedFeatureIds: const ['FEAT-9', 'FEAT-11', 'FEAT-12'],
       contextBundle: context,
       helperPolicySnapshot: snapshot,
       generatedPromptText: previewText,

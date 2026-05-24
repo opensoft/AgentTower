@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -137,6 +139,18 @@ class _HandoffPreviewViewState extends ConsumerState<HandoffPreviewView> {
     try {
       final handoff = await submitHandoff(
         appClient: ref.read(appClientProvider),
+        operatorLabel: Platform.environment['USER'] ?? 'operator',
+        selectedWorkItems: [widget.primary],
+        linkedFeatureIds: [
+          for (final r in widget.resolved)
+            if (r.exclusion == null && r.kind == WorkItemKind.feature)
+              r.displayId,
+        ],
+        linkedChangeIds: [
+          for (final r in widget.resolved)
+            if (r.exclusion == null && r.kind == WorkItemKind.change)
+              r.displayId,
+        ],
         targetMasterLabel: widget.targetMasterLabel,
         targetMasterAgentId: widget.targetMasterAgentId,
         project: widget.project,

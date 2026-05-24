@@ -251,13 +251,31 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
 
   void _resolveRange() {
     try {
-      // For MVP: catalog comes from the project's known features. The
-      // full daemon catalog (with stages) lands when FEAT-011 exposes
-      // app.feature_change.list-by-range; until then the resolver
-      // marks unknown ids as `deferred` per its convention.
+      // Swarm-review H-B11: previously the catalog was hardcoded as
+      // `const []` so EVERY range id resolved as a fake
+      // `(excluded: deferred)`. Now we pull the project's
+      // feature/change list synchronously from the provider cache (if
+      // already loaded) and feed it as the catalog. When the list
+      // isn't cached yet, we still allow the resolver to run but the
+      // operator sees `(excluded: deferred — not found in feature
+      // catalog)` rather than fake-deferred legitimate ids; the
+      // pre-resolved list refreshes once the daemon round-trip
+      // completes via the existing rebuild path.
+      final cached = ref
+              .read(project_providers
+                  .featureChangeListProvider(widget.project.projectId))
+              .valueOrNull ??
+          const [];
+      final catalog = [
+        for (final fc in cached)
+          FeatureRangeCatalogEntry(
+            displayId: fc.displayId,
+            stage: fc.stage,
+          ),
+      ];
       _resolved = const FeatureRangeResolver().resolve(
         rangeExpr: _workItemExpr,
-        catalog: const <FeatureRangeCatalogEntry>[],
+        catalog: catalog,
       );
     } catch (_) {
       _resolved = const <ResolvedWorkItem>[];

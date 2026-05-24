@@ -28,6 +28,7 @@ import '../../../domain/models/resolved_work_item.dart';
 /// silently.
 Future<Handoff> submitHandoff({
   required AppClient appClient,
+  required String operatorLabel,
   required String targetMasterLabel,
   required String targetMasterAgentId,
   required Project project,
@@ -35,13 +36,17 @@ Future<Handoff> submitHandoff({
   HandoffPriority? priority,
   DateTime? deadline,
   required String operatorNotes,
+  required List<WorkItemRef> selectedWorkItems,
   required List<ResolvedWorkItem> resolved,
   required WorkItemRef primary,
+  List<String> linkedFeatureIds = const <String>[],
+  List<String> linkedChangeIds = const <String>[],
   required HandoffContextBundle contextBundle,
   required HelperPolicySnapshot helperPolicySnapshot,
   required String generatedPromptText,
 }) async {
   final draft = _serializeDraft(
+    operatorLabel: operatorLabel,
     targetMasterAgentId: targetMasterAgentId,
     targetMasterLabel: targetMasterLabel,
     project: project,
@@ -49,8 +54,11 @@ Future<Handoff> submitHandoff({
     priority: priority,
     deadline: deadline,
     operatorNotes: operatorNotes,
+    selectedWorkItems: selectedWorkItems,
     resolved: resolved,
     primary: primary,
+    linkedFeatureIds: linkedFeatureIds,
+    linkedChangeIds: linkedChangeIds,
     contextBundle: contextBundle,
     helperPolicySnapshot: helperPolicySnapshot,
     generatedPromptText: generatedPromptText,
@@ -60,6 +68,7 @@ Future<Handoff> submitHandoff({
 }
 
 Map<String, dynamic> _serializeDraft({
+  required String operatorLabel,
   required String targetMasterAgentId,
   required String targetMasterLabel,
   required Project project,
@@ -67,13 +76,22 @@ Map<String, dynamic> _serializeDraft({
   HandoffPriority? priority,
   DateTime? deadline,
   required String operatorNotes,
+  required List<WorkItemRef> selectedWorkItems,
   required List<ResolvedWorkItem> resolved,
   required WorkItemRef primary,
+  required List<String> linkedFeatureIds,
+  required List<String> linkedChangeIds,
   required HandoffContextBundle contextBundle,
   required HelperPolicySnapshot helperPolicySnapshot,
   required String generatedPromptText,
 }) {
+  // Swarm-review H-B4: previously omitted `operator_label`,
+  // `selected_work_items`, `linked_feature_ids`, `linked_change_ids`.
+  // FR-042 lists all of these as required durable-record fields and
+  // the Handoff freezed class marks `operatorLabel` + `selectedWorkItems`
+  // required (so the daemon round-trip would have thrown on parse).
   return {
+    'operator_label': operatorLabel,
     'target_master_agent_id': targetMasterAgentId,
     'target_master_label': targetMasterLabel,
     'project_id': project.projectId,
@@ -82,8 +100,11 @@ Map<String, dynamic> _serializeDraft({
     if (priority != null) 'priority': priority.wireValue,
     if (deadline != null) 'deadline': deadline.toIso8601String(),
     'operator_notes': operatorNotes,
+    'selected_work_items': [for (final w in selectedWorkItems) w.toJson()],
     'primary_work_item': primary.toJson(),
     'resolved_work_items': [for (final r in resolved) r.toJson()],
+    'linked_feature_ids': linkedFeatureIds,
+    'linked_change_ids': linkedChangeIds,
     'context_bundle': contextBundle.toJson(),
     'helper_policy_id': helperPolicySnapshot.resolvedPolicy.policyId,
     'helper_policy_snapshot': helperPolicySnapshot.toJson(),
