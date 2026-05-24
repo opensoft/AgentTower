@@ -44,3 +44,8 @@
 - [ ] CHK018 - Does plan.md confirm that `app_contract/dashboard.py` is the sole reader of the ring buffer (no other module calls `count_in_window`)? [Coverage, Plan §Source Code]
 - [ ] CHK019 - Is the integration between the v1.1 version bump and FEAT-011's `app.hello` advertisement described in plan.md, so an implementer knows where the supported-minor-range advertisement widens? [Traceability, Plan §Source Code]
 - [ ] CHK020 - Are downstream consumers other than FEAT-012 still declared out of scope, or did plan.md silently introduce a new consumer? [Boundary, Plan §*]
+
+## Post-Remediation Audit (commit 457d5c2)
+
+- [ ] CHK021 - Does T026's prescription to add an "App Contract Evolution — v1.1 (FEAT-014)" subsection to `specs/011-app-backend-contract/contracts/app-methods.md` cross a feature-spec boundary that may require a coordinated PR (FEAT-014 PR editing FEAT-011's specs dir vs. a separate FEAT-011-side follow-up PR)? [Boundary, Tasks T026, Spec Kit Convention]
+- [ ] CHK022 - Does T023's new file `tests/contract/test_v1_0_compat.py` collide with any FEAT-011 test file naming convention, and does its "parametrized over `test_app_*.py` modules" selector correctly exclude the FEAT-014 extensions to those same files (avoiding circular re-run)? [Risk, Tasks T023, FEAT-011 Source Code]

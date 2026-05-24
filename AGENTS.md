@@ -82,3 +82,24 @@ implementation and record the resulting issue links or IDs in the handoff.
 MVP deployment is host-daemon first: `agenttowerd` runs on the host, bench
 containers run thin `agenttower` clients over a mounted Unix socket, and there
 is no network listener in MVP.
+
+## Cross-Feature Spec Dir Editing
+
+A feature PR ordinarily edits only its own `specs/<NNN>-<slug>/` directory.
+The one allowed exception is **additive cross-reference breadcrumbs**: a
+contract-evolution feature MAY add a small subsection to a prior feature's
+`specs/<MMM>-<slug>/contracts/*.md` for the sole purpose of pointing readers
+at the new evolution. Rules:
+
+- The added subsection MUST be purely additive (a new `## App Contract
+  Evolution — vX.Y (FEAT-NNN)` heading or similar). It MUST NOT rewrite,
+  reflow, or delete any prior text in the file.
+- The subsection MUST be a pointer to the evolving feature's own
+  `contracts/` directory, not a re-statement of the new contract content.
+- If a feature would need to *modify* (not just append to) a prior feature's
+  spec dir, it MUST be split into two PRs: the current feature's PR
+  (self-contained), and a follow-up PR owned by the prior feature's lineage
+  that does the modification.
+
+The canonical contract docs always live in the feature that introduced the
+contract version. Prior-feature spec dirs get pointers, not duplicates.

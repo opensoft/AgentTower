@@ -54,3 +54,8 @@
 - [ ] CHK025 - Does data-model.md §RecentlySkippedRoutesWindow name the constants `window_ms = 300_000` and `maxlen = 10_000` exactly (not just descriptive phrases)? [Clarity, Data Model §RecentlySkippedRoutesWindow, Research §RB]
 - [ ] CHK026 - Does data-model.md's lifecycle section for each entity match the module-level lifecycle described in plan.md? [Consistency, Data Model §Lifecycle, Plan §Source Code]
 - [ ] CHK027 - Is the v1.1 emission rule ("daemon advertises 1.1 → emit fields regardless of client major") stated in data-model.md §AppContractVersion in the same words as Spec Clarifications Q10? [Consistency, Data Model §AppContractVersion, Spec §Clarifications Q10]
+
+## Post-Remediation Audit (commit 457d5c2)
+
+- [ ] CHK028 - Does the bucket-priority chain now stated inline in FR-002 (`discovery-degraded` > `inactive-or-stale` > `discovered-and-registered` > `discovered-and-unmanaged`) match data-model.md §PaneState verbatim, with no character difference? [Consistency, Spec §FR-002, Data Model §PaneState]
+- [ ] CHK029 - Did the I1 rename (`RecentlySkippedRoutes Window` → `RecentlySkippedRoutesWindow`) propagate to every section that references the entity by name across data-model.md, dashboard-v1_1.md, plan.md, research.md? [Consistency, Data Model §RecentlySkippedRoutesWindow]
