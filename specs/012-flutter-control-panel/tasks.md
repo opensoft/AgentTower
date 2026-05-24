@@ -70,10 +70,10 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Settings + doctor (FR-009, research R-20)
 
-- [ ] T024 Implement `apps/control_panel/lib/core/config/settings_model.dart` — `Settings` freezed class with: daemonSocketPath, theme, density, notificationsGrouping, osNativeNotifications. Match data-model.md §2.1 SettingsValues. Satisfies FR-060 — the model deliberately omits any `host` or `port` field; only `daemonSocketPath` is configurable.
-- [ ] T025 Implement `apps/control_panel/lib/features/settings/settings_repository.dart` — load/save via the UX-state repository (T017).
-- [ ] T026 Implement `apps/control_panel/lib/features/settings/doctor.dart` — Riverpod `FutureProvider<DoctorReport>` fanning out the 6 FR-009 checks per research R-20: (1) socket reachable, (2) peer UID match, (3) `app_contract_version` satisfies surfaces, (4) app-data dir writable, (5) log file writable + not at cap, (6) OS-native notification permission (conditional on toggle).
-- [ ] T027 [P] Implement `apps/control_panel/lib/features/settings/diagnostics_bundle.dart` — "Copy diagnostics bundle" producing: doctor output + app version + `app_contract_version` + socket path + OS user + recent rotating log. No upload, no telemetry.
+- [X] T024 Implement `apps/control_panel/lib/core/config/settings_model.dart` — `Settings` freezed class with: daemonSocketPath, theme, density, notificationsGrouping, osNativeNotifications. Match data-model.md §2.1 SettingsValues. Satisfies FR-060 — the model deliberately omits any `host` or `port` field; only `daemonSocketPath` is configurable.
+- [X] T025 Implement `apps/control_panel/lib/features/settings/settings_repository.dart` — load/save via the UX-state repository (T017).
+- [X] T026 Implement `apps/control_panel/lib/features/settings/doctor.dart` — Riverpod `FutureProvider<DoctorReport>` fanning out the 6 FR-009 checks per research R-20: (1) socket reachable, (2) peer UID match, (3) `app_contract_version` satisfies surfaces, (4) app-data dir writable, (5) log file writable + not at cap, (6) OS-native notification permission (conditional on toggle).
+- [X] T027 [P] Implement `apps/control_panel/lib/features/settings/diagnostics_bundle.dart` — "Copy diagnostics bundle" producing: doctor output + app version + `app_contract_version` + socket path + OS user + recent rotating log. No upload, no telemetry.
 
 ### Theme, density, a11y (FR-009/066/067)
 
@@ -84,14 +84,14 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Notifications + shortcuts (FR-007/057/058/075)
 
-- [ ] T032 Implement `apps/control_panel/lib/core/notifications/grouping_rule.dart` — view-layer projection collapsing N ≥ 3 notifications sharing `event_class` + `agent_id` + severity ≤ warning within rolling 60s window per FR-057.
-- [ ] T033 [P] Implement `apps/control_panel/lib/core/notifications/os_native_dispatcher.dart` — `local_notifier` integration dispatching only high/critical severities when FR-058 toggle is enabled. Research R-10.
-- [ ] T034 [P] Implement `apps/control_panel/lib/core/shortcuts/shortcuts.dart` — `Shortcuts` widget binding Ctrl/Cmd+P (project switcher per FR-007) and Ctrl/Cmd+K (command palette per FR-075). Platform-aware key resolution.
-- [ ] T035 [P] Implement `apps/control_panel/lib/core/shortcuts/command_palette.dart` — `Ctrl/Cmd+K` palette supporting project-switch, workspace-switch, sub-view jump, doctor invocation, and (extensible) primary-action commands per FR-075 + research R-20.
+- [X] T032 Implement `apps/control_panel/lib/core/notifications/grouping_rule.dart` — view-layer projection collapsing N ≥ 3 notifications sharing `event_class` + `agent_id` + severity ≤ warning within rolling 60s window per FR-057.
+- [X] T033 [P] Implement `apps/control_panel/lib/core/notifications/os_native_dispatcher.dart` — `local_notifier` integration dispatching only high/critical severities when FR-058 toggle is enabled. Research R-10.
+- [X] T034 [P] Implement `apps/control_panel/lib/core/shortcuts/shortcuts.dart` — `Shortcuts` widget binding Ctrl/Cmd+P (project switcher per FR-007) and Ctrl/Cmd+K (command palette per FR-075). Platform-aware key resolution.
+- [X] T035 [P] Implement `apps/control_panel/lib/core/shortcuts/command_palette.dart` — `Ctrl/Cmd+K` palette supporting project-switch, workspace-switch, sub-view jump, doctor invocation, and (extensible) primary-action commands per FR-075 + research R-20.
 
 ### Update indicator (FR-068)
 
-- [ ] T036 [P] Implement `apps/control_panel/lib/core/update/release_feed_check.dart` — one HTTPS GET to `https://releases.opensoft.one/agenttower/control-panel/latest.json` per app launch via `dart:io` `HttpClient` (research R-12). Parse feed JSON; on failure stay silent. Surface "update available" indicator state via Riverpod `Provider<UpdateState>`.
+- [X] T036 [P] Implement `apps/control_panel/lib/core/update/release_feed_check.dart` — one HTTPS GET to `https://releases.opensoft.one/agenttower/control-panel/latest.json` per app launch via `dart:io` `HttpClient` (research R-12). Parse feed JSON; on failure stay silent. Surface "update available" indicator state via Riverpod `Provider<UpdateState>`.
 
 ### Domain model scaffolding (data-model.md §1-3)
 
@@ -114,10 +114,10 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Test harness (research R-17)
 
-- [ ] T050 Implement `apps/control_panel/test_harness/mock_daemon/server.py` — Python mock listening on a temp Unix socket, speaking FEAT-011 envelopes, parameterized by JSON fixture files. Supports per-test process spawn (no cross-test state).
-- [ ] T051 [P] Create `apps/control_panel/test_harness/mock_daemon/README.md` documenting fixture format + how integration tests invoke the harness.
-- [ ] T052 [P] Implement `apps/control_panel/test/helpers/mock_daemon_client.dart` — Dart-side helper that spawns the Python harness, connects, and exposes a typed API for tests.
-- [ ] T053 [P] Implement `apps/control_panel/test/helpers/fixture_builders.dart` — freezed-fixture builders for every data-model entity (Project, AdoptedAgent, Pane, Handoff, DriftSignal, ValidationEntrypoint, ValidationRun, Notification, AttentionItem, etc.). Default values + `.copyWith` per test scenario.
+- [X] T050 Implement `apps/control_panel/test_harness/mock_daemon/server.py` — Python mock listening on a temp Unix socket, speaking FEAT-011 envelopes, parameterized by JSON fixture files. Supports per-test process spawn (no cross-test state).
+- [X] T051 [P] Create `apps/control_panel/test_harness/mock_daemon/README.md` documenting fixture format + how integration tests invoke the harness.
+- [X] T052 [P] Implement `apps/control_panel/test/helpers/mock_daemon_client.dart` — Dart-side helper that spawns the Python harness, connects, and exposes a typed API for tests.
+- [X] T053 [P] Implement `apps/control_panel/test/helpers/fixture_builders.dart` — freezed-fixture builders for every data-model entity (Project, AdoptedAgent, Pane, Handoff, DriftSignal, ValidationEntrypoint, ValidationRun, Notification, AttentionItem, etc.). Default values + `.copyWith` per test scenario.
 
 **Checkpoint**: Foundation ready — user story implementation can now begin in parallel.
 
