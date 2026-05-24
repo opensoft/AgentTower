@@ -1,0 +1,37 @@
+# Build runner config for freezed + json_serializable codegen (T037 / research R-03).
+#
+# Generates `*.freezed.dart` and `*.g.dart` next to source files under lib/.
+# Run with:
+#   flutter pub run build_runner build --delete-conflicting-outputs
+#   flutter pub run build_runner watch --delete-conflicting-outputs
+
+targets:
+  $default:
+    builders:
+      freezed:
+        enabled: true
+        generate_for:
+          include:
+            - lib/domain/models/**.dart
+            - lib/domain/helper_policy/**.dart
+            - lib/core/config/**.dart
+            - lib/core/daemon/**.dart
+          exclude:
+            - lib/**/common_enums.dart
+            - lib/**/*.freezed.dart
+            - lib/**/*.g.dart
+      json_serializable:
+        enabled: true
+        generate_for:
+          include:
+            - lib/domain/models/**.dart
+            - lib/domain/helper_policy/**.dart
+            - lib/core/config/**.dart
+          exclude:
+            - lib/**/common_enums.dart
+            - lib/**/*.freezed.dart
+            - lib/**/*.g.dart
+        options:
+          field_rename: snake
+          explicit_to_json: true
+          checked: true

@@ -47,26 +47,26 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Daemon connection (FR-001/002/003/004/005, FEAT-011 contract)
 
-- [ ] T010 Implement `apps/control_panel/lib/core/daemon/socket_client.dart` — Unix-socket client using `dart:io` `Socket.connect(InternetAddress(path, type: InternetAddressType.unix), 0)`. Enforce FEAT-011 FR-003a per-line caps (1 MiB request / 8 MiB response) and FR-003b framing strictness (UTF-8, `\n`-terminated, reject `\r` / `\x00` / trailing content). Research R-04. Satisfies FR-001 + FR-060 (refuses any non-local target — no host/port field is exposed anywhere in the client API).
-- [ ] T011 [P] Implement `apps/control_panel/lib/core/daemon/envelope.dart` — parser for `{ok, app_contract_version, result}` and `{ok, app_contract_version, error: {code, message, details}}` envelopes (FEAT-011 FR-033).
-- [ ] T012 [P] Implement `apps/control_panel/lib/core/daemon/errors.dart` — Dart sealed class with one variant per FEAT-011 27-entry closed-set error code. Map each to user-facing copy via i18n keys. Highlight `app_contract_major_unsupported` and `host_only` per `contracts/app-methods-consumed.md` §8.
-- [ ] T013 Implement `apps/control_panel/lib/core/daemon/session.dart` — session lifecycle: call `app.hello` on connect, hold token in-memory only (FR-003), re-bootstrap on socket close / daemon restart / contract-version change / explicit Retry.
-- [ ] T014 Implement `apps/control_panel/lib/core/daemon/app_client.dart` — typed wrappers for the bootstrap-level FEAT-011 methods (`app.preflight`, `app.hello`, `app.readiness`, `app.dashboard`); per-story method wrappers land in their respective phases.
-- [ ] T015 [P] Implement `apps/control_panel/lib/core/daemon/contract_version.dart` — minimum-required-version registry per surface (FR-002) + Riverpod `Provider<ContractCompat>` driving FR-002 banner + per-surface degradation state.
+- [X] T010 Implement `apps/control_panel/lib/core/daemon/socket_client.dart` — Unix-socket client using `dart:io` `Socket.connect(InternetAddress(path, type: InternetAddressType.unix), 0)`. Enforce FEAT-011 FR-003a per-line caps (1 MiB request / 8 MiB response) and FR-003b framing strictness (UTF-8, `\n`-terminated, reject `\r` / `\x00` / trailing content). Research R-04. Satisfies FR-001 + FR-060 (refuses any non-local target — no host/port field is exposed anywhere in the client API).
+- [X] T011 [P] Implement `apps/control_panel/lib/core/daemon/envelope.dart` — parser for `{ok, app_contract_version, result}` and `{ok, app_contract_version, error: {code, message, details}}` envelopes (FEAT-011 FR-033).
+- [X] T012 [P] Implement `apps/control_panel/lib/core/daemon/errors.dart` — Dart sealed class with one variant per FEAT-011 27-entry closed-set error code. Map each to user-facing copy via i18n keys. Highlight `app_contract_major_unsupported` and `host_only` per `contracts/app-methods-consumed.md` §8.
+- [X] T013 Implement `apps/control_panel/lib/core/daemon/session.dart` — session lifecycle: call `app.hello` on connect, hold token in-memory only (FR-003), re-bootstrap on socket close / daemon restart / contract-version change / explicit Retry.
+- [X] T014 Implement `apps/control_panel/lib/core/daemon/app_client.dart` — typed wrappers for the bootstrap-level FEAT-011 methods (`app.preflight`, `app.hello`, `app.readiness`, `app.dashboard`); per-story method wrappers land in their respective phases.
+- [X] T015 [P] Implement `apps/control_panel/lib/core/daemon/contract_version.dart` — minimum-required-version registry per surface (FR-002) + Riverpod `Provider<ContractCompat>` driving FR-002 banner + per-surface degradation state.
 
 ### Persistence (FR-003/061a/069/070/078/082)
 
-- [ ] T016 Implement `apps/control_panel/lib/core/persistence/paths.dart` — per-OS app-data directory resolution via `path_provider` `getApplicationSupportDirectory()` (research R-06): `~/.local/share/agenttower-control-panel/` (Linux), `~/Library/Application Support/agenttower-control-panel/` (macOS), `%LOCALAPPDATA%\agenttower-control-panel\` (Windows). Satisfies FR-061a per-OS-user isolation invariant — paths resolve per-user via OS conventions; no cross-user file access.
-- [ ] T017 Implement `apps/control_panel/lib/core/persistence/ux_state_repository.dart` — single owner of `ux-state.json` read/write (per data-model.md §3). Atomic write via `.tmp` + fsync + rename (research R-05). Debounced 250ms cadence + immediate flush on FR-082 close (with 500ms cap).
-- [ ] T018 [P] Implement `apps/control_panel/lib/core/persistence/migrations.dart` — forward-only `Migration {fromVersion, toVersion, transform}` framework per research R-21. Currently empty (schema_version = 1) but the framework MUST be present.
-- [ ] T019 [P] Implement `apps/control_panel/lib/core/persistence/compatibility.dart` — FR-070 "compatible app launch" check: same app major AND same `app_contract_version` major; on mismatch drop persisted UX state.
-- [ ] T020 [P] Implement `apps/control_panel/lib/core/persistence/corruption.dart` — corruption quarantine logic: rename `ux-state.json` to `ux-state.json.corrupt-<timestamp>` on parse failure (`contracts/ux-state.md` §2).
+- [X] T016 Implement `apps/control_panel/lib/core/persistence/paths.dart` — per-OS app-data directory resolution via `path_provider` `getApplicationSupportDirectory()` (research R-06): `~/.local/share/agenttower-control-panel/` (Linux), `~/Library/Application Support/agenttower-control-panel/` (macOS), `%LOCALAPPDATA%\agenttower-control-panel\` (Windows). Satisfies FR-061a per-OS-user isolation invariant — paths resolve per-user via OS conventions; no cross-user file access.
+- [X] T017 Implement `apps/control_panel/lib/core/persistence/ux_state_repository.dart` — single owner of `ux-state.json` read/write (per data-model.md §3). Atomic write via `.tmp` + fsync + rename (research R-05). Debounced 250ms cadence + immediate flush on FR-082 close (with 500ms cap).
+- [X] T018 [P] Implement `apps/control_panel/lib/core/persistence/migrations.dart` — forward-only `Migration {fromVersion, toVersion, transform}` framework per research R-21. Currently empty (schema_version = 1) but the framework MUST be present.
+- [X] T019 [P] Implement `apps/control_panel/lib/core/persistence/compatibility.dart` — FR-070 "compatible app launch" check: same app major AND same `app_contract_version` major; on mismatch drop persisted UX state.
+- [X] T020 [P] Implement `apps/control_panel/lib/core/persistence/corruption.dart` — corruption quarantine logic: rename `ux-state.json` to `ux-state.json.corrupt-<timestamp>` on parse failure (`contracts/ux-state.md` §2).
 
 ### Logging + diagnostics (FR-074, research R-07/R-18)
 
-- [ ] T021 [P] Implement `apps/control_panel/lib/core/logging/rotating_file_logger.dart` — `logger` 2.x with custom `RotatingFileOutput`: 5 files × 10 MiB at `<app-data>/agenttower-control-panel/logs/control-panel.log.<N>`. Capture levels error/warn/info; redact session tokens, prompt bodies, operator notes.
-- [ ] T022 [P] Implement `apps/control_panel/lib/core/logging/uncaught_error_handler.dart` — top-level `runZonedGuarded` writing uncaught exceptions to the rotating log (research R-18). No remote crash reporter.
-- [ ] T023 [P] Implement `apps/control_panel/lib/core/logging/latency_capture.dart` — log entries for any operator action exceeding 200 ms p95 (research R-14). Document the threshold in code constants.
+- [X] T021 [P] Implement `apps/control_panel/lib/core/logging/rotating_file_logger.dart` — `logger` 2.x with custom `RotatingFileOutput`: 5 files × 10 MiB at `<app-data>/agenttower-control-panel/logs/control-panel.log.<N>`. Capture levels error/warn/info; redact session tokens, prompt bodies, operator notes.
+- [X] T022 [P] Implement `apps/control_panel/lib/core/logging/uncaught_error_handler.dart` — top-level `runZonedGuarded` writing uncaught exceptions to the rotating log (research R-18). No remote crash reporter.
+- [X] T023 [P] Implement `apps/control_panel/lib/core/logging/latency_capture.dart` — log entries for any operator action exceeding 200 ms p95 (research R-14). Document the threshold in code constants.
 
 ### Settings + doctor (FR-009, research R-20)
 
@@ -77,10 +77,10 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Theme, density, a11y (FR-009/066/067)
 
-- [ ] T028 [P] Implement `apps/control_panel/lib/ui/theme/color_tokens.dart` — Light + Dark + System tokens with WCAG AA contrast per research R-15. Include severity palette (info/warning/high/critical) keyed against theme background.
-- [ ] T029 [P] Implement `apps/control_panel/lib/ui/theme/density_tokens.dart` — Comfortable + Compact row-height / padding tokens.
-- [ ] T030 [P] Implement `apps/control_panel/lib/ui/a11y/focus_utils.dart` — focus-order helpers, visible-focus decoration, modal trap-free focus utilities per FR-066.
-- [ ] T031 [P] Wire `apps/control_panel/lib/core/l10n/` codegen output to `MaterialApp` `localizationsDelegates` + `supportedLocales` (en only at MVP) per research R-08. Satisfies FR-067 — English-only at MVP, all user-facing strings routed through the i18n layer so adding a locale later is a translation drop-in.
+- [X] T028 [P] Implement `apps/control_panel/lib/ui/theme/color_tokens.dart` — Light + Dark + System tokens with WCAG AA contrast per research R-15. Include severity palette (info/warning/high/critical) keyed against theme background.
+- [X] T029 [P] Implement `apps/control_panel/lib/ui/theme/density_tokens.dart` — Comfortable + Compact row-height / padding tokens.
+- [X] T030 [P] Implement `apps/control_panel/lib/ui/a11y/focus_utils.dart` — focus-order helpers, visible-focus decoration, modal trap-free focus utilities per FR-066.
+- [X] T031 [P] Wire `apps/control_panel/lib/core/l10n/` codegen output to `MaterialApp` `localizationsDelegates` + `supportedLocales` (en only at MVP) per research R-08. Satisfies FR-067 — English-only at MVP, all user-facing strings routed through the i18n layer so adding a locale later is a translation drop-in.
 
 ### Notifications + shortcuts (FR-007/057/058/075)
 
@@ -95,22 +95,22 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Domain model scaffolding (data-model.md §1-3)
 
-- [ ] T037 Configure `build_runner` in `apps/control_panel/build.yaml` and verify `flutter pub run build_runner watch` generates freezed/json_serializable code into `*.freezed.dart` and `*.g.dart`.
-- [ ] T038 [P] Implement `apps/control_panel/lib/domain/models/common_enums.dart` — shared enums referenced across entities (AgentRole, AgentState, MasterStatus, Stage, ExecutionStatus, AssignmentState, RunState, RunResult, DriftStatus, DriftSeverity, DriftSource, DriftConfidence, EntrypointType, BlockingLevel, DemoReadinessState, AttentionSeverity, NotificationSeverity, AttentionClass, HandoffMode, HandoffPriority, PolicySource, ResolvedExclusion, WorkItemKind, OnboardingMilestone, Workspace, ThemeMode, DensityMode, SortDirection). State values in prose use hyphenated form per FR-014; Dart enum variants use camelCase per Dart convention.
-- [ ] T039 [P] Implement `apps/control_panel/lib/domain/lifecycles/pane_state_validator.dart` — encode FR-014 transition matrix per data-model.md §1.4 as `bool isValidTransition(PaneState from, PaneState to)`.
-- [ ] T040 [P] Implement `apps/control_panel/lib/domain/lifecycles/drift_state_validator.dart` — encode FR-034 transition matrix per data-model.md §1.9.
-- [ ] T041 [P] Implement `apps/control_panel/lib/domain/lifecycles/handoff_state_validator.dart` — encode FR-044 transition matrix per data-model.md §1.6, including operator-vs-daemon authority rules.
-- [ ] T042 [P] Implement `apps/control_panel/lib/domain/lifecycles/validation_run_state_validator.dart` — encode FR-048 transition matrix per data-model.md §1.11, including "result meaningful only in terminal states".
-- [ ] T043 [P] Implement `apps/control_panel/lib/domain/lifecycles/feature_change_stage_validator.dart` — encode F7-b deferred-stage transition rule per data-model.md §1.5 (deferred → definition | spec_ready only).
+- [X] T037 Configure `build_runner` in `apps/control_panel/build.yaml` and verify `flutter pub run build_runner watch` generates freezed/json_serializable code into `*.freezed.dart` and `*.g.dart`.
+- [X] T038 [P] Implement `apps/control_panel/lib/domain/models/common_enums.dart` — shared enums referenced across entities (AgentRole, AgentState, MasterStatus, Stage, ExecutionStatus, AssignmentState, RunState, RunResult, DriftStatus, DriftSeverity, DriftSource, DriftConfidence, EntrypointType, BlockingLevel, DemoReadinessState, AttentionSeverity, NotificationSeverity, AttentionClass, HandoffMode, HandoffPriority, PolicySource, ResolvedExclusion, WorkItemKind, OnboardingMilestone, Workspace, ThemeMode, DensityMode, SortDirection). State values in prose use hyphenated form per FR-014; Dart enum variants use camelCase per Dart convention.
+- [X] T039 [P] Implement `apps/control_panel/lib/domain/lifecycles/pane_state_validator.dart` — encode FR-014 transition matrix per data-model.md §1.4 as `bool isValidTransition(PaneState from, PaneState to)`.
+- [X] T040 [P] Implement `apps/control_panel/lib/domain/lifecycles/drift_state_validator.dart` — encode FR-034 transition matrix per data-model.md §1.9.
+- [X] T041 [P] Implement `apps/control_panel/lib/domain/lifecycles/handoff_state_validator.dart` — encode FR-044 transition matrix per data-model.md §1.6, including operator-vs-daemon authority rules.
+- [X] T042 [P] Implement `apps/control_panel/lib/domain/lifecycles/validation_run_state_validator.dart` — encode FR-048 transition matrix per data-model.md §1.11, including "result meaningful only in terminal states".
+- [X] T043 [P] Implement `apps/control_panel/lib/domain/lifecycles/feature_change_stage_validator.dart` — encode F7-b deferred-stage transition rule per data-model.md §1.5 (deferred → definition | spec_ready only).
 
 ### App shell (FR-002/004/006/007/082)
 
-- [ ] T044 Implement `apps/control_panel/lib/main.dart` — entrypoint: `ProviderScope` + `window_manager` window-geometry restore per research R-11 + immediate-close behavior per FR-082.
-- [ ] T045 Implement `apps/control_panel/lib/app.dart` — `MaterialApp.router` with theme/density wiring (T028/T029), locale wiring (T031), and the routing tree (T046).
-- [ ] T046 [P] Implement `apps/control_panel/lib/routing/router.dart` — workspace + sub-view registry; top-level routes for agent_ops / project_specs / testing_demo / settings per FR-006.
-- [ ] T047 [P] Implement `apps/control_panel/lib/features/shell/global_banner.dart` — FR-002 contract-version-incompatible banner (global) and FR-076 first-launch-project-not-resolved banner (non-blocking, per-project).
-- [ ] T048 [P] Implement `apps/control_panel/lib/features/shell/project_switcher.dart` — Ctrl/Cmd+P shortcut and visible UI affordance per FR-007.
-- [ ] T049 [P] Implement `apps/control_panel/lib/features/shell/runtime_state_provider.dart` — Riverpod `Provider<RuntimeState>` distinguishing the 5 FR-004 states (runtime-unreachable, contract-version-incompatible, runtime-healthy-empty, runtime-healthy-populated, runtime-degraded).
+- [X] T044 Implement `apps/control_panel/lib/main.dart` — entrypoint: `ProviderScope` + `window_manager` window-geometry restore per research R-11 + immediate-close behavior per FR-082.
+- [X] T045 Implement `apps/control_panel/lib/app.dart` — `MaterialApp.router` with theme/density wiring (T028/T029), locale wiring (T031), and the routing tree (T046).
+- [X] T046 [P] Implement `apps/control_panel/lib/routing/router.dart` — workspace + sub-view registry; top-level routes for agent_ops / project_specs / testing_demo / settings per FR-006.
+- [X] T047 [P] Implement `apps/control_panel/lib/features/shell/global_banner.dart` — FR-002 contract-version-incompatible banner (global) and FR-076 first-launch-project-not-resolved banner (non-blocking, per-project).
+- [X] T048 [P] Implement `apps/control_panel/lib/features/shell/project_switcher.dart` — Ctrl/Cmd+P shortcut and visible UI affordance per FR-007.
+- [X] T049 [P] Implement `apps/control_panel/lib/features/shell/runtime_state_provider.dart` — Riverpod `Provider<RuntimeState>` distinguishing the 5 FR-004 states (runtime-unreachable, contract-version-incompatible, runtime-healthy-empty, runtime-healthy-populated, runtime-degraded).
 
 ### Test harness (research R-17)
 
