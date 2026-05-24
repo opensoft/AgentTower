@@ -134,3 +134,19 @@ The items above are pre-flight content-quality marks. The items below are "unit 
 - [ ] CHK048 - Does FR-072(c) "submission allowed, held submitted until reconnection" leave the operator with any visible indicator besides the offline-master state — e.g. a banner on the handoff list view, or only on the handoff detail surface? [Ambiguity, Spec §FR-072]
 - [ ] CHK049 - Does FR-081 (supersede does not auto-cancel) name any specific user-facing affordance to surface "the prior master still has running rows" so an operator does not assume supersede stopped the prior work? [Ambiguity, Gap, Spec §FR-081]
 - [ ] CHK050 - Is there a single canonical glossary anywhere in the spec for terms used cross-section (master, driving, runtime, surface, attention, notification, handoff, drift, validation entrypoint, master-class capability), or does each section reintroduce the term in its own words? [Ambiguity, Gap, Spec §Key Entities]
+
+
+---
+
+## Walk audit — 2026-05-23 (Smart walk)
+
+**Items intentionally left `[ ]`**. This checklist captured a Round-1 audit of the spec.md authoring quality before the plan/research/data-model artifacts existed. Many items surfaced real gaps that were triaged into Tier 1 / Tier 2 / Tier 3 / Tier 4 backlogs during the subsequent /speckit-checklist Round-2 walkthrough.
+
+**Closure status**:
+- **Tier 1 items** (F1..F12 — 12 findings): CLOSED by the Codex spec-quality-pass change archived at `openspec/changes/archive/2026-05-23-spec-quality-pass-feat-012/`. The CHK items in this file that correspond to F1..F12 are now satisfied by the post-Codex spec.md but remain `[ ]` here as a historical audit record.
+- **Tier 2 items** (F-A1..F-A11 from /speckit-checklist Round 2): MOSTLY CLOSED. F-A1 + F-A2 + F-A11 were fixed in commit 78d3ad8 (Tier-1 plan-side fixes); F-A6 was fixed by plan.md Complexity Tracking row 3. F-A3, F-A4, F-A5, F-A9, F-A13 remain open as cosmetic spec/data-model polish (see `alignment.md` reverted items for the canonical record).
+- **Tier 3 / Tier 4 items**: DEFERRED. Documented in the prior `/speckit-checklist` and `/speckit-analyze` findings reports; non-blocking; expected to be addressed opportunistically during /speckit-implement or as a follow-on Spec Kit feature.
+
+**Why not bulk-mark `[X]`**: Bulk-marking would hide the historical audit value. This checklist is honest about the gaps it surfaced; gap closure is tracked in the commit log + the alignment.md walk audit + the /speckit-analyze remediation notes in commit 58eac22.
+
+**Re-walk trigger**: Re-run this checklist only if doing a fresh requirement-quality audit of spec.md from scratch (e.g. after a major spec rewrite).

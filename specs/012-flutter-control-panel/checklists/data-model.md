@@ -84,3 +84,19 @@
 
 - [ ] CHK049 - Can each entity's attribute set be tested against the daemon's `app.*` response shapes for completeness? [Measurability, Gap, Spec §Key Entities / §FR-005]
 - [ ] CHK050 - Can the lifecycle constraints (FR-014, FR-028, FR-034, FR-044, FR-048) be encoded as a state-machine assertion the app can verify on every update? [Measurability, Spec §FR-014 / §FR-028 / §FR-034 / §FR-044 / §FR-048]
+
+
+---
+
+## Walk audit — 2026-05-23 (Smart walk)
+
+**Items intentionally left `[ ]`**. This checklist captured a Round-1 audit of the spec.md authoring quality before the plan/research/data-model artifacts existed. Many items surfaced real gaps that were triaged into Tier 1 / Tier 2 / Tier 3 / Tier 4 backlogs during the subsequent /speckit-checklist Round-2 walkthrough.
+
+**Closure status**:
+- **Tier 1 items** (F1..F12 — 12 findings): CLOSED by the Codex spec-quality-pass change archived at `openspec/changes/archive/2026-05-23-spec-quality-pass-feat-012/`. The CHK items in this file that correspond to F1..F12 are now satisfied by the post-Codex spec.md but remain `[ ]` here as a historical audit record.
+- **Tier 2 items** (F-A1..F-A11 from /speckit-checklist Round 2): MOSTLY CLOSED. F-A1 + F-A2 + F-A11 were fixed in commit 78d3ad8 (Tier-1 plan-side fixes); F-A6 was fixed by plan.md Complexity Tracking row 3. F-A3, F-A4, F-A5, F-A9, F-A13 remain open as cosmetic spec/data-model polish (see `alignment.md` reverted items for the canonical record).
+- **Tier 3 / Tier 4 items**: DEFERRED. Documented in the prior `/speckit-checklist` and `/speckit-analyze` findings reports; non-blocking; expected to be addressed opportunistically during /speckit-implement or as a follow-on Spec Kit feature.
+
+**Why not bulk-mark `[X]`**: Bulk-marking would hide the historical audit value. This checklist is honest about the gaps it surfaced; gap closure is tracked in the commit log + the alignment.md walk audit + the /speckit-analyze remediation notes in commit 58eac22.
+
+**Re-walk trigger**: Re-run this checklist only if doing a fresh requirement-quality audit of spec.md from scratch (e.g. after a major spec rewrite).

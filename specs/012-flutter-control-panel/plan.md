@@ -191,6 +191,8 @@ apps/control_panel/
 │   ├── unit/                             # Riverpod provider tests, domain-model tests
 │   ├── widget/                           # Widget tests per feature surface
 │   ├── golden/                           # alchemist golden tests across theme/density variants
+│   ├── perf/                             # Performance-budget tests (FR-062/063/064) + SC coverage map
+│   ├── security/                         # Network-trace + subprocess-trace verification (SC-009)
 │   └── helpers/                          # In-test mock-daemon, freezed fixture builders
 ├── integration_test/                     # End-to-end flows against the mock-daemon harness
 │   ├── us1_adopt_and_operate.dart        # Mirrors US1 acceptance scenarios
@@ -212,7 +214,7 @@ apps/control_panel/
     └── release_feed_check.dart           # Standalone tool for testing FR-068 feed parsing
 ```
 
-**Structure Decision**: This is a multi-language monorepo. The existing Python sources at `src/agenttower/` (daemon, CLI, FEAT-001..011) are unchanged. The Flutter desktop app lives entirely under `apps/control_panel/` with its own `pubspec.yaml`, lints, build outputs, and test suite. Cross-cutting documentation (PRD, architecture, MVP feature sequence) lives at `docs/` and is referenced from both languages.
+**Structure Decision**: This is a multi-language monorepo. The existing Python sources at `src/agenttower/` (daemon, CLI, FEAT-001..011) are unchanged. The Flutter desktop app lives entirely under `apps/control_panel/` with its own `pubspec.yaml`, lints, build outputs, and test suite. Cross-cutting documentation (PRD, architecture, MVP feature sequence) lives at `docs/` and is referenced from both languages. One FEAT-012 task (T156, CLI non-regression smoke) lands in the existing Python test tree at `tests/integration/test_feat012_cli_noop.py` because it asserts the Python-implemented FEAT-002..010 CLI surfaces produce byte-identical output before and after the desktop-app build is installed; this is the only FEAT-012 task that lives outside `apps/control_panel/`.
 
 ## Complexity Tracking
 
