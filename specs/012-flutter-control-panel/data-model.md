@@ -111,6 +111,8 @@ class MasterSummary with _$MasterSummary {
 
 **FR-071 invariant**: a Master Summary is **only constructed** when the underlying AdoptedAgent satisfies both (a) `role == master` AND (b) `capability ∈ masterClassCapabilities` (resolved against the FEAT-011 master-class enumeration). The view layer otherwise renders a plain Agent row.
 
+**FR-030 status-projection invariant**: `currentStatus` (`active | waiting_for_input | blocked | reviewing | idle | offline | degraded`) is a master-specific operational projection over the underlying AdoptedAgent's `agentState`, not a parallel state machine. Every master is, by FR-071, an AdoptedAgent in the `active` agentState; `currentStatus` adds the operational dimension (waiting_for_input, blocked, reviewing, idle, offline, degraded) that is only meaningful for agents satisfying the master criteria. When the underlying AdoptedAgent leaves the `active` agentState (e.g. inactive, log-detached) the MasterSummary projection is no longer constructed and the view layer falls back to the plain Agent row per the FR-071 invariant above.
+
 ### 1.4 Pane
 
 **Source**: `app.pane.list` / `app.pane.detail`.

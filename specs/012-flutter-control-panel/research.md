@@ -303,6 +303,18 @@ All four colors meet WCAG AA 4.5:1 against the corresponding theme background.
 - Schema-less / best-effort merge — rejected: silent data loss on schema drift.
 - Bidirectional migrations — rejected: doubles the migration code surface for an MVP that ships at `schema_version = 1`.
 
+## R-28 — Document path discovery (spec Assumption: PRD / architecture / roadmap resolution)
+
+**Decision**: The app does NOT read PRD, architecture, or roadmap files directly from disk. All document paths surfaced in the handoff Project Context section (FR-040) and the Specs viewer (FR-079) are resolved daemon-side and returned through the existing `app.*` project-detail and handoff-context methods. Resolution order on the daemon, mirrored only as documentation in this research item:
+
+1. Operator-supplied repo config (FEAT-011 project-config method, where present).
+2. Conventional locations under the project's repository root: `docs/product-requirements.md`, `docs/architecture.md`, `docs/mvp-feature-sequence.md`.
+3. Absent → surfaced as a drift finding (per FR-049 / FR-050) rather than a crash, error toast, or empty-state oddity.
+
+**Rationale**: Honors FR-001 (no file scraping from the app), keeps the conventional-paths assumption from the spec's Assumptions block (`Document path discovery`) explicit somewhere in plan/research artifacts (closes alignment.md CHK060), and ensures missing docs degrade gracefully through the drift surface the operator already monitors.
+
+**App-side implementation**: The Handoff Project Context section and the Specs viewer treat `null` / missing paths as a per-doc "Not found — see Drift" badge with a deep-link to the drift finding when one exists. No fallback to client-side filesystem scanning.
+
 ## Open items — none
 
 All technical-context items in `plan.md` are resolved. No `NEEDS CLARIFICATION` markers remain. The two open-question items the spec explicitly flags for plan-time tuning (latency threshold per F15, interaction-stability window per FR-053) are both decided here (R-14 for latency threshold; FR-053 already concretized to 2 seconds during /speckit-clarify round 1).
