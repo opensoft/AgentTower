@@ -306,3 +306,187 @@ All four colors meet WCAG AA 4.5:1 against the corresponding theme background.
 ## Open items — none
 
 All technical-context items in `plan.md` are resolved. No `NEEDS CLARIFICATION` markers remain. The two open-question items the spec explicitly flags for plan-time tuning (latency threshold per F15, interaction-stability window per FR-053) are both decided here (R-14 for latency threshold; FR-053 already concretized to 2 seconds during /speckit-clarify round 1).
+
+---
+
+## Round 3 decisions (2026-05-24) — checklist gap closure
+
+These 21 decisions resolve the highest-leverage open items across the 19 FAIL checklists from `/speckit-checklist` Round 2. Decisions are recorded as the canonical record; the spec.md `## Clarifications → ### Session 2026-05-24 (round 3)` block carries the operator-facing Q→A summary.
+
+Numbering continues from R-01..R-21.
+
+### R-22 — Accessibility precision (closes Q1)
+
+**Decision**: WCAG 2.1 AA-equivalent baseline (FR-066) enumerates: 1.3.1 Info & Relationships, 1.4.3 Contrast (Minimum), 2.1.1 Keyboard, 2.4.3 Focus Order, 2.4.7 Focus Visible, 4.1.2 Name/Role/Value. In-scope surfaces: every interactive control, every status indicator (badges, health pills), every error message, every modal. Accessible-name patterns REQUIRED for every badge, every icon-only quick action, and every severity color (icon + text + color redundancy). Certified screen-reader pass out of MVP.
+
+**Rationale**: Operator decision (Q1, recommendation accepted). Bakes FR-066 into testable shape so T030 (focus utils), T149 (unit tests), T150 (widget tests), T151 (golden tests) have a concrete criterion to enforce.
+
+**Alternatives**: A keep-abstract (rejected — leaves a11y to implementation); C extend with 1.4.11 + 2.4.11 + screen-reader smoke (deferred to post-MVP); D contrast + kbd-only (rejected — drops focus order which the spec already commits to).
+
+### R-23 — i18n stretch goals (closes Q2)
+
+**Decision**: i18n layer (FR-067) ships at MVP with: ICU MessageFormat (pluralization), `intl` package date + number formatting, key-fallback for missing strings (render the key). RTL layout mirroring + locale-sensitive list sorting deferred to a future locale-add task.
+
+**Rationale**: Q2 recommendation accepted. ICU MessageFormat is the Flutter-standard pluralization API; deferring RTL keeps the layout layer simpler at MVP without locking out future expansion.
+
+**Alternatives**: A no stretch (rejected — pluralization is needed for "N findings"-style strings even in English MVP); C full RTL + locale-sort (deferred for cost reasons).
+
+### R-24 — Theme + density behavior (closes Q3, extends R-15)
+
+**Decision**: Theme and density changes apply live (no app restart required). Transient surfaces (toasts, tooltips, OS-native notifications) follow current theme. Compact density tokens guarantee ≥ 44 px touch targets (WCAG-compatible). High-contrast variant deferred to a future enhancement.
+
+**Rationale**: Q3 recommendation accepted. The 44 px floor reconciles Compact density with the FR-066 a11y baseline (CHK026 ambiguity in `accessibility-i18n-theming.md`).
+
+**Alternatives**: A restart-required (rejected — too disruptive); C high-contrast at MVP (deferred for cost).
+
+### R-25 — Settings surface organization + per-setting behavior (closes Q4)
+
+**Decision**: Settings grouped into 5 sections: **Display | Notifications | Connection | Privacy | Diagnostics**. Theme/density/grouping toggles apply live. Socket-path change triggers immediate re-bootstrap (the runtime-state Provider re-fires). OS-notification first-enable invokes the platform permission prompt (Windows toast permission, macOS Notification Center permission, Linux freedesktop.org `org.freedesktop.Notifications` portal). Reset-to-defaults is a single global button at the bottom of Settings. No live-preview for theme — the change IS the preview.
+
+**Rationale**: Q4 recommendation accepted. 5 groups are the natural taxonomy after FR-009 + F12 doctor + FR-074 diagnostics enumeration.
+
+**Alternatives**: A flat (rejected — 14 items don't scan flat); C per-setting reset + theme preview overlay (rejected — extra UI weight for marginal value).
+
+### R-26 — Logging format + redaction policy (closes Q5, extends R-07)
+
+**Decision**: Log format JSON-lines (each line = one JSON object with `ts`, `level`, `logger`, `msg`, optional `fields`). Levels: error + warn + info at production builds; debug toggleable from Settings → Diagnostics. Redaction denylist enforced at log-write time: `app_session_token`, any field named `prompt` or `prompt_text`, any field named `operator_notes`. Timestamps: ISO-8601 wall-clock + nanosecond-precision monotonic suffix for correlation. Diagnostics bundle archive: `.zip` saved via OS file picker; clipboard option available when bundle ≤ 1 MiB.
+
+**Rationale**: Q5 recommendation accepted. JSON-lines is machine-parseable (helps Opensoft support) while remaining grep-friendly.
+
+**Alternatives**: A plain text (rejected — harder to parse); C opt-in remote upload (rejected — violates FR-074 "MUST NOT upload").
+
+### R-27 — Per-surface contract-version minimum map (closes Q6)
+
+**Decision**: The per-surface minimum required `app_contract_version` (FR-002 degradation gate) is **code-derived at build time**. Each feature module declares the `app.*` methods it calls; a build-time codegen step produces a manifest mapping (surface → minimum version). Settings → Doctor surfaces the resolved table. No spec-level or plan-level enumeration of the map.
+
+**Rationale**: Q6 recommendation accepted. Code-derivation prevents drift between spec text and reality. Settings → Doctor exposure satisfies the auditability that an explicit table would have provided.
+
+**Alternatives**: A spec-level table (rejected — couples spec to method names); B plan-level table (rejected for same reason).
+
+### R-28 — Mutation safety: idempotency + dry-run + read-only-mode (closes Q7)
+
+**Decision**: The app auto-generates `idempotency_key` (uuid v4) on every mutation call to the FEAT-011 `app.*` surface, retains the key for retry, and includes it in the daemon request. No mutation supports dry-run except the handoff preview already specified in FR-040. Read-only mode (per FR-002 contract-version-incompatible degradation): mutation buttons remain RENDERED but are disabled with an inline explanation tooltip — never hidden, so the operator can see what's gated.
+
+**Rationale**: Q7 recommendation accepted. Auto-idempotency is cheap and safe; visible-but-disabled mutation buttons satisfy FR-066 (screen-reader semantic completeness).
+
+**Alternatives**: A keys only on Direct Send + hide buttons (rejected — hidden buttons hurt a11y); C add dry-run to route/drift (rejected — extra coupling for marginal benefit).
+
+### R-29 — Live-update delivery model (closes Q8, extends R-16)
+
+**Decision**: Per-surface polling cadence: **1 s** while the surface is foreground-visible; **5 s** when the surface is in a non-active workspace; **paused** when the app window is minimized. Reconnect mid-stream re-fetches from head + invalidates cursor. The polling implementation lives behind a Riverpod `Provider` so when FEAT-011 v1.x adds a push surface, the Provider swaps cleanly with no surface-layer code change. Targets FR-064's 2 s budget at ≤ 1 socket call per second per visible surface.
+
+**Rationale**: Q8 recommendation accepted. 1 s foreground polling stays under FR-064's 2 s budget with margin; backoff keeps daemon load under FEAT-011's 8-session cap.
+
+**Alternatives**: A push-only (rejected — blocks FEAT-012 on FEAT-011 changes); C 500 ms aggressive (rejected — wasteful for sub-2s budgets); D 2 s (rejected — exactly at budget, risks SC-006/007 misses).
+
+### R-30 — Trust model platform parity (closes Q9, extends R-04)
+
+**Decision**: Per-OS trust primitives — Linux `SO_PEERCRED`, macOS `LOCAL_PEERCRED` (or `getpeereid`), Windows AF_UNIX file ACL permitting current user only (no peer-credentials API). On socket connect, UID/owner mismatch triggers immediate disconnect + ERROR log entry + Dashboard banner naming the violation. Session token lifetime = process lifetime only — no idle-timeout, no refresh. The trust-model first-launch statement (FR-061) reads exactly:
+
+> "This app talks only to a daemon running as your local user via a Unix socket. It does not connect to remote services. It does not authenticate users beyond your operating-system user."
+
+**Rationale**: Q9 recommendation accepted. Per-OS primitives are the standard cross-platform pattern for AF_UNIX trust on Windows.
+
+**Alternatives**: A Linux-only (rejected — three OS targets need parity); C idle-timeout (rejected — adds session-management complexity without security benefit for a local-only app).
+
+### R-31 — Diagnostics bundle privacy + UX (closes Q10, extends R-07/R-26)
+
+**Decision**: Bundle contents: (1) rotating log files (post-redaction per R-26), (2) app version + `app_contract_version` + socket path + OS user (no PII beyond `whoami`), (3) doctor report verbatim, (4) session-start + bundle-generation timestamps. Preview window shown BEFORE save/copy with a file-inventory list + first/last 20 lines of each log. Bundle size cap 50 MiB; if exceeded the operator picks "trim to most recent N files".
+
+**Rationale**: Q10 recommendation accepted. Preview gives operator final review before bundle leaves the machine.
+
+**Alternatives**: A no preview + no cap (rejected — easy to share sensitive content unintentionally); C per-file toggles (rejected — extra UI complexity).
+
+### R-32 — Markdown subset for FR-079 (closes Q11, extends R-09)
+
+**Decision**: In-app markdown renderer supports CommonMark + GFM extensions (tables, strikethrough, task lists, fenced code, autolinks). Raw HTML disabled entirely. `javascript:` and `data:` URLs blocked at the link-tap handler with inline "blocked: untrusted URL scheme" warning. Cross-doc `.md` links resolve to in-app rendering; non-`.md` links open via `url_launcher`. Disk change while open → "stale" indicator + "Reload" button (no auto-reload). Missing path → inline error placeholder; does NOT crash the surface.
+
+**Rationale**: Q11 recommendation accepted. GFM is the de facto standard for repo docs (PRD, architecture, roadmap files in this repo are GFM).
+
+**Alternatives**: A CommonMark only (rejected — tables are widely used); C inline images (deferred — image lifecycle is its own design problem).
+
+### R-33 — Notifications + attention queue edge cases (closes Q12)
+
+**Decision**: Empty attention queue shows `All clear — no actionable items` placeholder. Default attention sort = severity-then-age; filterable by item class (single-select dropdown). When a `high` or `critical` notification arrives in an `event_class` with an active grouped row (severity ≤ warning), the grouped row remains grouped and the high-severity notification appears as a separate ungrouped row immediately above. OS-native dispatch suppresses duplicates: same `event_class` + `agent_id` within 60 s = OS notification skipped (in-app notification still rendered). OS-permission-denied = inline Settings warning + toggle stays on so operator can retry after fixing OS-level permission. Project-card unread count = unread notifications scoped to that project's agents (per agent's `project_path`).
+
+**Rationale**: Q12 recommendation accepted.
+
+**Alternatives**: A hide empty + no filter + break group on high (rejected — degrades UX coherence); C per-class mute (deferred — adds Settings complexity).
+
+### R-34 — Onboarding skip + Dashboard-nudge nuances (closes Q13, extends FR-010)
+
+**Decision**: "Skip onboarding" affordance is rendered in the header of EVERY onboarding step. Dashboard nudges for incomplete milestones support a 1-week snooze gesture per nudge; "never show again" or longer snooze requires opening Settings → Diagnostics. Re-entry from Settings starts at the first incomplete milestone. SC-011 cohort denominator = operators who attempted any milestone (= anyone who opened onboarding and clicked at least one Next/Skip — measured via onboarding-state-completion telemetry; per FR-074 this is local-only and surfaces in the diagnostics bundle).
+
+**Rationale**: Q13 recommendation accepted.
+
+**Alternatives**: A skip-on-first-step + sticky nudges (rejected — friction-heavy); C "never show" per-nudge (rejected — drift risk for SC-011 measurement).
+
+### R-35 — Per-OS installer specifics (closes Q14, extends R-13)
+
+**Decision**: Code-signing reuses Opensoft's existing daemon code-signing CA (same cert family). Per-OS installer formats stay as in R-13 (MSIX / DMG / AppImage + DEB). Upgrade policy: in-place only — no side-by-side installs. Persisted-state schema-major downgrade triggers installer-launch refusal with named error. Autostart disabled by default. Installer probes `agenttowerd` reachability during install; if absent, shows "agenttowerd not detected — install/start it first" non-fatal warning then proceeds with desktop-app install. Signing key rotation cadence: annual + on-incident.
+
+**Rationale**: Q14 recommendation accepted. Reusing the daemon CA simplifies operator trust (same cert chain across the AgentTower product).
+
+**Alternatives**: A new CA (rejected — fragments trust); C bundled `agenttowerd` install (deferred — daemon install lives in a separate distribution flow).
+
+### R-36 — Pagination cursor semantics (closes Q15, extends R-16)
+
+**Decision**: Cursor is daemon-owned and opaque to the app (string token). Cursor TTL = 5 minutes. On stale-cursor error (FEAT-011 error code), the app re-fetches from head + shows a `Stream resumed` indicator on event-style lists. No monotonicity guarantee on Events / Queue lists during high event rates — operator may see duplicates on scroll-back; the spec accepts this trade-off in exchange for simpler cursor semantics.
+
+**Rationale**: Q15 recommendation accepted.
+
+**Alternatives**: A app-controlled offset (rejected — reorders on streams); C monotonicity guarantee (rejected — requires FEAT-011 v1.x cursor changes).
+
+### R-37 — Project removal + last-project-pointer behavior (closes Q16, extends FR-077)
+
+**Decision**: Removal-confirmation modal copy:
+
+> "Remove project `{label}` ({repo_path}) from the desktop control panel? This clears local UI state only — daemon-side agents, handoffs, drift findings are NOT deleted. The project will reappear if it's later inferred from any adopted agent's project_path."
+
+No in-session undo (operator can re-Add via Add Project to recreate the entry). When the currently-selected project is removed, the global last-project pointer falls back to the most-recently-active OTHER project; if none exists, the pointer is set to `null` and the operator lands on the Projects view with the FR-076 non-blocking banner.
+
+**Rationale**: Q16 recommendation accepted.
+
+**Alternatives**: A no confirmation copy + no special pointer handling (rejected — accidental removal risk); C in-session toast undo (deferred — adds state-machine complexity for marginal value).
+
+### R-38 — Performance budget environmental preconditions (closes Q17)
+
+**Decision**: Reference machine for FR-062..FR-065 + SC-001..SC-013 budgets: 8-core x86-64 ≥ 3.0 GHz base, 16 GB RAM, NVMe SSD, OS at idle (≤ 5% baseline CPU). Daemon fixture matches the FEAT-011 SC scale profile: ≤ 10 containers, ≤ 200 agents across them, ≤ 1k events / day, ≤ 100 routes, ≤ 5 projects. No concurrent background apps consuming significant CPU/network. Budgets apply at p95 over 10-run repetitions.
+
+**Rationale**: Q17 short answer (recommended) accepted. Reproducibility requires a baseline.
+
+**Alternatives**: lower-spec reference (rejected — fragments perf assertions across hardware classes); higher-spec (rejected — would mask budget breaches that real operators will hit).
+
+### R-39 — Workspace shell UX defaults (closes Q18)
+
+**Decision**: Workspace tabs use distinct icons + a color accent (1 accent per workspace, drawn from the research R-15 palette mechanism but reserved separately so accents never collide with severity colors). Sub-view ordering FIXED at MVP — no operator-reorder; FR-011 / FR-023 / FR-046 orderings are authoritative. Zero-state per workspace: Agent Operations Dashboard renders without project selection (daemon-level info: container/pane/agent counts, health); Project and Specs + Testing and Demo show a project-picker placeholder when no project is selected. Deep-link from attention item is forward-only navigation; operator returns to prior view via the standard back-button history.
+
+**Rationale**: Q18 recommendation accepted.
+
+**Alternatives**: A no styling + reorderable + project-required everywhere (rejected — Agent Ops needs to work without project selection); C drag-handle reorder (rejected — extra persisted state).
+
+### R-40 — Health view per-subsystem rollup (closes Q19, extends FR-022)
+
+**Decision**: Per-subsystem row content: `name` + `state` (`healthy | degraded | down`) + `last_successful_event_at` timestamp + (if degraded) human-readable reason sourced from `app.readiness` response. Daemon version displayed at top of Health view as a separate field, distinct from `app_contract_version`. Project-card validation and drift badges roll up from per-project state — they do NOT pull from the Health view directly. FR-068 update-available indicator stays on the Dashboard, not on Health view.
+
+**Rationale**: Q19 recommendation accepted.
+
+**Alternatives**: A state + reason only (rejected — operators want timestamps); C aggregate health pill on every project card (rejected — couples daemon-state to project-state surface).
+
+### R-41 — Handoff multi-driver display + supersede chain (closes Q20, extends FR-029/FR-081)
+
+**Decision**: Project card shows up-to-2 master indicators + "+N more" overflow (already in FR-025). Current Work view shows ALL drivers as a sortable list (sort columns: master label, current status, last activity). Supersede chain renders at most 3 levels (oldest → ... → current); deeper chains truncated with "+N earlier supersessions" link to full chain in handoff history view. Supersede confirmation copy reads exactly:
+
+> "This will mark H1 as superseded by H2. Existing queue rows from H1 will NOT be auto-cancelled; cancel them manually from the Queue view if needed."
+
+**Rationale**: Q20 recommendation accepted.
+
+**Alternatives**: A first driver only (rejected — hides conflict); C full chain always (rejected — UI weight).
+
+### R-42 — Release feed ownership + downgrade refusal (closes Q21, extends R-12)
+
+**Decision**: Release feed URL: `https://releases.opensoft.one/agenttower/control-panel/latest.json`. Owner: Opensoft Releases team. Transport: signed JSON over TLS only (TLS 1.2+). Contract: the feed MUST never serve a version older than the previously-advertised version (no downgrades through the feed). Failure to fetch is silent at MVP — no banner, no error — but Settings → Doctor surfaces the most recent fetch outcome (timestamp + success/failure + latest-advertised version if successful).
+
+**Rationale**: Q21 short answer (recommended) accepted.
+
+**Alternatives**: third-party hosting (rejected — couples feature to non-Opensoft infrastructure); allowed downgrades through feed (rejected — security risk).
