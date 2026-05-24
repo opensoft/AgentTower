@@ -417,7 +417,12 @@ def test_dashboard_empty_system_all_zero_counts(
     r = env["result"]
     c = r["counts"]
     assert c["containers"] == {"active": 0, "inactive": 0, "degraded_scan": 0}
-    assert c["panes"] == {"total": 0, "registered": 0, "unregistered": 0}
+    # FEAT-014 v1.1 additive bump: `panes` gains a `by_state` sub-dict.
+    # v1.0 keys still hold their expected values; the v1.0 compat test
+    # asserts the v1.0 subset rather than strict-equality.
+    assert c["panes"]["total"] == 0
+    assert c["panes"]["registered"] == 0
+    assert c["panes"]["unregistered"] == 0
     assert c["agents"]["total"] == 0
     assert all(v == 0 for v in c["agents"]["by_role"].values())
     assert set(c["agents"]["by_role"].keys()) == set(versioning.AGENT_ROLES)
@@ -874,7 +879,9 @@ def test_dashboard_envelope_shape_and_hints(
     host_peer, token = host_session
     env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     assert env["ok"] is True
-    assert env["app_contract_version"] == "1.0"
+    # FEAT-014 bump (FR-013): use the constant rather than a hardcoded
+    # version string so this test survives future minor bumps automatically.
+    assert env["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     r = env["result"]
     assert set(r["counts"].keys()) == {
         "containers", "panes", "agents", "log_attachments",
@@ -896,3 +903,152 @@ def test_dashboard_emits_docker_unavailable_hint_when_unwired(
     env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     codes = {h["code"] for h in env["result"]["hints"]}
     assert "docker_unavailable_hint" in codes
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T005 — v1.1 contract assertions
+#
+# All assertions below are marked @pytest.mark.v1_1 per tasks.md §Notes
+# 'v1.1 marker rule'. T023's SC-004 v1.0-compat regression filters them
+# out with `pytest -m 'not v1_1'`. These tests do NOT modify any
+# existing FEAT-011 function above — they are pure additions.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+from agenttower.app_contract.dashboard import (  # noqa: E402  (intentional bottom import for v1.1 section)
+    AGENT_STATE_KEYS,
+    PANE_STATE_KEYS,
+)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_advertises_contract_version_1_1(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-013: daemon advertises ``app_contract_version == "1.1"`` post-bump."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["app_contract_version"] == "1.1"
+    assert versioning.APP_CONTRACT_VERSION == "1.1"
+    assert versioning.APP_CONTRACT_MINOR == 1
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_panes_by_state_present_when_empty(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-002 / FR-003: ``counts.panes.by_state`` has all 4 keys with
+    integer ``0`` on an empty database."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    by_state = env["result"]["counts"]["panes"]["by_state"]
+    assert set(by_state.keys()) == set(PANE_STATE_KEYS)
+    for key in PANE_STATE_KEYS:
+        assert isinstance(by_state[key], int)
+        assert by_state[key] == 0
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_agents_by_state_present_when_empty(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-005 / FR-003: ``counts.agents.by_state`` has all 5 keys with
+    integer ``0`` on an empty database."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    by_state = env["result"]["counts"]["agents"]["by_state"]
+    assert set(by_state.keys()) == set(AGENT_STATE_KEYS)
+    for key in AGENT_STATE_KEYS:
+        assert isinstance(by_state[key], int)
+        assert by_state[key] == 0
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_us1_acceptance_one_registered_two_unadopted(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """US1 acceptance scenario #1 at the wire level: 1 registered + 2
+    unadopted panes on an active container → ``by_state`` = ``{dau:2,
+    dar:1, ios:0, dd:0}``. Plus FR-019 cross-check at the wire level."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    _seed_container(conn, container_id="c1", name="container-c1", active=True)
+    _seed_pane(conn, container_id="c1", container_name="container-c1", pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c1", container_name="container-c1", pane_id="%1", pane_index=1)
+    _seed_pane(conn, container_id="c1", container_name="container-c1", pane_id="%2", pane_index=2)
+    _seed_agent(conn, agent_id="a1", container_id="c1", pane_id="%0", pane_index=0)
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    panes = env["result"]["counts"]["panes"]
+
+    # v1.0 fields unchanged.
+    assert panes["total"] == 3
+    assert panes["registered"] == 1
+    assert panes["unregistered"] == 2
+
+    # v1.1 by_state bucket counts.
+    assert panes["by_state"] == {
+        "discovered-and-unmanaged": 2,
+        "discovered-and-registered": 1,
+        "inactive-or-stale": 0,
+        "discovery-degraded": 0,
+    }
+
+    # FR-019 cross-check at the wire level (three equalities).
+    assert panes["by_state"]["discovered-and-registered"] == panes["registered"]
+    assert (
+        panes["by_state"]["discovered-and-unmanaged"]
+        + panes["by_state"]["inactive-or-stale"]
+        + panes["by_state"]["discovery-degraded"]
+    ) == panes["unregistered"]
+    assert sum(panes["by_state"].values()) == panes["total"]
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr020_agent_partition_at_wire(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-020 strict partition at the wire level:
+    ``active + inactive + partially_configured == total agents``.
+    Mixed fixture: active agent on active container; partially_configured
+    agent (role='unknown') on active container."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    _seed_container(conn, container_id="c-act", name="c-act", active=True)
+    _seed_pane(conn, container_id="c-act", container_name="c-act", pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c-act", container_name="c-act", pane_id="%1", pane_index=1)
+    _seed_agent(conn, agent_id="a-act", container_id="c-act", pane_id="%0", pane_index=0)
+    _seed_agent(
+        conn,
+        agent_id="a-pc",
+        container_id="c-act",
+        pane_id="%1",
+        pane_index=1,
+        role="unknown",  # → partially_configured
+    )
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    agents = env["result"]["counts"]["agents"]
+
+    # v1.0 total unchanged.
+    assert agents["total"] == 2
+
+    # v1.1 by_state partition.
+    by_state = agents["by_state"]
+    assert by_state["active"] == 1, "fully-configured agent on active container → active"
+    assert by_state["inactive"] == 0
+    assert by_state["partially_configured"] == 1, "role='unknown' → partially_configured"
+
+    # FR-020 strict configuration partition.
+    assert (
+        by_state["active"]
+        + by_state["inactive"]
+        + by_state["partially_configured"]
+    ) == agents["total"]
+
+    # FR-006 orthogonal log-state partition (no log_attachments seeded → all detached).
+    assert by_state["log-attached"] == 0
+    assert by_state["log-detached"] == 2
+    assert (
+        by_state["log-attached"] + by_state["log-detached"]
+    ) == agents["total"]

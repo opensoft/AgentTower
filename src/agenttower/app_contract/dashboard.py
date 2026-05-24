@@ -249,6 +249,180 @@ def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
     return {"enabled": enabled, "disabled": disabled}
 
 
+# ─── v1.1 PaneState / AgentState aggregators (FEAT-014) ───────────────────
+
+
+PANE_STATE_KEYS: tuple[str, ...] = (
+    "discovered-and-unmanaged",
+    "discovered-and-registered",
+    "inactive-or-stale",
+    "discovery-degraded",
+)
+
+AGENT_STATE_KEYS: tuple[str, ...] = (
+    "active",
+    "inactive",
+    "partially_configured",
+    "log-attached",
+    "log-detached",
+)
+
+
+def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
+    """v1.1 — PaneState buckets per data-model.md §PaneState (FEAT-014 FR-001..FR-002).
+
+    4-key closed set with Research §PB priority order
+    (degraded > stale > registered > unmanaged):
+
+    * ``discovery-degraded`` — container in ``degraded_scan`` state. Always
+      ``0`` at v1.1 MVP because FR-016a's ``degraded_scan`` is not yet a
+      persisted column on the ``containers`` row (same caveat as
+      ``_container_counts``). FR-003 mandates the key be present at ``0``.
+    * ``inactive-or-stale`` — pane whose container row has ``active = 0``.
+      The "``last_seen_at`` predates the most recent successful scan" half
+      of the spec's definition (Clarifications Q1) is not implementable
+      until upstream scan-timestamp wiring lands; v1.1 returns the
+      container-inactive contribution only.
+    * ``discovered-and-registered`` — pane with active agent AND active
+      container (FR-019 cross-check; partially_configured agents still
+      count here per the FR-019 carve-out — bucket determined by
+      ``agents.active = 1``, not by role/capability/label completeness).
+    * ``discovered-and-unmanaged`` — remaining panes (active container,
+      no active agent).
+
+    FR-025 fallback: returns all-zero if the SQLite accessor fails.
+
+    FR-019 caveat: the ``dar == v1.0 counts.panes.registered`` invariant
+    only holds when every registered pane is on an active container. A
+    registered pane on an inactive container goes to ``inactive-or-stale``
+    by the priority rule, which lowers ``dar`` below v1.0 ``registered``.
+    The US1 acceptance fixture (only active containers) is consistent.
+    Tracked for a future spec clarification round.
+    """
+    zeros = {k: 0 for k in PANE_STATE_KEYS}
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return zeros
+    try:
+        # inactive-or-stale: panes on containers with active=0 (container half
+        # of Clarifications Q1; last_seen_at half deferred to upstream wiring).
+        ios = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM panes p
+                JOIN containers c ON c.container_id = p.container_id
+                WHERE c.active = 0
+                """
+            ).fetchone()[0]
+        )
+        # discovered-and-registered: pane on active container with active agent.
+        dar = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM panes p
+                JOIN containers c ON c.container_id = p.container_id
+                WHERE c.active = 1
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.active = 1
+                        AND a.container_id = p.container_id
+                        AND a.tmux_pane_id = p.tmux_pane_id
+                  )
+                """
+            ).fetchone()[0]
+        )
+        total = int(conn.execute("SELECT COUNT(*) FROM panes").fetchone()[0])
+        # discovered-and-unmanaged = remainder (total - ios - dar - dd=0).
+        dau = max(total - ios - dar, 0)
+        return {
+            "discovered-and-unmanaged": dau,
+            "discovered-and-registered": dar,
+            "inactive-or-stale": ios,
+            "discovery-degraded": 0,
+        }
+    except Exception:  # noqa: BLE001 — FR-025 aggregator-failure fallback
+        return zeros
+
+
+def _compute_agent_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
+    """v1.1 — AgentState buckets per data-model.md §AgentState (FEAT-014 FR-004..FR-006, FR-020).
+
+    5-key set, two orthogonal partitions:
+
+    * **Configuration partition** (strict — FR-020):
+      ``active`` + ``inactive`` + ``partially_configured`` == total agents
+        - ``partially_configured`` — Clarifications Q2 — any of ``role``,
+          ``capability``, ``label`` missing/empty/``unknown``.
+        - ``active`` — fully configured AND container.active=1.
+        - ``inactive`` — fully configured AND container.active=0.
+    * **Log-state partition** (orthogonal — FR-006):
+      ``log-attached`` + ``log-detached`` == total agents
+        - ``log-attached`` — ``log_attachments.status='active'`` row exists.
+        - ``log-detached`` — no active log attachment.
+
+    Sum of all five MAY exceed total agents (FR-006 documented overlap).
+
+    FR-025 fallback: returns all-zero if the SQLite accessor fails.
+    """
+    zeros = {k: 0 for k in AGENT_STATE_KEYS}
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return zeros
+    try:
+        total = int(conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0])
+        # partially_configured (Clarifications Q2): any of role/capability/label
+        # missing/empty/unknown. The agents schema CHECK-constrains role and
+        # capability to closed sets that include 'unknown' (no empty string
+        # possible at the DB level); `label` defaults to '' and may be empty.
+        partially_configured = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agents
+                WHERE role = 'unknown'
+                   OR capability = 'unknown'
+                   OR label = ''
+                """
+            ).fetchone()[0]
+        )
+        # active: fully configured AND on active container.
+        active = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agents a
+                JOIN containers c ON c.container_id = a.container_id
+                WHERE c.active = 1
+                  AND a.role != 'unknown'
+                  AND a.capability != 'unknown'
+                  AND a.label != ''
+                """
+            ).fetchone()[0]
+        )
+        # inactive = total - active - partially_configured (strict partition).
+        inactive = max(total - active - partially_configured, 0)
+        # Log-state partition: orthogonal to configuration partition.
+        log_attached = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agents a
+                WHERE EXISTS (
+                    SELECT 1 FROM log_attachments la
+                    WHERE la.agent_id = a.agent_id AND la.status = 'active'
+                )
+                """
+            ).fetchone()[0]
+        )
+        log_detached = max(total - log_attached, 0)
+        return {
+            "active": active,
+            "inactive": inactive,
+            "partially_configured": partially_configured,
+            "log-attached": log_attached,
+            "log-detached": log_detached,
+        }
+    except Exception:  # noqa: BLE001 — FR-025 aggregator-failure fallback
+        return zeros
+
+
 # ─── Recents (FR-017) ─────────────────────────────────────────────────────
 
 
@@ -354,6 +528,10 @@ def app_dashboard(
     queue_counts = _queue_counts(ctx)
     route_counts = _route_counts(ctx)
     event_total = _event_count(ctx)
+    # FEAT-014 v1.1 — additive PaneState / AgentState buckets (FR-001, FR-004).
+    # by_state lives alongside the v1.0 counts dicts, not replacing them.
+    pane_state_buckets = _compute_pane_state_buckets(ctx)
+    agent_state_buckets = _compute_agent_state_buckets(ctx)
 
     # Hints: reuse the readiness emission helper. We probe subsystems
     # again here because the dashboard is independently callable; the
@@ -387,8 +565,11 @@ def app_dashboard(
     return envelope.success({
         "counts": {
             "containers": container_counts,
-            "panes": pane_counts,
-            "agents": agent_counts,
+            # FEAT-014 v1.1 — panes and agents gain a `by_state` sub-dict
+            # alongside the v1.0 fields. v1.0 readers ignore the new key;
+            # v1.1 readers consume it (additive-minor per FR-014, FR-012).
+            "panes": {**pane_counts, "by_state": pane_state_buckets},
+            "agents": {**agent_counts, "by_state": agent_state_buckets},
             "log_attachments": log_attachment_counts,
             "events": {"total": event_total},
             "queue": queue_counts,

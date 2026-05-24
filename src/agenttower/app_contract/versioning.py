@@ -19,13 +19,13 @@ from typing import Final
 
 # ─── Contract version (FR-010, FR-035) ────────────────────────────────────
 
-APP_CONTRACT_VERSION: Final[str] = "1.0"
+APP_CONTRACT_VERSION: Final[str] = "1.1"
 APP_CONTRACT_MAJOR: Final[int] = 1
-APP_CONTRACT_MINOR: Final[int] = 0
+APP_CONTRACT_MINOR: Final[int] = 1
 
 SUPPORTED_MINOR_RANGE: Final[dict[str, str]] = {
     "min": "1.0",
-    "max": "1.0",
+    "max": "1.1",
 }
 
 # Capability flags at v1.0 (FR-039). Always present in app.hello;
