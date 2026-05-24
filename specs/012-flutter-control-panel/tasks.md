@@ -447,9 +447,9 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 
 ---
 
-**Total tasks**: 170 (T001..T170, updated 2026-05-24 per /speckit-analyze Round 2 — added T165-T170 for the swarm-review-deferred items)
-**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (28, including 6 verification tasks T154-T159 from /speckit-analyze Round 1, 5 post-Phase-3 review follow-ups T160-T164 from /speckit-analyze Round 4, and 6 post-Phase-8 follow-ups T165-T170 from /speckit-analyze Round 2 covering CR-4 i18n / H-B10 drafted-row / M-11 streaming / H-B1+B2+C2 test rewrites).
-**Parallel tasks**: 119 marked [P].
+**Total tasks**: 171 (T001..T171, updated 2026-05-24 per /speckit-analyze Round 4 — added T171 for the post-Round-4 OS-native dispatch wiring finding C-N1)
+**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (29, including 6 verification tasks T154-T159 from /speckit-analyze Round 1, 5 post-Phase-3 review follow-ups T160-T164 from /speckit-analyze Round 4, 6 post-Phase-8 follow-ups T165-T170 from /speckit-analyze Round 2 covering CR-4 i18n / H-B10 drafted-row / M-11 streaming / H-B1+B2+C2 test rewrites, and 1 post-Round-4 task T171 for FR-058 OS-native dispatch wiring).
+**Parallel tasks**: 120 marked [P].
 **Story-labelled tasks**: 92 across US1..US6.
 
 **Verification-task coverage** (added per /speckit-analyze Round 1):
@@ -481,3 +481,6 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 - T167 — blocked on FEAT-011 v1.x extension exposing a streaming subscription method (SSE inside the Unix-socket framing, or equivalent). Until it lands, `ref.invalidate(...)` polling is the live-update strategy and T154(c) measures manual-refresh round-trip, not push propagation.
 
 These three are the only tasks whose progress depends on changes outside the FEAT-012 worktree. Track FEAT-014 progress; open coordination changes against FEAT-011 for T166 + T167 when ready to unblock.
+
+**Post-Round-4-analyze follow-up** (added per /speckit-analyze Round 4, 2026-05-24 / C-N1):
+- [ ] T171 [P] **OS-native dispatch on incoming notifications (FR-058 wiring).** `OsNativeIntegration.consider(notification, enabled: ...)` is defined in `lib/features/notifications/os_native_integration.dart` but has zero callers — Settings persists the FR-058 `osNativeNotifications` toggle but the dispatcher never fires when new notifications arrive. Add a stream-consumer (Riverpod listener on `notificationListProvider`) that, for each newly-arrived `incoming`-lifecycle notification, calls `osNativeIntegrationProvider.consider(notification, enabled: settings.osNativeNotifications)`. The dispatcher's internal de-dup + severity-gate handles the rest. **Depends on T167 streaming** for the "newly-arrived" detection semantics — until T167 lands, T171 can use a polling diff against the previous list snapshot. Closes Round-4 analyze C-N1.

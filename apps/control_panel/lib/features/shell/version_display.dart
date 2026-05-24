@@ -33,8 +33,10 @@ final releaseFeedCheckProvider =
   }
 });
 
-/// Compact Dashboard badge — "v0.1.0" + an exclamation icon if a
-/// newer release is advertised.
+/// Compact AppBar badge — "v0.1.0" + an exclamation icon if a
+/// newer release is advertised. Rendered globally on the AppShell
+/// AppBar per Round-3 analyze C2 placement (was originally "Dashboard
+/// badge" before the placement decision).
 class VersionBadge extends ConsumerWidget {
   const VersionBadge({super.key});
 

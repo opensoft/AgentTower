@@ -30,20 +30,58 @@ import 'providers.dart';
 /// (display / notifications / connection / privacy / diagnostics)
 /// — the page renders all sections inline and the sub-view id
 /// drives the initial section scroll target.
-class SettingsView extends ConsumerWidget {
+///
+/// Round-4 analyze U-N1 (2026-05-24): SettingsView is now
+/// stateful so `initialSection` can drive a `Scrollable.ensureVisible`
+/// to the matching section after first frame, instead of always
+/// landing the operator at the top of the page.
+class SettingsView extends ConsumerStatefulWidget {
   const SettingsView({super.key, this.initialSection = 'display'});
 
   final String initialSection;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsView> createState() => _SettingsViewState();
+}
+
+class _SettingsViewState extends ConsumerState<SettingsView> {
+  final _displayKey = GlobalKey();
+  final _notificationsKey = GlobalKey();
+  final _connectionKey = GlobalKey();
+  final _privacyKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToInitial());
+  }
+
+  void _scrollToInitial() {
+    final key = switch (widget.initialSection) {
+      'notifications' => _notificationsKey,
+      'connection' => _connectionKey,
+      'privacy' || 'diagnostics' => _privacyKey,
+      _ => _displayKey,
+    };
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 250),
+        alignment: 0.0,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _SectionHeader('Display'),
+          _SectionHeader('Display', key: _displayKey),
           _ThemeSelector(value: settings.theme, onChanged: (v) {
             ref.read(settingsProvider.notifier).update(
                   (s) => s.copyWith(theme: v),
@@ -56,7 +94,7 @@ class SettingsView extends ConsumerWidget {
           }),
           const Divider(height: 32),
 
-          _SectionHeader('Notifications'),
+          _SectionHeader('Notifications', key: _notificationsKey),
           SwitchListTile(
             title: const Text('Group similar notifications'),
             subtitle: const Text(
@@ -84,7 +122,7 @@ class SettingsView extends ConsumerWidget {
           ),
           const Divider(height: 32),
 
-          _SectionHeader('Connection'),
+          _SectionHeader('Connection', key: _connectionKey),
           _SocketPathField(
             value: settings.daemonSocketPath,
             onChanged: (v) =>
@@ -98,7 +136,7 @@ class SettingsView extends ConsumerWidget {
           const VersionDisplayTile(),
           const Divider(height: 32),
 
-          _SectionHeader('Privacy + diagnostics'),
+          _SectionHeader('Privacy + diagnostics', key: _privacyKey),
           SwitchListTile(
             title: const Text('Debug logging'),
             subtitle: const Text(
@@ -241,7 +279,7 @@ class SettingsView extends ConsumerWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.title);
+  const _SectionHeader(this.title, {super.key});
   final String title;
   @override
   Widget build(BuildContext context) {

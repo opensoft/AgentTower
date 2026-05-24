@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
@@ -14,6 +15,7 @@ import 'core/persistence/compatibility.dart';
 import 'core/persistence/paths.dart';
 import 'core/persistence/ux_state_repository.dart';
 import 'core/providers.dart';
+import 'core/update/release_feed_check.dart';
 import 'features/agent_ops/module.dart';
 import 'features/project_specs/module.dart';
 import 'features/settings/module.dart';
@@ -49,6 +51,12 @@ Future<void> main() async {
     ),
   );
   await uxState.load();
+
+  // Round-4 analyze I-N1 (2026-05-24): wire `installedAppVersionProvider`
+  // to the real `PackageInfo.fromPlatform().version` so VersionBadge,
+  // VersionDisplayTile, and the FR-074 diagnostics bundle all display
+  // the installed app version instead of the test-default '0.0.0-dev'.
+  final packageInfo = await PackageInfo.fromPlatform();
 
   seedMvpContractDeclarations();
   registerAgentOps(); // Phase 3 US1 surfaces (T065-T076).
@@ -98,6 +106,9 @@ Future<void> main() async {
           daemonSessionProvider.overrideWithValue(daemonSession),
           appClientProvider.overrideWithValue(appClient),
           preflightClientProvider.overrideWithValue(preflightClient),
+          // Round-4 analyze I-N1: override the test-default stub with
+          // the real installed version so FR-068 displays correctly.
+          installedAppVersionProvider.overrideWithValue(packageInfo.version),
         ],
         child: const AgentTowerControlPanel(),
       ),
