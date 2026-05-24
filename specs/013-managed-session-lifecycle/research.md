@@ -183,7 +183,7 @@ working_dir: /workspace
 
 The pending-managed marker token (R1) equals `idempotency_key` when present, else `uuid4()`.
 
-**Rationale**: Mirrors the FEAT-011 `app.send_input` idempotency model. Collapses dedupe storage into the pending-marker storage.
+**Rationale**: Mirrors the FEAT-011 `app.send_input` idempotency model. Collapses dedupe storage into the pending-managed marker storage.
 
 ---
 
@@ -246,7 +246,7 @@ Illegal transitions are rejected with `managed_pane_illegal_transition`. `promot
 | Q3 serialization | R2 |
 | Q4 label uniqueness scope | R3, data-model.md |
 | Q5 template pane count | R8 |
-| Q6 SESSION_NAME_CONFLICT | contracts/error-codes.md |
+| Q6 managed_session_name_conflict | contracts/error-codes.md |
 | Q7 pending-managed marker | R1 |
 | Q8 launch immediate-exit → degraded | R7, R13 |
 | Q9 log attach failure → degraded | R7, R13 |
@@ -262,4 +262,4 @@ Illegal transitions are rejected with `managed_pane_illegal_transition`. `promot
 | Checklist gap: launch profile schema | R9 |
 | Checklist gap: idempotency key | R10 |
 | Checklist gap: tmux command surface | R6 |
-| Checklist gap: pending-marker TTL | R5 |
+| Checklist gap: pending-managed marker TTL | R5 |

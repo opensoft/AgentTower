@@ -6,7 +6,7 @@
 
 ## Migration & Schema
 
-- [ ] CHK001 Are deployment requirements specified for the schema migration that adds `predecessor_id`, pending-marker, and any new tables/fields? [Gap, Cross-ref: data-model.md]
+- [ ] CHK001 Are deployment requirements specified for the schema migration that adds `predecessor_id`, pending-managed marker, and any new tables/fields? [Gap, Cross-ref: data-model.md]
 - [ ] CHK002 Are rollback requirements specified for the schema migration (down-migration safety)? [Gap]
 - [ ] CHK003 Are backwards-compatibility requirements specified with existing FEAT-011 contracts during a phased rollout? [Gap]
 

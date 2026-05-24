@@ -36,12 +36,12 @@ These items were flagged "Likely failing" in alignment-check.md but were NOT in 
 
 ## Forward-pointing tasks queued for /speckit.tasks (from alignment-cleanup Q3)
 
-- [ ] CHK019 Will the FR-022 pending-marker sweep loop be captured as an implementation task by `/speckit.tasks` (per the plan-review.md amendment note)? [Coverage, Spec §FR-022]
+- [ ] CHK019 Will the FR-022 pending-managed marker sweep loop be captured as an implementation task by `/speckit.tasks` (per the plan-review.md amendment note)? [Coverage, Spec §FR-022]
 - [ ] CHK020 Will the FR-020 detail-surface readability (recovery outcome fields in M3/M5 response shapes) be captured as an implementation task by `/speckit.tasks`? [Coverage, Spec §FR-020]
 - [ ] CHK021 Will the SC-009 ≤ 5-second post-restart visibility test be captured for `/speckit.tasks`? [Coverage, Spec §SC-009]
 
 ## Cross-doc traceability under both Clarifications sessions
 
 - [ ] CHK022 Does research.md cite the post-plan and alignment-cleanup Clarifications sessions as the documented origin of FR-022/023/024/SC-009 + the SC-006 rewording? [Traceability, Research vs Spec §Clarifications]
-- [ ] CHK023 Does data-model.md acknowledge the FR-022 TTL behavior with a note in the recovery / pending-marker section? [Coverage, Spec §FR-022 vs Data-Model]
+- [ ] CHK023 Does data-model.md acknowledge the FR-022 TTL behavior with a note in the recovery / pending-managed marker section? [Coverage, Spec §FR-022 vs Data-Model]
 - [ ] CHK024 Are the SC-009 5-second budget and the FR-022 5-minute TTL consistent with each other — different time horizons, no overlap or conflict? [Consistency, Spec §FR-022 vs §SC-009]

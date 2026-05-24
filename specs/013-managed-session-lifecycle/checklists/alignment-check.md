@@ -26,7 +26,7 @@
 - [ ] CHK011 Does quickstart.md's daemon-restart section show the operator reading recovery outcomes from list/detail (not only via the audit log)? [Coverage, Spec §FR-020 vs Quickstart]
 - [ ] CHK012 Does contracts/state-machine.md's Recovery section reference the visibility of recovery outcomes from a read surface? [Coverage, Spec §FR-020 vs Contracts §state-machine]
 
-## FR-022 alignment (5-minute pending-marker TTL sweep)
+## FR-022 alignment (5-minute pending-managed marker TTL sweep)
 
 - [ ] CHK013 Does plan.md Technical Context describe the 5-minute sweep as a measurable system property and tie it to FR-022 (by ID or by behavior)? [Consistency, Spec §FR-022 vs Plan]
 - [ ] CHK014 Does research §R5 produce the same TTL value (5 min) and sweep cadence (boot + 60 s) as FR-022 mandates? [Consistency, Spec §FR-022 vs Research §R5]

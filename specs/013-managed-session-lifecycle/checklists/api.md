@@ -10,7 +10,7 @@
 - [ ] CHK002 Are request/response schemas specified for the remove-managed-pane operation? [Gap, Spec §FR-010]
 - [ ] CHK003 Are request/response schemas specified for the recreate-managed-pane operation? [Gap, Spec §FR-011]
 - [ ] CHK004 Are request/response schemas specified for listing managed layouts and managed panes? [Gap, Spec §FR-005]
-- [ ] CHK005 Is the structured error response specified for `SESSION_NAME_CONFLICT` (code, message, hint)? [Gap, Spec §FR-016]
+- [ ] CHK005 Is the structured error response specified for `managed_session_name_conflict` (code, message, hint)? [Gap, Spec §FR-016]
 - [ ] CHK006 Are error response codes/strings enumerated for every failure mode listed in FR-013 and FR-016? [Completeness]
 - [ ] CHK007 Is the contract for the lifecycle event stream defined (event types, payload shape, ordering)? [Gap, Spec §FR-015]
 - [ ] CHK008 Are API versioning requirements specified for the new managed-layout operations? [Gap]

@@ -41,7 +41,7 @@
 
 ## Schema Evolution
 
-- [ ] CHK024 Are schema migration requirements specified for adding `predecessor_id`, pending-marker, etc.? [Gap]
+- [ ] CHK024 Are schema migration requirements specified for adding `predecessor_id`, pending-managed marker, etc.? [Gap]
 - [ ] CHK025 Are forward/backward compatibility requirements specified for the durable store across daemon upgrades? [Gap, Cross-ref: deployment.md]
 
 ## Consistency

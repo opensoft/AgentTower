@@ -24,7 +24,7 @@
 ## Confidentiality
 
 - [ ] CHK012 Are requirements specified for what data the lifecycle events contain (any sensitive material such as full command lines, environment variables, working directories)? [Gap, Spec §FR-015]
-- [ ] CHK013 Are SESSION_NAME_CONFLICT and other error responses specified to not leak sensitive information (other tmux sessions, paths)? [Gap, Spec §FR-016]
+- [ ] CHK013 Are `managed_session_name_conflict` and other error responses specified to not leak sensitive information (other tmux sessions, paths)? [Gap, Spec §FR-016]
 - [ ] CHK014 Are requirements specified for redacting any sensitive fields in launch command profiles before persistence/observability? [Gap, Cross-ref: configuration.md, observability.md]
 
 ## Integrity

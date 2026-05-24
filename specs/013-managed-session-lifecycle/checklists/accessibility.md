@@ -14,7 +14,7 @@
 - [ ] CHK006 Are focus-management requirements specified for the confirmation dialogs of remove/recreate (FR-010/FR-011)? [Gap]
 - [ ] CHK007 Are accessibility requirements specified for the live progress feedback during the up-to-2-min layout creation (live region, polite vs assertive)? [Gap, Spec §SC-001]
 - [ ] CHK008 Are accessibility requirements specified for surfacing the `predecessor_id` chain or the recreate history? [Gap, Spec §FR-011]
-- [ ] CHK009 Are accessibility requirements specified for error messages (SESSION_NAME_CONFLICT, daemon unhealthy)? [Gap, Spec §FR-016]
+- [ ] CHK009 Are accessibility requirements specified for error messages (`managed_session_name_conflict`, daemon unhealthy)? [Gap, Spec §FR-016]
 - [ ] CHK010 Are accessibility requirements specified for any audit/history view (FR-021 indefinite retention)? [Gap]
 
 ## Clarity / Consistency

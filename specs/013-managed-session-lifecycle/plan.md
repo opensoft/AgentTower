@@ -18,7 +18,7 @@ FEAT-013 adds operator-driven creation of standard multi-agent tmux layouts insi
 
 The work splits into a new sub-package `src/agenttower/managed_sessions/` plus a single additive SQLite migration adding two tables (`managed_layout`, `managed_pane`) with FKs into the existing agent registry. One new tmux-adapter helper (`tmux_create.py`) composes `new-session` / `split-window` / `kill-pane` invocations through the existing FEAT-004 `docker exec` channel. The app-contract surface (FEAT-011) is extended **additively** with `app.managed_*` methods; the legacy CLI namespace gains a matching `managed_*` set. No FEAT-001..FEAT-012 surface is renamed, deleted, or rewired. **Out of scope for MVP**: non-tmux backends, semantic task planning, cross-host orchestration, adopted-to-managed pane promotion, and cancellation of in-flight layout creation (per spec §FR-018).
 
-> **Provenance**: FR-022 (5-min pending-marker TTL), FR-023 (recreate-chain depth ≤ 16), FR-024 (operator YAML overrides), and SC-009 (post-restart visibility ≤ 5s) originated from spec §Clarifications "Session 2026-05-24 (post-plan review)"; their traceability to user stories was confirmed in spec §Clarifications "Session 2026-05-24 (alignment cleanup)" (FR-022 / FR-023 / SC-009 → US3; FR-024 → US1).
+> **Provenance**: FR-022 (5-min pending-managed marker TTL), FR-023 (recreate-chain depth ≤ 16), FR-024 (operator YAML overrides), and SC-009 (post-restart visibility ≤ 5s) originated from spec §Clarifications "Session 2026-05-24 (post-plan review)"; their traceability to user stories was confirmed in spec §Clarifications "Session 2026-05-24 (alignment cleanup)" (FR-022 / FR-023 / SC-009 → US3; FR-024 → US1).
 
 ## Technical Context
 

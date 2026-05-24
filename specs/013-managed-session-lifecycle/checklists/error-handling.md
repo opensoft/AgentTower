@@ -37,7 +37,7 @@
 ## Error Format & Diagnostics
 
 - [ ] CHK019 Are error message format requirements specified (machine-readable code + human-readable message + recovery hint)? [Gap, Spec §FR-016]
-- [ ] CHK020 Is the SESSION_NAME_CONFLICT error response shape specified beyond the diagnostic string (fields, suggestion)? [Gap, Spec §FR-016]
+- [ ] CHK020 Is the `managed_session_name_conflict` error response shape specified beyond the diagnostic string (fields, suggestion)? [Gap, Spec §FR-016]
 - [ ] CHK021 Is the audit/event content for failure events specified to be sufficient for post-mortem (which pane, which stage, which command output excerpt)? [Gap, Spec §FR-015]
 
 ## Non-Functional Resilience

@@ -14,7 +14,7 @@
 - [ ] CHK006 Are operator-facing diagnostic UI requirements specified for FR-013's "failed pane, failed stage, suggested recovery action"? [Completeness, Spec §FR-013]
 - [ ] CHK007 Is the UI for the predecessor → recreated linkage defined (how the operator sees the chain)? [Gap, Spec §FR-011]
 - [ ] CHK008 Are confirmation/affirmation UI requirements specified for destructive lifecycle actions (remove, recreate)? [Gap, Spec §FR-010]
-- [ ] CHK009 Are visual cues defined for `SESSION_NAME_CONFLICT` and other error conditions surfaced to the operator? [Gap, Spec §FR-016]
+- [ ] CHK009 Are visual cues defined for `managed_session_name_conflict` and other error conditions surfaced to the operator? [Gap, Spec §FR-016]
 - [ ] CHK010 Is the surface for the audit/history view (FR-021 indefinite retention) defined or scoped out? [Gap, Spec §FR-021]
 - [ ] CHK011 Is the input shape for "provide or select configured launch commands" (FR-002) defined (free-text, dropdown, hybrid)? [Clarity, Spec §FR-002]
 

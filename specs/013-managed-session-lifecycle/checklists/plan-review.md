@@ -26,8 +26,8 @@ This file is a single targeted audit, not another deep-and-wide refresh. It does
 ## Research Quality
 
 - [ ] CHK011 Does each research item R1–R13 follow Decision / Rationale / Alternatives with at least one *real* alternative considered (not a strawman)? [Completeness, Research §R*]
-- [ ] CHK012 Is the pending-marker representation (R1) safe against the in-pane process editing its own tmux pane title before registration completes? [Edge Case, Gap, Research §R1]
-- [ ] CHK013 Is the 5-minute pending-marker TTL (R5) surfaced as a *measurable* system property (not only an internal sweep cadence)? [Measurability, Research §R5]
+- [ ] CHK012 Is the pending-managed marker representation (R1) safe against the in-pane process editing its own tmux pane title before registration completes? [Edge Case, Gap, Research §R1]
+- [ ] CHK013 Is the 5-minute pending-managed marker TTL (R5) surfaced as a *measurable* system property (not only an internal sweep cadence)? [Measurability, Research §R5]
 - [ ] CHK014 Is the recreate-chain depth bound of 16 (R4) justified relative to a realistic operator iteration workflow, not just a round number? [Clarity, Research §R4]
 - [ ] CHK015 Is the per-container `asyncio.Lock` (R2) sufficient for the "remove + recreate" sequence, or is an additional per-pane lock needed for the predecessor → successor transition? [Coverage, Gap, Research §R2]
 - [ ] CHK016 Are the launch-command argv decisions (R6) compatible with operator-supplied `working_dir` and `env` without re-opening a shell-interpolation hazard? [Consistency, Research §R6 vs Constitution §III]
@@ -62,7 +62,7 @@ This file is a single targeted audit, not another deep-and-wide refresh. It does
 
 ## Newly Introduced Gaps (from plan choices)
 
-- [x] CHK036 Is the 5-minute pending-marker TTL (R5) reflected as either an FR addition or a documented assumption in spec.md, not only in research? [Gap, Research §R5 vs Spec §Assumptions] — **Resolved 2026-05-24** by spec FR-022 (post-plan review). Implementation footprint (sweep loop) deferred to `/speckit.tasks`.
+- [x] CHK036 Is the 5-minute pending-managed marker TTL (R5) reflected as either an FR addition or a documented assumption in spec.md, not only in research? [Gap, Research §R5 vs Spec §Assumptions] — **Resolved 2026-05-24** by spec FR-022 (post-plan review). Implementation footprint (sweep loop) deferred to `/speckit.tasks`.
 - [x] CHK037 Are the operator-facing implications of the depth-16 recreate-chain bound (R4) surfaced in spec.md (e.g., as an FR or success criterion), not only in contracts/error-codes? [Gap, Research §R4 vs Spec §FR] — **Resolved 2026-05-24** by spec FR-023.
 - [x] CHK038 Are the YAML configuration paths (R8/R9) referenced from spec §Assumptions, not only in research/plan? [Completeness, Research §R8/R9 vs Spec §Assumptions] — **Resolved 2026-05-24** by spec §Assumptions YAML-paths bullet + FR-024.
 - [x] CHK039 Is the absence of a "cancel in-flight create-layout" operation explicitly listed as out-of-scope in spec §FR-018, not only mentioned implicitly in M6/R2? [Completeness, Gap, Spec §FR-018] — **Resolved 2026-05-24** by spec FR-018 amendment.
