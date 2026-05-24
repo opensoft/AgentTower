@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/l10n/l10n_wiring.dart';
+import 'domain/models/common_enums.dart' as enums;
+import 'features/settings/providers.dart';
 import 'routing/router.dart';
 import 'ui/theme/color_tokens.dart';
 
@@ -25,11 +27,21 @@ class AgentTowerControlPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Round-3 analyze U1: bind MaterialApp.themeMode to the live
+    // Settings value so toggling theme in Settings applies
+    // immediately. The wire-aligned domain `ThemeMode` maps 1:1
+    // to Flutter's `ThemeMode`.
+    final theme = ref.watch(settingsProvider.select((s) => s.theme));
+    final materialThemeMode = switch (theme) {
+      enums.ThemeMode.light => ThemeMode.light,
+      enums.ThemeMode.dark => ThemeMode.dark,
+      enums.ThemeMode.system => ThemeMode.system,
+    };
     return MaterialApp(
       title: 'AgentTower Control Panel',
       theme: ColorTokens.light(),
       darkTheme: ColorTokens.dark(),
-      themeMode: ThemeMode.system, // bound to Settings in T143
+      themeMode: materialThemeMode,
       localizationsDelegates: const [
         ...baseLocalizationDelegates,
         // AppLocalizations.delegate, // uncomment after flutter gen-l10n

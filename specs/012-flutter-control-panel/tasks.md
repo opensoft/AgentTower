@@ -474,3 +474,10 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 - T168 (H-B1) — rewrite us3 SC-003 to drive real taps + Stopwatch end-to-end.
 - T169 (H-B2) — rewrite us3 SC-004 byte-for-byte invariant to be non-tautological.
 - T170 (H-C2) — add SC-005 60-second wall-clock budget to us4_drift.dart.
+
+**Blocked-on-external-FEAT** (added per /speckit-analyze Round 3, 2026-05-24 / A1):
+- T160 — blocked on FEAT-014 archive (extends FEAT-011 `app.dashboard` with `counts.panes.by_state` etc.). FEAT-014 is at spec.md stage; no plan/tasks yet. Status reflected in this footer because the task itself cannot be unblocked from inside FEAT-012.
+- T166 — blocked on FEAT-011 v1.x extension exposing `app.handoff.draft` so FR-072(a) drafted-row persistence can be wired client-side without losing operator context on widget tear-down.
+- T167 — blocked on FEAT-011 v1.x extension exposing a streaming subscription method (SSE inside the Unix-socket framing, or equivalent). Until it lands, `ref.invalidate(...)` polling is the live-update strategy and T154(c) measures manual-refresh round-trip, not push propagation.
+
+These three are the only tasks whose progress depends on changes outside the FEAT-012 worktree. Track FEAT-014 progress; open coordination changes against FEAT-011 for T166 + T167 when ready to unblock.

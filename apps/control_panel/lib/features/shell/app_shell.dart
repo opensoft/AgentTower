@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/common_enums.dart';
 import '../../routing/route_paths.dart';
+import '../notifications/badges.dart';
 import '../project_specs/module.dart' show registerProjectSpecsPaletteCommands;
 import '../settings/module.dart' show registerSettingsPaletteCommands;
 import '../registry.dart';
 import 'global_banner.dart';
 import 'project_switcher.dart';
+import 'version_display.dart';
 
 /// Top-level chrome around the current workspace + sub-view. T047/T048 +
 /// review fix A1 + L3.
@@ -48,8 +50,17 @@ class AppShell extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(_workspaceLabel(route.workspace)),
+        // Analyze C2 + Round-3 remediation: VersionBadge appears on
+        // every workspace AppBar so T146's "Dashboard + Settings"
+        // surface requirement is met globally rather than per-view.
+        // GlobalUnreadBadge satisfies the FR-056 "unread notification
+        // counts visible globally" half.
         actions: const [
           ProjectSwitcher(),
+          SizedBox(width: 8),
+          GlobalUnreadBadge(),
+          SizedBox(width: 8),
+          VersionBadge(),
           SizedBox(width: 8),
         ],
       ),

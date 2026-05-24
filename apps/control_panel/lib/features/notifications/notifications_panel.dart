@@ -8,6 +8,7 @@ import '../../domain/severity.dart';
 import '../../ui/widgets/contract_checked_button.dart';
 import '../../ui/widgets/runtime_state_views.dart';
 import '../project_specs/providers.dart' as project_providers;
+import '../settings/providers.dart';
 import 'providers.dart';
 
 /// FR-008 + FR-056 + FR-057 — Notifications panel. T139 (Phase 8 US6).
@@ -24,8 +25,12 @@ import 'providers.dart';
 /// (then daemon-side bubbles it to history per FR-056). The action is
 /// gated by ContractCheckedButton for FR-002 compliance.
 class NotificationsPanel extends ConsumerStatefulWidget {
-  const NotificationsPanel({super.key, this.groupingEnabled = true});
-  final bool groupingEnabled;
+  // Round-3 analyze C1 (2026-05-24): previously took
+  // `groupingEnabled` as a constructor parameter hardcoded to
+  // true, so the FR-057 grouping toggle in Settings had no
+  // effect. Now reads `settingsProvider.notificationsGrouping`
+  // directly so toggling in Settings applies immediately.
+  const NotificationsPanel({super.key});
 
   @override
   ConsumerState<NotificationsPanel> createState() => _NotificationsPanelState();
@@ -113,8 +118,11 @@ class _NotificationsPanelState extends ConsumerState<NotificationsPanel> {
           summary: n.summary,
         ),
     ];
+    final groupingEnabled = ref.watch(
+      settingsProvider.select((s) => s.notificationsGrouping),
+    );
     return const NotificationGroupingRule()
-        .project(candidates, enabled: widget.groupingEnabled);
+        .project(candidates, enabled: groupingEnabled);
   }
 
   String _groupKey(GroupedNotificationView v) =>

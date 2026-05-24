@@ -9,8 +9,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/daemon/contract_version.dart';
 import '../../core/persistence/paths.dart';
 import '../../core/providers.dart';
+import '../../core/update/release_feed_check.dart';
 import '../../domain/models/common_enums.dart';
 import '../../ui/widgets/safe_url_launcher.dart';
+import '../shell/runtime_state_provider.dart';
 import '../shell/version_display.dart';
 import 'diagnostics_bundle.dart';
 import 'doctor.dart';
@@ -147,10 +149,17 @@ class SettingsView extends ConsumerWidget {
   Future<void> _onCopyDiagnostics(BuildContext context, WidgetRef ref) async {
     final paths = ref.read(appPathsProvider);
     final doctor = await _runDoctor(ref, paths);
+    // Round-3 analyze I1: read live app version + daemon contract
+    // version instead of hardcoding. installedAppVersionProvider is
+    // the single source of truth for the FR-068 version string.
+    final installedVersion = ref.read(installedAppVersionProvider);
+    final compat = ref.read(runtimeStateProvider).contractCompat;
+    final daemonContract =
+        compat?.daemonVersion ?? const ContractVersion(1, 0);
     final bundle = DiagnosticsBundle(
       paths: paths,
-      appVersion: '0.1.0+1',
-      contractVersion: const ContractVersion(1, 0),
+      appVersion: installedVersion,
+      contractVersion: daemonContract,
       socketPath: ref.read(settingsProvider).daemonSocketPath,
       osUser: Platform.environment['USER'] ?? 'unknown',
       doctorReport: doctor,
@@ -337,21 +346,23 @@ class _SocketPathFieldState extends State<_SocketPathField> {
   }
 }
 
-class _ContractVersionDisplay extends StatelessWidget {
+class _ContractVersionDisplay extends ConsumerWidget {
   const _ContractVersionDisplay();
 
   @override
-  Widget build(BuildContext context) {
-    // Real `app_contract_version` lives on DaemonSession.bootstrap;
-    // for the MVP Settings page we display the app's compiled-in
-    // minimum. The live daemon version surfaces in the Dashboard
-    // banner + per-surface degradation states (FR-002).
-    return const ListTile(
-      leading: Icon(Icons.handshake_outlined),
-      title: Text('Contract version'),
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Round-3 analyze I2: read live runtime contract-compat so
+    // operators can diagnose mismatches from Settings instead of
+    // having to navigate back to the Dashboard.
+    final compat = ref.watch(runtimeStateProvider).contractCompat;
+    final daemonV = compat?.daemonVersion.toString() ?? 'unknown';
+    final appMin = compat?.appMinimum.toString() ?? '1.0';
+    return ListTile(
+      leading: const Icon(Icons.handshake_outlined),
+      title: const Text('Contract version'),
       subtitle: Text(
-        'App minimum: 1.0 (per ContractCompatMap.appMinimum). '
-        'Live daemon version shown on the Dashboard.',
+        'Daemon advertises: $daemonV · App requires ≥ $appMin'
+        '${compat == null ? " (bootstrap pending or unreachable)" : ""}',
       ),
     );
   }

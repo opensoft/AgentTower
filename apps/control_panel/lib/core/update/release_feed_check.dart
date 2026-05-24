@@ -209,3 +209,17 @@ class UpdateInfoNotifier extends Notifier<UpdateInfo> {
     return a.length > b.length;
   }
 }
+
+/// FR-068 — single shared UpdateInfoNotifier instance.
+///
+/// **Round-3 analyze D1 (2026-05-24)**: the `UpdateInfoNotifier`
+/// class was defined in T036 but its `NotifierProvider` was never
+/// declared — only referenced in the docstring at line 148. This
+/// gap meant Phase-9 `VersionBadge` had to invent its own
+/// release-feed provider, duplicating the FR-068 "at most once per
+/// launch" path. The provider declaration here is the single source
+/// of truth for `state` + `runOnce()`.
+final updateInfoProvider =
+    NotifierProvider<UpdateInfoNotifier, UpdateInfo>(
+  UpdateInfoNotifier.new,
+);
