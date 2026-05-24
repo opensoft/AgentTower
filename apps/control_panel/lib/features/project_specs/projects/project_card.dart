@@ -176,13 +176,18 @@ class ProjectCard extends StatelessWidget {
         ),
       );
     }
+    // Swarm-review CR-10 / FR-025 / SC-002: surface the current
+    // phase/status next to the active id so the operator can answer
+    // "what state is FEAT-N in?" from the card alone.
+    final phase = project.currentFeatureChangePhaseLabel;
+    final label = phase == null ? 'Active: $id' : 'Active: $id · $phase';
     return Row(
       children: [
         Icon(Icons.assignment, size: 16, color: theme.colorScheme.primary),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            'Active: $id',
+            label,
             style: theme.textTheme.bodyMedium,
             overflow: TextOverflow.ellipsis,
           ),
@@ -204,6 +209,17 @@ class ProjectCard extends StatelessWidget {
     final visible = masterIds.take(2).join(', ');
     final overflow = project.masterOverflowCount;
     final driver = project.currentDrivingMasterAgentId;
+    final handoff = project.currentDrivingHandoffId;
+    final featureId = project.activeFeatureChangeId;
+    // Swarm-review CR-10 / FR-029: render the canonical
+    // "X is driving FEAT-N under handoff H" sentence on the card
+    // when all three pieces are present, so SC-002 / SC-012's
+    // card-only attribution holds without the operator drilling
+    // into Current Work.
+    final canonicalSentence = (driver != null && featureId != null)
+        ? '$driver is driving $featureId'
+            '${handoff != null ? ' under $handoff' : ''}'
+        : null;
     return Row(
       children: [
         const Icon(Icons.psychology, size: 16),
@@ -211,8 +227,11 @@ class ProjectCard extends StatelessWidget {
         Expanded(
           child: Text(
             [
-              if (driver != null) 'Driver: $driver',
-              if (masterIds.isNotEmpty)
+              if (canonicalSentence != null)
+                canonicalSentence
+              else if (driver != null)
+                'Driver: $driver',
+              if (masterIds.isNotEmpty && canonicalSentence == null)
                 'Masters: $visible${overflow > 0 ? ' (+$overflow)' : ''}',
               'Sub-agents: ${project.subAgentCount}',
             ].join(' · '),

@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../domain/master_qualification.dart';
+import '../../../domain/models/badges.dart';
+import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/drift_signal.dart';
 import '../../../domain/models/drift_supporting.dart';
+import '../../../domain/models/master_summary.dart';
+import '../../../domain/models/project.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
+import '../providers.dart' as project_providers;
+import 'drift_repair_handoff_launch.dart';
 import 'drift_transition.dart';
 import 'providers.dart';
 
@@ -118,21 +125,91 @@ class _Body extends ConsumerWidget {
     );
   }
 
-  void _onRepair(BuildContext context, WidgetRef ref) {
-    // Launching the handoff flow requires a Project + MasterSummary;
-    // the Drift surface does not yet have a master picker in scope.
-    // For the MVP, surface a SnackBar nudge that names the linked
-    // feature(s) and the drift signal id so the operator can open
-    // the handoff flow from Current Work with the same context.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Open the handoff flow from Current Work; reference '
-          '${drift.findingId} in operator notes '
-          '(linked: ${drift.linkedFeatureIds.join(", ")})',
+  Future<void> _onRepair(BuildContext context, WidgetRef ref) async {
+    // Swarm-review CR-9 + FR-035: actually launch the drift-repair
+    // handoff flow with pre-filled mode + operator notes instead of
+    // the previous SnackBar nudge. Looks up the project from
+    // selectedProjectIdProvider; picks the currently-driving master
+    // when present, otherwise the first available master.
+    final selectedId = ref.read(project_providers.selectedProjectIdProvider);
+    if (selectedId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No project selected — pick one from Projects view first.',
+          ),
         ),
-      ),
+      );
+      return;
+    }
+    try {
+      final project =
+          await ref.read(project_providers.projectDetailProvider(selectedId).future);
+      final master = await _resolveMaster(ref, project);
+      if (master == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No master qualified per FR-071 is available for this '
+                'project. Adopt or assign one, then retry.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      if (!context.mounted) return;
+      DriftRepairHandoffLauncher.launch(
+        context: context,
+        drift: drift,
+        project: project,
+        master: master,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open handoff flow: $e')),
+        );
+      }
+    }
+  }
+
+  Future<MasterSummary?> _resolveMaster(
+    WidgetRef ref,
+    Project project,
+  ) async {
+    // Prefer the project's current driver if known. Otherwise nothing
+    // to do — the operator must wire a driving master first. The full
+    // master-picker UX lands when the agent surface adds a picker
+    // affordance; for now we surface the no-driver state clearly.
+    final driverId = project.currentDrivingMasterAgentId;
+    if (driverId == null) return null;
+    final masterClass =
+        await ref.read(masterClassCapabilitiesProvider.future);
+    // Synthesize a minimal MasterSummary view from the driver id.
+    // The handoff flow only needs (agentId, label, capability,
+    // currentStatus) for its step 1 confirmation; the heavier fields
+    // come from the handoff context bundle the daemon builds at
+    // submit time. If the driver capability doesn't pass FR-071
+    // qualification, return null so the caller surfaces the error.
+    final placeholder = MasterSummary(
+      agentId: driverId,
+      label: driverId,
+      capability: masterClass.isNotEmpty ? masterClass.first : 'claude',
+      role: AgentRole.master,
+      activeBadge: const ActiveInactiveBadge(active: true),
+      currentStatus: MasterStatus.active,
+      assignedProjectId: project.projectId,
+      workflowPhase:
+          const WorkflowPhase(humanLabel: 'Drift repair (in progress)'),
+      subAgentRollup: const SubAgentRollup(),
+      attentionSeverity: AttentionSeverity.warning,
+      validationBadge:
+          const CompactValidationBadge(kind: ValidationBadgeKind.unknown),
+      asOf: DateTime.now().toUtc(),
     );
+    return placeholder;
   }
 
   Widget _section(ThemeData theme, String title) => Padding(

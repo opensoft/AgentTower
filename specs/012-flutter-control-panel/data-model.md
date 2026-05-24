@@ -30,7 +30,9 @@ class Project with _$Project {
     required RepoStateBadge repoState,
     required BranchWorktreeBadge activeBranch,
     String? activeFeatureChangeId,             // FR-025 — primary feature/change ref
+    String? currentFeatureChangePhaseLabel,    // FR-025 / CR-10 — human-readable phase ("Engineering / Active") for card-level SC-002 attribution
     String? currentDrivingMasterAgentId,
+    String? currentDrivingHandoffId,           // FR-029 / CR-10 — completes the canonical "X is driving FEAT-N under handoff H" sentence on the card
     required ValidationBadge validationBadge,
     DateTime? validationLastRunAt,
     required DriftBadge driftBadge,

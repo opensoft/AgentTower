@@ -31,7 +31,14 @@ class Project with _$Project {
     required RepoStateBadge repoState,
     required BranchWorktreeBadge activeBranch,
     String? activeFeatureChangeId,
+    // Swarm-review CR-10 + SC-002: the project card must render the
+    // current feature/change phase + the canonical driver attribution
+    // (master + handoff) so SC-002's 5-second card-only attribution
+    // can pass without forcing the operator into Current Work. The
+    // daemon derives this from the same source feeding FR-027.
+    String? currentFeatureChangePhaseLabel,
     String? currentDrivingMasterAgentId,
+    String? currentDrivingHandoffId,
     @Default(<String>[]) List<String> primaryMasterAgentIds,
     @Default(0) int masterOverflowCount,
     @Default(0) int subAgentCount,

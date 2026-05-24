@@ -33,11 +33,24 @@ class HandoffFlow extends ConsumerStatefulWidget {
     required this.master,
     required this.project,
     this.initialPrimaryWorkItem,
+    this.initialMode,
+    this.initialOperatorNotes,
   });
 
   final MasterSummary master;
   final Project project;
   final FeatureChangeStatus? initialPrimaryWorkItem;
+
+  /// Swarm-review CR-9 / H-C1: lets the FR-035 drift-repair launcher
+  /// pre-seed the mode (`HandoffMode.driftRepair`) so the operator
+  /// does not have to pick it manually in step 4. Defaults to
+  /// `engineeringExecution` when null.
+  final HandoffMode? initialMode;
+
+  /// Lets a launcher pre-seed operator notes (e.g. drift-repair
+  /// launcher pastes the drift signal id + linked features for
+  /// context, per FR-035 + FR-040 operator-notes preservation).
+  final String? initialOperatorNotes;
 
   @override
   ConsumerState<HandoffFlow> createState() => _HandoffFlowState();
@@ -59,6 +72,13 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
     super.initState();
     if (widget.initialPrimaryWorkItem != null) {
       _workItemExpr = widget.initialPrimaryWorkItem!.displayId;
+      // Swarm-review H-P2: pre-resolve so the Preview affordance enables
+      // without forcing the operator to type into the field first.
+      _resolveRange();
+    }
+    if (widget.initialMode != null) _mode = widget.initialMode!;
+    if (widget.initialOperatorNotes != null) {
+      _operatorNotes = widget.initialOperatorNotes!;
     }
   }
 
@@ -297,6 +317,8 @@ void openHandoffFlow(
   required MasterSummary master,
   required Project project,
   FeatureChangeStatus? initialPrimaryWorkItem,
+  HandoffMode? initialMode,
+  String? initialOperatorNotes,
 }) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -304,6 +326,8 @@ void openHandoffFlow(
         master: master,
         project: project,
         initialPrimaryWorkItem: initialPrimaryWorkItem,
+        initialMode: initialMode,
+        initialOperatorNotes: initialOperatorNotes,
       ),
     ),
   );

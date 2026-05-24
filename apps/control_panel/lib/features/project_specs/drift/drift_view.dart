@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/drift_signal.dart';
 import '../../../domain/models/drift_supporting.dart';
+import '../../../domain/severity.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart' as project_providers;
 import 'drift_detail_view.dart';
@@ -110,48 +111,37 @@ class _DriftRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final age = DateTime.now().difference(drift.ageStartedAt);
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: _severityColor(theme, drift.severity),
-        child: Icon(
-          _severityIcon(drift.severity),
-          color: theme.colorScheme.onPrimary,
-          size: 18,
+    // Swarm-review CR-8 + H-C3: R-15 palette + R-22 color/icon/label
+    // triad. Severity label is now visible in the row subtitle so
+    // colorblind operators get the same information.
+    final sev = SeverityVisuals.forDrift(drift.severity, theme.brightness);
+    return Semantics(
+      label: '${sev.semanticDescription} drift: ${drift.summary}',
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: sev.color,
+          child: Icon(sev.icon, color: sev.onColor, size: 18),
         ),
-      ),
-      title: Text(drift.summary),
-      subtitle: Text(
-        '${drift.status.wireValue} · ${drift.source.wireValue} · '
-        'confidence ${drift.confidence.wireValue} · '
-        'scope ${drift.scope.kind.wireValue}'
-        '${drift.scope.id != null ? ":${drift.scope.id}" : ""} · '
-        '${_humanAge(age)}',
-      ),
-      trailing: Text(
-        drift.findingId,
-        style: theme.textTheme.labelSmall,
-      ),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => DriftDetailView(findingId: drift.findingId),
+        title: Text(drift.summary),
+        subtitle: Text(
+          '${sev.label} · ${drift.status.wireValue} · '
+          '${drift.source.wireValue} · confidence ${drift.confidence.wireValue} · '
+          'scope ${drift.scope.kind.wireValue}'
+          '${drift.scope.id != null ? ":${drift.scope.id}" : ""} · '
+          '${_humanAge(age)}',
+        ),
+        trailing: Text(
+          drift.findingId,
+          style: theme.textTheme.labelSmall,
+        ),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DriftDetailView(findingId: drift.findingId),
+          ),
         ),
       ),
     );
   }
-
-  static Color _severityColor(ThemeData theme, DriftSeverity s) => switch (s) {
-        DriftSeverity.critical => theme.colorScheme.error,
-        DriftSeverity.high => theme.colorScheme.tertiary,
-        DriftSeverity.warning => theme.colorScheme.secondary,
-        DriftSeverity.info => theme.colorScheme.primary,
-      };
-
-  static IconData _severityIcon(DriftSeverity s) => switch (s) {
-        DriftSeverity.critical => Icons.error,
-        DriftSeverity.high => Icons.warning,
-        DriftSeverity.warning => Icons.info,
-        DriftSeverity.info => Icons.info_outline,
-      };
 
   static String _humanAge(Duration d) {
     if (d.inDays > 0) return '${d.inDays}d ago';
