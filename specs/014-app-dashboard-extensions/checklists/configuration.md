@@ -9,7 +9,7 @@
 - [ ] CHK001 - Is every default value stated as an exact integer or string literal, not a descriptive phrase? [Clarity, Spec §FR-008]
 - [ ] CHK002 - Is the default `recently_skipped_window_ms` (`300_000` ms) stated in milliseconds with the underscore-separator convention preserved consistently? [Clarity, Spec §FR-008, §Clarifications Q6]
 - [ ] CHK003 - Is the default specified as daemon-side and not client-tunable in v1.1? [Completeness, Spec §FR-008, §Clarifications Q6]
-- [ ] CHK004 - Is the requirement defined for whether the default may be daemon-config-file tunable (Clarifications Q6 Option D was rejected — confirm the spec actively reflects that rejection)? [Consistency, Spec §FR-008, §Clarifications Q6] [NEEDS-CLARIFY-R2]
+- [x] CHK004 - Is the requirement defined for whether the default may be daemon-config-file tunable (Clarifications Q6 Option D was rejected — confirm the spec actively reflects that rejection)? [Consistency, Spec §FR-008, §Clarifications Q6] [NEEDS-CLARIFY-R2, R2-resolved: Clarifications §Session 2026-05-24-r2 Q1 + FR-022 — pure internal constant]
 
 ## Tunability Boundaries
 
@@ -25,7 +25,7 @@
 ## Implicit Constants
 
 - [ ] CHK010 - Are the size caps `title ≤128` and `detail ≤512` declared "configuration" or "contract" (and is that distinction stated)? [Clarity, Spec §FR-011]
-- [ ] CHK011 - Is there a requirement on how these caps would be raised in a future minor (additive only, or never)? [Gap] [NEEDS-CLARIFY-R2]
+- [x] CHK011 - Is there a requirement on how these caps would be raised in a future minor (additive only, or never)? [Gap] [NEEDS-CLARIFY-R2, R2-resolved: spec.md §FR-014 extension — future v1.x MAY raise caps additively]
 
 ## Configuration Surface Discipline
 

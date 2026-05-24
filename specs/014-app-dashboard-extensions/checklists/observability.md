@@ -23,13 +23,13 @@
 
 ## Operator-Action Mapping
 
-- [ ] CHK009 - Is each recommendation code mapped to a documented operator next-step (so the dashboard's recommendation is actionable, not just a label)? [Completeness, Spec §FR-011, §FR-016] [NEEDS-CLARIFY-R2]
+- [x] CHK009 - Is each recommendation code mapped to a documented operator next-step (so the dashboard's recommendation is actionable, not just a label)? [Completeness, Spec §FR-011, §FR-016] [NEEDS-CLARIFY-R2, R2-resolved: Clarifications §Session 2026-05-24-r2 Q6 — templates + T026 docs sufficient]
 - [ ] CHK010 - Is the relationship between `target` and operator actionability stated (e.g., `target.kind == container` implies "operator should inspect that container next")? [Clarity, Spec §FR-011]
 
 ## Data Retention vs Snapshot Semantics
 
 - [ ] CHK011 - Is "process-local, resets on daemon restart" stated as both a feature AND a constraint operators should understand? [Clarity, Spec §FR-008, §Assumptions]
-- [ ] CHK012 - Is the requirement defined that operators must not infer trend or history from `recently_skipped_count` alone? [Gap] [NEEDS-CLARIFY-R2]
+- [x] CHK012 - Is the requirement defined that operators must not infer trend or history from `recently_skipped_count` alone? [Gap] [NEEDS-CLARIFY-R2, R2-resolved: Clarifications §Session 2026-05-24-r2 Q7 — existing telemetry-not-audit Assumption is sufficient]
 
 ## Coverage of Scenario Classes
 

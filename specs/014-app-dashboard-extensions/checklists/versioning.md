@@ -20,12 +20,12 @@
 
 - [ ] CHK007 - Is the rule "clients ignore unknown future recommendation codes" stated as a client-side contract obligation, not just a daemon-side hope? [Clarity, Spec §FR-012, §Edge Cases]
 - [x] CHK008 - Is the analogous rule "clients ignore unknown future closed-set values for PaneState/AgentState/target.kind" stated? [Gap, Spec §FR-012] [EDIT-applied: spec.md §FR-012 generalized to PaneState + AgentState + target.kind + recommendation code]
-- [ ] CHK009 - Is there a requirement for the v1.1 daemon to ALSO ignore unknown future client-side fields (symmetric forward compat), or is that explicitly out of scope? [Gap] [NEEDS-CLARIFY-R2]
+- [x] CHK009 - Is there a requirement for the v1.1 daemon to ALSO ignore unknown future client-side fields (symmetric forward compat), or is that explicitly out of scope? [Gap] [NEEDS-CLARIFY-R2, R2-resolved: spec.md §FR-012 extension — symmetric forward compat]
 
 ## Capability Flag Discipline
 
 - [ ] CHK010 - Is the absence of new capability flags stated as a deliberate requirement (FR-015) and not a documentation gap? [Completeness, Spec §FR-015]
-- [ ] CHK011 - Is the criterion for when a future v1.x field WOULD require a capability flag stated, or is that deferred to a later minor? [Gap] [NEEDS-CLARIFY-R2]
+- [x] CHK011 - Is the criterion for when a future v1.x field WOULD require a capability flag stated, or is that deferred to a later minor? [Gap] [NEEDS-CLARIFY-R2, R2-resolved: spec.md §FR-028 — capability-flag criterion]
 
 ## Emission Gating
 

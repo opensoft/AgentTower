@@ -15,7 +15,7 @@
 ## Downstream Consumers (What FEAT-014 Provides)
 
 - [ ] CHK006 - Is FEAT-012 named as the primary consumer and the contract surface FEAT-012 will read enumerated? [Completeness, Spec §Assumptions]
-- [ ] CHK007 - Are requirements stated for *other* potential consumers (CLI, monitoring scripts, future apps) using the same fields, or is FEAT-012 declared the sole v1.1 consumer? [Gap] [NEEDS-CLARIFY-R2]
+- [x] CHK007 - Are requirements stated for *other* potential consumers (CLI, monitoring scripts, future apps) using the same fields, or is FEAT-012 declared the sole v1.1 consumer? [Gap] [NEEDS-CLARIFY-R2, R2-resolved: spec.md §FR-023 extension — public read surface; FEAT-012 primary not sole]
 
 ## Contract Versioning Touchpoints
 
