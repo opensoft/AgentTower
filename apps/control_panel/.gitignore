@@ -33,6 +33,24 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Generated code (build_runner: freezed + json_serializable). Regenerated
+# locally via `dart run build_runner build --delete-conflicting-outputs`;
+# CI runs the same step before analyze/test, so the .freezed.dart and
+# .g.dart files must NOT be committed.
+**/*.freezed.dart
+**/*.g.dart
+
+# Flutter-generated localization output (flutter gen-l10n, driven by
+# l10n.yaml). Source of truth lives in assets/l10n/*.arb.
+lib/core/l10n/app_localizations*.dart
+
+# Per-platform plugin registrants generated on every `flutter pub get`.
+linux/flutter/generated_plugin_registrant.*
+linux/flutter/generated_plugins.cmake
+macos/Flutter/GeneratedPluginRegistrant.swift
+windows/flutter/generated_plugin_registrant.*
+windows/flutter/generated_plugins.cmake
+
 # Symbolication related
 app.*.symbols
 

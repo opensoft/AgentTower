@@ -89,31 +89,13 @@ class Fixtures {
             lastActivityAt ?? DateTime.now().toUtc().toIso8601String(),
       };
 
-  // ---- Project ----
-  static Map<String, dynamic> project({
-    String projectId = 'proj-1',
-    String label = 'agenttower',
-    String repositoryPath = '/work/agenttower',
-    String? activeFeatureChangeId,
-    String? currentDrivingMasterAgentId,
-    int unreadNotificationCount = 0,
-  }) =>
-      {
-        'project_id': projectId,
-        'label': label,
-        'repository_path': repositoryPath,
-        'repo_state': 'clean',
-        'active_branch': '012-flutter-control-panel',
-        if (activeFeatureChangeId != null)
-          'active_feature_change_id': activeFeatureChangeId,
-        if (currentDrivingMasterAgentId != null)
-          'current_driving_master_agent_id': currentDrivingMasterAgentId,
-        'validation_badge': 'unknown',
-        'drift_badge': 'none',
-        'attention_summary': {'count': 0, 'highest_severity': 'info'},
-        'unread_notification_count': unreadNotificationCount,
-        'last_activity_at': DateTime.now().toUtc().toIso8601String(),
-      };
+  // ---- Project (real shape lives further down at Phase-4 US2 builder) ----
+  // The Phase-2 stub here was a placeholder before the badge sub-maps existed
+  // (data-model §1.1). The current Project freezed class requires nested
+  // RepoStateBadge / BranchWorktreeBadge / ValidationBadge / DriftBadge /
+  // AttentionSummary maps; the comprehensive builder added by T085 below
+  // produces them in the correct shape. Use that one — the stub has been
+  // removed to avoid the duplicate-definition compile error.
 
   // ---- Drift Signal ----
   static Map<String, dynamic> drift({

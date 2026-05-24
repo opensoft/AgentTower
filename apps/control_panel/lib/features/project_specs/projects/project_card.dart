@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/badges.dart';
-import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/project.dart';
 
 /// FR-025 Project card. T088 (Phase 4 US2).

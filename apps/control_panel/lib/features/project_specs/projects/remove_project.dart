@@ -101,7 +101,7 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
       await ref.read(appClientProvider).projectRemove(
             projectId: widget.projectId,
           );
-      await ref
+      ref
           .read(uxStateRepositoryProvider)
           .clearProjectScopedState(widget.projectId);
       // If the removed project was the active selection, clear it.

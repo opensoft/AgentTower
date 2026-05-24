@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../domain/models/feature_change_status.dart';
 import '../../../ui/widgets/markdown_viewer.dart';
 import '../providers.dart';
 
@@ -81,7 +82,7 @@ class _FeatureList extends StatelessWidget {
     required this.onSelect,
   });
 
-  final List<dynamic> featureChanges;
+  final List<FeatureChangeStatus> featureChanges;
   final String? selectedId;
   final ValueChanged<String> onSelect;
 

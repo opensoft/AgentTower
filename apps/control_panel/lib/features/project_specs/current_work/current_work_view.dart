@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/providers.dart';
 import '../../../domain/models/feature_change_status.dart';
 import '../providers.dart';
 import 'driving_master_indicator.dart';
