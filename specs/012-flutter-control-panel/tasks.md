@@ -360,16 +360,16 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 **Purpose**: Wrap-up tasks that span multiple stories or finalize release readiness.
 
-- [ ] T143 Wire FR-009 Settings surface aggregating every entry: daemon socket path, contract version display, notifications grouping toggle, OS-native notification integration toggle, theme (Light/Dark/System), density (Comfortable/Compact), "Open log folder" + "Copy diagnostics bundle" affordances, doctor / preflight action. Settings is reachable from any workspace + command palette.
-- [ ] T144 [P] Hook doctor (T026) into the command palette (T035) per research R-20 so it's invokable via Ctrl/Cmd+K.
-- [ ] T145 [P] Hook diagnostics bundle (T027) into Settings (T143) + command palette (T035).
-- [ ] T146 [P] Implement `apps/control_panel/lib/features/shell/version_display.dart` — FR-068 installed app version display on Dashboard + Settings, "update available" indicator linking to release page (driven by T036).
+- [X] T143 Wire FR-009 Settings surface aggregating every entry: daemon socket path, contract version display, notifications grouping toggle, OS-native notification integration toggle, theme (Light/Dark/System), density (Comfortable/Compact), "Open log folder" + "Copy diagnostics bundle" affordances, doctor / preflight action. Settings is reachable from any workspace + command palette.
+- [X] T144 [P] Hook doctor (T026) into the command palette (T035) per research R-20 so it's invokable via Ctrl/Cmd+K.
+- [X] T145 [P] Hook diagnostics bundle (T027) into Settings (T143) + command palette (T035).
+- [X] T146 [P] Implement `apps/control_panel/lib/features/shell/version_display.dart` — FR-068 installed app version display on Dashboard + Settings, "update available" indicator linking to release page (driven by T036).
 - [X] T147 Implement `apps/control_panel/lib/features/shell/quit_handler.dart` — FR-082 immediate-close behavior; trigger FR-069 flush-before-exit via T017. **Status (verified 2026-05-24 / analyze D1):** already landed in `lib/main.dart:117-143` as `_ShutdownListener` (registered via `windowManager.addListener` at line 81). Calls `uxState.flushBeforeExit()` → `session.dispose()` → `logger.close()` → `windowManager.destroy()`, each best-effort with try/catch per FR-082's "close regardless" rule. No separate `quit_handler.dart` file needed.
 - [ ] T148 [P] Implement per-OS packaging in `apps/control_panel/tools/package_windows.ps1` (MSIX), `tools/package_macos.sh` (DMG + notarization + hardened runtime), `tools/package_linux.sh` (AppImage + .deb) per research R-13.
 - [ ] T149 [P] Write unit tests in `apps/control_panel/test/unit/` covering: lifecycle validators (T039-T043), envelope parser (T011), error code mapping (T012), UX-state repository (T017) including atomic-write + migration + corruption-quarantine paths, helper-policy resolver (T105) including FEAT-011 v1.0 absence fallback (per contracts/helper-policy.md §6).
 - [ ] T150 [P] Write widget tests in `apps/control_panel/test/widget/` covering: project card rendering (T088) with zero/one/two/overflow masters, attention queue (T135) icon+color combinations, severity badges across themes (T028), markdown viewer (T095) safe-markdown subset.
 - [ ] T151 [P] Write golden tests in `apps/control_panel/test/golden/` (alchemist) for: Light/Dark/System themes × Comfortable/Compact densities × every workspace top-level view, ensuring FR-066 WCAG AA contrast and FR-009 density consistency.
-- [ ] T152 Write `apps/control_panel/README.md` covering: build / run / packaging instructions per OS, mock-daemon harness usage, FVM pin, lint rules. Mirrors plan.md §Project Structure overview.
+- [X] T152 Write `apps/control_panel/README.md` covering: build / run / packaging instructions per OS, mock-daemon harness usage, FVM pin, lint rules. Mirrors plan.md §Project Structure overview.
 - [ ] T153 Run the `specs/012-flutter-control-panel/quickstart.md` validation against the integrated app + real `agenttowerd` on each supported OS (Windows, macOS, Linux). Record outcomes against each acceptance-check table.
 
 ### Verification tasks (added per /speckit-analyze Round 1)
@@ -378,8 +378,8 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 - [ ] T155 Network-trace + subprocess-trace verification in `apps/control_panel/test/security/no_network_no_cli_scrape_test.dart`: run full-workspace exercise under packet capture (assert zero outbound packets except to `releases.opensoft.one`) AND under process trace (assert no subprocess invocation of the `agenttower` CLI). Closes analyze finding C4 / SC-009.
 - [ ] T156 CLI non-regression smoke in `tests/integration/test_feat012_cli_noop.py` (Python, lives next to existing FEAT-002..010 tests) — assert FEAT-002..010 CLI methods produce byte-identical output before and after the desktop-app build is installed. Closes analyze finding Const2.
 - [ ] T157 [P] Codebase audit in `apps/control_panel/tools/audit_no_local_mutation.dart` (or `scripts/`) — static-analysis pass asserting that every mutation in `apps/control_panel/lib/` originates from `core/daemon/app_client.dart` surface (no UI code constructs `app.*` requests directly, no UI code mutates daemon-owned model state). Closes analyze finding C12 / FR-005 invariant.
-- [ ] T158 [P] Annotate non-buildable Success Criteria in `apps/control_panel/test/perf/sc_coverage_map.md` (a doc, not test code): explicitly mark SC-002, SC-008, SC-011, SC-012, SC-013 as user-study or post-launch-survey items deferred to internal Opensoft operator cohort evaluation; reference Assumptions in spec.md. Document SC-006/007/008a as covered by T125/T128/T130, SC-001 by T054 (extended), SC-003/004 by T097 (extended), SC-005 by T112 (extended), SC-009 by T155, SC-010 by T055 (extended). Closes analyze findings C6 + C11.
-- [ ] T159 [P] Update SC coverage references in `specs/012-flutter-control-panel/tasks.md` final footer to reflect post-fix counts (no functional change; documentation-only counter sync).
+- [X] T158 [P] Annotate non-buildable Success Criteria in `apps/control_panel/test/perf/sc_coverage_map.md` (a doc, not test code): explicitly mark SC-002, SC-008, SC-011, SC-012, SC-013 as user-study or post-launch-survey items deferred to internal Opensoft operator cohort evaluation; reference Assumptions in spec.md. Document SC-006/007/008a as covered by T125/T128/T130, SC-001 by T054 (extended), SC-003/004 by T097 (extended), SC-005 by T112 (extended), SC-009 by T155, SC-010 by T055 (extended). Closes analyze findings C6 + C11.
+- [X] T159 [P] Update SC coverage references in `specs/012-flutter-control-panel/tasks.md` final footer to reflect post-fix counts (no functional change; documentation-only counter sync).
 
 ### Post-Phase-3 review follow-ups (added 2026-05-24)
 
@@ -447,10 +447,10 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 
 ---
 
-**Total tasks**: 164 (T001..T164)
-**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (22, including 6 verification tasks T154-T159 from /speckit-analyze Round 1 and 5 post-Phase-3 review follow-ups T160-T164 from /speckit-analyze Round 4).
-**Parallel tasks**: 114 marked [P].
-**Story-labelled tasks**: 89 across US1..US6.
+**Total tasks**: 170 (T001..T170, updated 2026-05-24 per /speckit-analyze Round 2 — added T165-T170 for the swarm-review-deferred items)
+**Tasks per phase**: Phase 1 (9) + Phase 2 (44) + Phase 3 US1 (27) + Phase 4 US2 (16) + Phase 5 US3 (15) + Phase 6 US4 (7) + Phase 7 US5 (11) + Phase 8 US6 (13) + Phase 9 (28, including 6 verification tasks T154-T159 from /speckit-analyze Round 1, 5 post-Phase-3 review follow-ups T160-T164 from /speckit-analyze Round 4, and 6 post-Phase-8 follow-ups T165-T170 from /speckit-analyze Round 2 covering CR-4 i18n / H-B10 drafted-row / M-11 streaming / H-B1+B2+C2 test rewrites).
+**Parallel tasks**: 119 marked [P].
+**Story-labelled tasks**: 92 across US1..US6.
 
 **Verification-task coverage** (added per /speckit-analyze Round 1):
 - Performance: T154 covers FR-062 + FR-063 + FR-064 budgets.
@@ -466,3 +466,11 @@ Within a single user-story phase, the [P]-marked tasks against distinct file pat
 - T162 extends T055 with real SC-010 outage/recovery measurements.
 - T163 wires the integration test for onboarding milestone auto-tick (post-Phase-3 C9 fix).
 - T164 writes widget tests for the 12 Phase 3 US1 surfaces (deferred from Block D in the review fix-up because freezed codegen had to land first).
+
+**Post-Phase-8 follow-ups** (added per /speckit-analyze Round 2, 2026-05-24):
+- T165 (CR-4) — FR-067 i18n sweep replacing ~200 hardcoded English strings across Phase 4-8 widgets.
+- T166 (H-B10) — FR-072(a) drafted-row daemon-coordination; requires `app.handoff.draft` FEAT-011 extension.
+- T167 (M-11) — FR-064 live-update streaming subscriptions; requires daemon-side streaming method.
+- T168 (H-B1) — rewrite us3 SC-003 to drive real taps + Stopwatch end-to-end.
+- T169 (H-B2) — rewrite us3 SC-004 byte-for-byte invariant to be non-tautological.
+- T170 (H-C2) — add SC-005 60-second wall-clock budget to us4_drift.dart.

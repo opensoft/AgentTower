@@ -1,121 +1,143 @@
-# AgentTower Flutter Desktop Control Panel
+# AgentTower Control Panel (`apps/control_panel/`)
 
-Local-first desktop operator UI for `agenttowerd`. Part of [FEAT-012](../../specs/012-flutter-control-panel/spec.md).
+The FEAT-012 Flutter desktop client for `agenttowerd`. Cross-platform
+(Windows / macOS / Linux), single-window, pure FEAT-011 `app.*`
+consumer — never opens a network socket (except the FR-068 release
+feed), never scrapes CLI output, never invents domain state locally.
 
-This is the Dart/Flutter half of a multi-language monorepo. The Python daemon + CLI sources stay at `src/agenttower/` (untouched by FEAT-012).
+Part of [FEAT-012](../../specs/012-flutter-control-panel/spec.md).
+This is the Dart/Flutter half of a multi-language monorepo. The
+Python daemon + CLI sources stay at `src/agenttower/` (untouched by
+FEAT-012).
 
-## Status
+## Prerequisites
 
-**Phase 1 (Setup) in progress.** Tasks T001–T008 done in this commit; T009 (`flutter create --platforms=...`) requires the operator to run with the Flutter SDK installed. See **Operator prerequisites** below.
+| Tool | Version | Notes |
+|---|---|---|
+| Flutter SDK | 3.27 stable (pin) | bench currently runs 3.44.0 as a documented Phase-3 deviation (T002) |
+| Dart | 3.5+ (3.12 in bench) | tracked via Flutter SDK |
+| Python 3 | 3.10+ | required for `test_harness/mock_daemon/server.py` (integration tests) |
+| Xvfb | any | required for headless Linux integration tests |
+| `libnotify-dev` + `libgtk-3-dev` + `ninja-build` + `cmake` | apt-current | Linux desktop build deps |
 
-Tracking: `../../specs/012-flutter-control-panel/tasks.md` (159 tasks across 9 phases).
+The repo ships an `.fvm/fvm_config.json` pinning Flutter 3.27. Use FVM
+when local development is feasible; the in-bench toolchain (3.44.0)
+is a documented exception tracked by T002 + T160.
 
-## Operator prerequisites
-
-Before running tasks T010+ you must complete T009 — bootstrapping Flutter's per-OS platform stubs:
+## Build
 
 ```bash
-# 1. Install Flutter 3.27 stable per research R-01.
-#    Recommended: use FVM (fvm.app) so the pin in .fvm/fvm_config.json takes effect.
-#    Otherwise install via https://docs.flutter.dev/get-started/install
-#    and ensure `flutter --version` reports ≥ 3.27.0.
-
-# 2. From this directory:
-cd apps/control_panel
-
-# 3. Enable desktop targets (once per machine):
-flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop
-
-# 4. Materialize per-OS platform stubs:
-flutter create --platforms=windows,macos,linux .
-
-# 5. Fetch dependencies + generate ARB-based localizations:
+# From apps/control_panel/
 flutter pub get
-flutter gen-l10n
-
-# 6. Codegen for freezed/json_serializable (runs after Phase 2 starts producing models):
-flutter pub run build_runner watch --delete-conflicting-outputs
-```
-
-After step 4, the directories `windows/`, `macos/`, `linux/` will exist alongside `lib/`. Then Phase 2 (Foundational) implementation can begin.
-
-## Bench note
-
-`flutterBench` is a valid FEAT-012 development environment, but there is an important distinction:
-
-- the shared bench currently has a warmed global Flutter `3.44.0`
-- this app is pinned to Flutter `3.27.0` via `.fvm/fvm_config.json` and `pubspec.yaml`
-
-On 2026-05-23, the bench-global Flutter was enough to materialize the desktop platform directories, but `flutter pub get` failed under `3.44.0` because `flutter_localizations` there requires `intl 0.20.2` while FEAT-012 is still pinned to `intl ^0.19.0` for the `3.27.0` baseline.
-
-So the rule for this repo is:
-
-- use `flutterBench` for the containerized dev loop
-- but use the pinned Flutter `3.27.0` toolchain for real dependency resolution, analysis, and tests
-
-## Project layout
-
-```
-apps/control_panel/
-├── pubspec.yaml                          # Dependencies (T002 ✓)
-├── .fvm/fvm_config.json                  # Flutter version pin (T003 ✓)
-├── analysis_options.yaml                 # Lints (T004 ✓)
-├── l10n.yaml                             # i18n codegen config (T005 ✓)
-├── README.md                             # This file (T003 ✓)
-├── lib/                                  # Dart source (Phase 2 onward)
-├── assets/
-│   ├── l10n/                             # ARB source — en.arb stub (T006 ✓)
-│   └── icons/                            # Severity + nav icons (T007 ✓)
-├── test/                                 # Unit + widget + golden tests (Phase 2+)
-├── integration_test/                     # End-to-end against mock daemon (Phase 2+)
-├── test_harness/
-│   └── mock_daemon/                      # Python mock daemon (T050+)
-└── tools/                                # Per-OS packaging scripts (T008 ✓ stubs)
-```
-
-## Build / run
-
-After completing operator prerequisites above:
-
-```bash
-# Run in debug:
-flutter run -d linux       # Linux desktop
-flutter run -d macos       # macOS desktop
-flutter run -d windows     # Windows desktop
-
-# Build release artifacts:
-flutter build linux --release
-flutter build macos --release
-flutter build windows --release
-
-# Per-OS packaging (after release build):
-./tools/package_linux.sh    # AppImage + .deb
-./tools/package_macos.sh    # .dmg + notarization
-./tools/package_windows.ps1 # MSIX
-```
-
-## Tests
-
-```bash
-flutter test                                # unit + widget + golden
-flutter test integration_test               # end-to-end against mock daemon
-```
-
-Mock daemon lives at `test_harness/mock_daemon/server.py` (Python, see research R-17).
-
-## Lints + format
-
-```bash
+dart run build_runner build --delete-conflicting-outputs
 flutter analyze
-dart format --output=none --set-exit-if-changed .
+flutter test --no-pub
+flutter build linux --debug     # or macos / windows per platform
 ```
 
-## See also
+`build_runner` outputs (`*.freezed.dart`, `*.g.dart`,
+`app_localizations*.dart`, per-platform `generated_plugin_registrant*`)
+are gitignored — regenerate locally; CI runs the same step.
 
-- `../../specs/012-flutter-control-panel/spec.md` — feature requirements (82 FRs + FR-038a + FR-061a)
-- `../../specs/012-flutter-control-panel/plan.md` — technical context + Constitution Check
-- `../../specs/012-flutter-control-panel/research.md` — 42 tech-choice decisions (R-01..R-42)
-- `../../specs/012-flutter-control-panel/data-model.md` — entity definitions
-- `../../specs/012-flutter-control-panel/contracts/` — FEAT-011 method consumption + ux-state schema + helper-policy contract
-- `../../specs/012-flutter-control-panel/tasks.md` — 159 implementation tasks
-- `../../specs/012-flutter-control-panel/quickstart.md` — US1 walkthrough
+## Run (development)
+
+```bash
+flutter run -d linux \
+  --dart-define=DAEMON_SOCKET_PATH=/var/run/agenttower/app.sock
+```
+
+The default daemon socket path is `/var/run/agenttower/app.sock` per
+FEAT-011's host-daemon contract; override via the
+`DAEMON_SOCKET_PATH` env-define for development against a custom
+socket, or change it in Settings → Connection at runtime.
+
+## Run integration tests (Xvfb on Linux)
+
+```bash
+# Single test
+xvfb-run -a flutter test integration_test/us2_project_and_master.dart \
+  -d linux --no-pub
+
+# Whole suite (us1..us6 + runtime_states + contract_version_skew)
+for f in integration_test/*.dart; do
+  echo "=== $f ===" && xvfb-run -a flutter test "$f" -d linux --no-pub
+done
+```
+
+Integration tests bring up a Python mock daemon via
+`test_harness/mock_daemon/server.py`. The harness is the test's
+child process (per swarm-review CR-2 repair); `python3` must be on
+PATH.
+
+## Packaging (per FR-068)
+
+Per-OS packaging scripts live under `tools/`:
+
+- `tools/package_windows.ps1` — MSIX (sideload, no Microsoft Store at MVP)
+- `tools/package_macos.sh` — `.dmg` with notarized + hardened-runtime signing
+- `tools/package_linux.sh` — `.AppImage` + unofficial `.deb`
+
+T148 tracks the full packaging implementation; the stubs ship today
+so the structure is auditable. Signed with the Opensoft daemon
+code-signing CA per research R-13.
+
+## Lint rules
+
+The project uses `flutter_lints` (configured in `analysis_options.yaml`)
+plus project-specific overrides: no implicit-dynamic, strict
+type-inference. Phase-3 architectural notes (H3/M-A1/etc.) are
+preserved as inline comments in the affected files; the
+swarm-review (2026-05-24) added seven cross-cutting helpers — see
+`lib/ui/widgets/README.md` for the catalog.
+
+## Mock-daemon harness (`test_harness/mock_daemon/`)
+
+`server.py` listens on a temp Unix socket and replies with fixture
+JSON for the FEAT-011 `app.*` methods. Each integration test
+constructs a fixture payload, hands it to
+`MockDaemonClient.start(fixture:)`, and the test framework speaks
+to the harness over the socket through the production
+`DaemonSession`/`SocketClient` path.
+
+`MockDaemonClient.stop()` uses `ProcessStartMode.normal` per
+swarm-review CR-2 — `detachedWithStdio` made `kill`/`exitCode`
+throw on every teardown.
+
+## Project structure
+
+| Path | Purpose |
+|---|---|
+| `lib/main.dart` | Entry point: `runApp(ProviderScope(child: AgentTowerControlPanel()))` |
+| `lib/app.dart` | Root `MaterialApp` + theme + locale + router |
+| `lib/core/daemon/` | `AppClient`, `DaemonSession`, envelope/error types |
+| `lib/core/persistence/` | `UxStateRepository` (only file the app writes) |
+| `lib/core/logging/` | Rotating log file, latency capture, uncaught error sink |
+| `lib/core/shortcuts/` | Command-palette + keyboard-shortcut registry |
+| `lib/core/notifications/` | Grouping rule + OS-native dispatcher (T032/T033) |
+| `lib/core/update/` | FR-068 release-feed checker (sole permitted outbound) |
+| `lib/domain/models/` | Daemon-mirror freezed models — never mutated locally |
+| `lib/domain/lifecycles/` | FR-014/034/044/048 state validators |
+| `lib/domain/severity.dart` | R-15 + R-22 severity color/icon/label triad helper |
+| `lib/domain/master_qualification.dart` | FR-071 master-class lookup + envelope |
+| `lib/features/agent_ops/` | US1 + attention queue + operator history surfaces |
+| `lib/features/project_specs/` | US2 + US3 + US4 surfaces (projects, current work, specs, changes, drift, handoff flow) |
+| `lib/features/testing_demo/` | US5 surfaces (available validation, runs, demo readiness) |
+| `lib/features/notifications/` | US6 panel + history + badges + OS-native integration |
+| `lib/features/settings/` | FR-009 Settings view + doctor + diagnostics bundle |
+| `lib/features/shell/` | AppShell, global banner, runtime-state provider, version display |
+| `lib/ui/widgets/` | Cross-cutting widgets — see `lib/ui/widgets/README.md` |
+
+## Speckit + swarm-review trail
+
+Implementation history lives under `specs/012-flutter-control-panel/`:
+
+- `spec.md` — 83 FRs + 14 SCs
+- `plan.md` — tech stack, architecture, cross-cutting widget conventions
+- `tasks.md` — 170 task items (164 + 6 post-Phase-8 follow-ups)
+- `data-model.md` — freezed model shapes + cross-cutting invariants
+- `swarm-review-2026-05-24.md` — 88-finding multi-expert code review report
+- `swarm-review-fix-plan.md` — batched remediation plan
+- `flutter-testing-plan.md` — test-pyramid + bench-deviation notes
+
+The spec is the source of truth for behavior; this README is the
+source of truth for build / run / package mechanics.
