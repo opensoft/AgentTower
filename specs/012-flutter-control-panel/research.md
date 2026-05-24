@@ -280,6 +280,8 @@ All four colors meet WCAG AA 4.5:1 against the corresponding theme background.
 
 **Note on FEAT-011 coverage**: FEAT-011 v1.0 ships 32 methods. The exact helper-policy methods named in FR-038a (`app.helper_policies.list` / `app.helper_policies.resolve`) may need to be added in a minor (v1.x) bump if not already present. If the methods are absent at integration time, the app surfaces the handoff helper-policy section as `runtime-degraded` per FR-004 and disables policy override per FR-002 contract-version-incompatible behavior; the spec's existing degradation rules apply without change.
 
+**Degraded-path surfacing (updated 2026-05-24 per swarm-review H-G2)**: the `masterClassCapabilitiesProvider` returns a `MasterClassCapabilities` envelope carrying `capabilities: Set<String>` plus an explicit `degraded: bool` + `degradedReason: String?` pair. When the daemon's `app.capability.registry` is unreachable or returns a malformed shape, surfaces that consume the provider render a banner / log entry naming the missing method rather than silently failing every Master qualification (the prior silent-empty-set behavior left operators with no signal). Same pattern applies to the helper-policy resolver: `HelperPolicyResolver.degradedSnapshot()` is used as a fallback but the operator-facing inline banner is the surface-level remediation (H-B7).
+
 **Rationale**: keeps FR-001 / FR-005 invariants intact while honoring the round-2 clarification that policies are not file-scraped.
 
 ## R-20 — Doctor / preflight check implementation (FR-009)
