@@ -35,7 +35,7 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 - [X] T006 [P] Create `apps/control_panel/assets/l10n/en.arb` (initial MVP locale) with stub keys for the FR-002 / FR-076 / FR-082 banner messages and the FR-009 Settings labels.
 - [X] T007 [P] Create `apps/control_panel/assets/icons/` and source severity icons (info/warning/high/critical) per research R-15 palette.
 - [X] T008 [P] Create `apps/control_panel/tools/{package_windows.ps1,package_macos.sh,package_linux.sh,release_feed_check.dart}` as stub scripts (final packaging logic lands in Phase 9; the files are placeholders so the structure is auditable).
-- [ ] T009 ⛔ **PHASE-BLOCKING OPERATOR ACTION** — Configure Flutter desktop targets (`flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop`) and run `flutter create --platforms=windows,macos,linux .` from `apps/control_panel/` to materialize platform stubs. This session ran without Flutter SDK in the sandbox; the operator must run the two commands on a workstation with Flutter ≥ 3.27 installed. See `apps/control_panel/README.md` §Operator prerequisites for the exact command sequence. **Phases 2 → 9 cannot pass `flutter analyze` / `flutter test` without this step.** When you complete it, change the marker to `[X]` so Phase 3 unblocks cleanly.
+- [X] T009 ⛔ **PHASE-BLOCKING OPERATOR ACTION** — Configure Flutter desktop targets (`flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop`) and run `flutter create --platforms=windows,macos,linux .` from `apps/control_panel/` to materialize platform stubs. This session ran without Flutter SDK in the sandbox; the operator must run the two commands on a workstation with Flutter ≥ 3.27 installed. See `apps/control_panel/README.md` §Operator prerequisites for the exact command sequence. **Phases 2 → 9 cannot pass `flutter analyze` / `flutter test` without this step.** When you complete it, change the marker to `[X]` so Phase 3 unblocks cleanly.
 
 ---
 
@@ -131,48 +131,48 @@ This is a multi-language monorepo (per plan.md §Structure Decision). Python sou
 
 ### Tests for User Story 1 (per plan.md integration_test/)
 
-- [ ] T054 [P] [US1] Write integration test `apps/control_panel/integration_test/us1_adopt_and_operate.dart` covering US1 §1-§6 acceptance scenarios against the mock-daemon harness (T050). Assert SC-001 budget: full 8-milestone onboarding walk (launch → first registered agent + log + event + send + route) completes in ≤ 10 minutes on the mock daemon.
-- [ ] T055 [P] [US1] Write integration test `apps/control_panel/integration_test/runtime_states.dart` exercising the FR-004 five-state distinction on every US1 sub-view. Assert SC-010 budgets: on simulated daemon outage, every live-data surface transitions to its `runtime-unreachable` empty state within 2 s; after daemon return + "Retry connection", live state reverts within 5 s; no surface displays stale data labelled as live during the outage.
-- [ ] T056 [P] [US1] Write integration test `apps/control_panel/integration_test/contract_version_skew.dart` covering FR-002 global banner + per-surface read-only mode (US1 acceptance scenario added by F1 / spec-quality-pass).
+- [X] T054 [P] [US1] Write integration test `apps/control_panel/integration_test/us1_adopt_and_operate.dart` covering US1 §1-§6 acceptance scenarios against the mock-daemon harness (T050). Assert SC-001 budget: full 8-milestone onboarding walk (launch → first registered agent + log + event + send + route) completes in ≤ 10 minutes on the mock daemon.
+- [X] T055 [P] [US1] Write integration test `apps/control_panel/integration_test/runtime_states.dart` exercising the FR-004 five-state distinction on every US1 sub-view. Assert SC-010 budgets: on simulated daemon outage, every live-data surface transitions to its `runtime-unreachable` empty state within 2 s; after daemon return + "Retry connection", live state reverts within 5 s; no surface displays stale data labelled as live during the outage.
+- [X] T056 [P] [US1] Write integration test `apps/control_panel/integration_test/contract_version_skew.dart` covering FR-002 global banner + per-surface read-only mode (US1 acceptance scenario added by F1 / spec-quality-pass).
 
 ### Domain models for US1
 
-- [ ] T057 [P] [US1] Implement `apps/control_panel/lib/domain/models/container.dart` — `Container` freezed class per data-model.md §1.16.
-- [ ] T058 [P] [US1] Implement `apps/control_panel/lib/domain/models/pane.dart` — `Pane` freezed class with PaneState enum + FR-014 transition reference per data-model.md §1.4.
-- [ ] T059 [P] [US1] Implement `apps/control_panel/lib/domain/models/adopted_agent.dart` — `AdoptedAgent` freezed class with role/capability/project_path/log_attachment/parent_agent_id/descendants_beyond_visible per data-model.md §1.2.
-- [ ] T060 [P] [US1] Implement `apps/control_panel/lib/domain/models/queue_row.dart` — `QueueRow` freezed class per data-model.md §1.16.
-- [ ] T061 [P] [US1] Implement `apps/control_panel/lib/domain/models/route.dart` — `Route` freezed class per data-model.md §1.16.
-- [ ] T062 [P] [US1] Implement `apps/control_panel/lib/domain/models/event.dart` — `Event` freezed class per data-model.md §1.16.
+- [X] T057 [P] [US1] Implement `apps/control_panel/lib/domain/models/container.dart` — `Container` freezed class per data-model.md §1.16.
+- [X] T058 [P] [US1] Implement `apps/control_panel/lib/domain/models/pane.dart` — `Pane` freezed class with PaneState enum + FR-014 transition reference per data-model.md §1.4.
+- [X] T059 [P] [US1] Implement `apps/control_panel/lib/domain/models/adopted_agent.dart` — `AdoptedAgent` freezed class with role/capability/project_path/log_attachment/parent_agent_id/descendants_beyond_visible per data-model.md §1.2.
+- [X] T060 [P] [US1] Implement `apps/control_panel/lib/domain/models/queue_row.dart` — `QueueRow` freezed class per data-model.md §1.16.
+- [X] T061 [P] [US1] Implement `apps/control_panel/lib/domain/models/route.dart` — `Route` freezed class per data-model.md §1.16.
+- [X] T062 [P] [US1] Implement `apps/control_panel/lib/domain/models/event.dart` — `Event` freezed class per data-model.md §1.16.
 
 ### Daemon-client extensions for US1 (contracts/app-methods-consumed.md §1-6)
 
-- [ ] T063 [US1] Extend `apps/control_panel/lib/core/daemon/app_client.dart` with `app.container.list/.detail`, `app.pane.list/.detail`, `app.agent.list/.detail`, `app.log_attachment.list/.detail`, `app.event.list/.detail`, `app.queue.list/.detail`, `app.route.list/.detail` typed wrappers.
-- [ ] T064 [US1] Extend `app_client.dart` with US1 mutations: `app.agent.register_from_pane`, `app.agent.update`, `app.log.attach`, `app.log.detach`, `app.send_input`, `app.queue.approve/.delay/.cancel`, `app.route.add/.remove/.update`, `app.scan.containers/.panes/.status`. Satisfies FR-005 — every mutation goes through `app.*` daemon methods; the app NEVER invents or mutates domain state locally.
+- [X] T063 [US1] Extend `apps/control_panel/lib/core/daemon/app_client.dart` with `app.container.list/.detail`, `app.pane.list/.detail`, `app.agent.list/.detail`, `app.log_attachment.list/.detail`, `app.event.list/.detail`, `app.queue.list/.detail`, `app.route.list/.detail` typed wrappers.
+- [X] T064 [US1] Extend `app_client.dart` with US1 mutations: `app.agent.register_from_pane`, `app.agent.update`, `app.log.attach`, `app.log.detach`, `app.send_input`, `app.queue.approve/.delay/.cancel`, `app.route.add/.remove/.update`, `app.scan.containers/.panes/.status`. Satisfies FR-005 — every mutation goes through `app.*` daemon methods; the app NEVER invents or mutates domain state locally.
 
 ### Agent Operations workspace (FR-011..FR-022)
 
-- [ ] T065 [US1] Implement `apps/control_panel/lib/features/agent_ops/dashboard/dashboard_view.dart` — FR-012 Dashboard (daemon reachability, contract version, container count, pane count by state, registered-agent count by state, blocked-queue count, recently-skipped-route count, recommended next action per FR-004 state).
-- [ ] T066 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/containers/containers_view.dart` — FR-013 Containers view (label, discovered status, project path).
-- [ ] T067 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/panes_view.dart` — FR-014 Panes view with the four-state vocabulary (discovered-and-unmanaged | discovered-and-registered | inactive/stale | discovery-degraded) and per-state next-action affordance.
-- [ ] T068 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/adopt_flow.dart` — FR-016 adopt-existing-pane form (label, role, capability, project_path, attach_log_now). Reject role/capability incompatible with discovered pane class. Calls `app.agent.register_from_pane`. ≤ 5 s budget per FR-065.
-- [ ] T069 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/agents_view.dart` — FR-015 Agents view treating agent + current goal/task as primary unit; render parent/child sub-agent tree limited to 2 visible levels per data-model.md §1.2 with "+N descendants" affordance.
-- [ ] T070 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/log_attach_affordance.dart` — FR-017 log attach/detach available from Agents view and per-pane affordance.
-- [ ] T071 [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/direct_send.dart` — FR-018 Direct Send (non-empty payload required, inline daemon response, no silent retry on failure). Uses optional `idempotency_key` per FEAT-011 FR-031a.
-- [ ] T072 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/events/events_view.dart` — FR-019 Events view in observed-at order with virtualized infinite scroll per FR-080 + "Jump to most recent" affordance.
-- [ ] T073 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/queue/queue_view.dart` — FR-020 Queue view with the 5-state vocabulary (queued | blocked | delivered | canceled | failed) and approve/delay/cancel actions on blocked + (cancel-only) on queued rows. Virtualized per FR-080.
-- [ ] T074 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/routes/routes_view.dart` — FR-021 Routes view with source scope, target rule, master rule, enabled state, recent skip explanation, explainability surface per FR-059.
-- [ ] T075 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/routes/add_route_flow.dart` — Add route form (source + event_class + target + master_rule). Calls `app.route.add`.
-- [ ] T076 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/health/health_view.dart` — FR-022 Health view with per-subsystem readiness (discovery, log attachment, classifier, queue, routing) + composite "degraded but usable" state + in-app explainability per FR-059.
+- [X] T065 [US1] Implement `apps/control_panel/lib/features/agent_ops/dashboard/dashboard_view.dart` — FR-012 Dashboard (daemon reachability, contract version, container count, pane count by state, registered-agent count by state, blocked-queue count, recently-skipped-route count, recommended next action per FR-004 state).
+- [X] T066 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/containers/containers_view.dart` — FR-013 Containers view (label, discovered status, project path).
+- [X] T067 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/panes_view.dart` — FR-014 Panes view with the four-state vocabulary (discovered-and-unmanaged | discovered-and-registered | inactive/stale | discovery-degraded) and per-state next-action affordance.
+- [X] T068 [US1] Implement `apps/control_panel/lib/features/agent_ops/panes/adopt_flow.dart` — FR-016 adopt-existing-pane form (label, role, capability, project_path, attach_log_now). Reject role/capability incompatible with discovered pane class. Calls `app.agent.register_from_pane`. ≤ 5 s budget per FR-065.
+- [X] T069 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/agents_view.dart` — FR-015 Agents view treating agent + current goal/task as primary unit; render parent/child sub-agent tree limited to 2 visible levels per data-model.md §1.2 with "+N descendants" affordance.
+- [X] T070 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/log_attach_affordance.dart` — FR-017 log attach/detach available from Agents view and per-pane affordance.
+- [X] T071 [US1] Implement `apps/control_panel/lib/features/agent_ops/agents/direct_send.dart` — FR-018 Direct Send (non-empty payload required, inline daemon response, no silent retry on failure). Uses optional `idempotency_key` per FEAT-011 FR-031a.
+- [X] T072 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/events/events_view.dart` — FR-019 Events view in observed-at order with virtualized infinite scroll per FR-080 + "Jump to most recent" affordance.
+- [X] T073 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/queue/queue_view.dart` — FR-020 Queue view with the 5-state vocabulary (queued | blocked | delivered | canceled | failed) and approve/delay/cancel actions on blocked + (cancel-only) on queued rows. Virtualized per FR-080.
+- [X] T074 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/routes/routes_view.dart` — FR-021 Routes view with source scope, target rule, master rule, enabled state, recent skip explanation, explainability surface per FR-059.
+- [X] T075 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/routes/add_route_flow.dart` — Add route form (source + event_class + target + master_rule). Calls `app.route.add`.
+- [X] T076 [P] [US1] Implement `apps/control_panel/lib/features/agent_ops/health/health_view.dart` — FR-022 Health view with per-subsystem readiness (discovery, log attachment, classifier, queue, routing) + composite "degraded but usable" state + in-app explainability per FR-059.
 
 ### Onboarding (FR-010 + R-20)
 
-- [ ] T077 [US1] Implement `apps/control_panel/lib/features/onboarding/onboarding_flow.dart` — 8-milestone onboarding per FR-010 with automatically-detectable completion criteria (per F11). Each milestone observes the daemon state and self-completes when detected. Skippable from any step.
-- [ ] T078 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/dashboard_nudges.dart` — incomplete-milestone nudges on the Dashboard per FR-010 + clarify Q24. Visually distinguished from the FR-012 recommended-next-action tile.
-- [ ] T079 [US1] Persist `OnboardingMilestone` completion state via the UX-state repository (per data-model.md §2.1 + contracts/ux-state.md §1).
+- [X] T077 [US1] Implement `apps/control_panel/lib/features/onboarding/onboarding_flow.dart` — 8-milestone onboarding per FR-010 with automatically-detectable completion criteria (per F11). Each milestone observes the daemon state and self-completes when detected. Skippable from any step.
+- [X] T078 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/dashboard_nudges.dart` — incomplete-milestone nudges on the Dashboard per FR-010 + clarify Q24. Visually distinguished from the FR-012 recommended-next-action tile.
+- [X] T079 [US1] Persist `OnboardingMilestone` completion state via the UX-state repository (per data-model.md §2.1 + contracts/ux-state.md §1).
 
 ### Trust-model first-launch statement (FR-061)
 
-- [ ] T080 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/trust_model_statement.dart` — first-launch in-app statement of local-only trust (Unix socket + same-host UID per FR-061). Also reachable from Settings.
+- [X] T080 [P] [US1] Implement `apps/control_panel/lib/features/onboarding/trust_model_statement.dart` — first-launch in-app statement of local-only trust (Unix socket + same-host UID per FR-061). Also reachable from Settings.
 
 **Checkpoint**: User Story 1 (MVP) is fully functional and testable independently. The app delivers a strict-superset replacement for the equivalent CLI adopt-existing-pane workflow.
 

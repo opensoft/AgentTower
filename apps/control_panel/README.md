@@ -39,6 +39,20 @@ flutter pub run build_runner watch --delete-conflicting-outputs
 
 After step 4, the directories `windows/`, `macos/`, `linux/` will exist alongside `lib/`. Then Phase 2 (Foundational) implementation can begin.
 
+## Bench note
+
+`flutterBench` is a valid FEAT-012 development environment, but there is an important distinction:
+
+- the shared bench currently has a warmed global Flutter `3.44.0`
+- this app is pinned to Flutter `3.27.0` via `.fvm/fvm_config.json` and `pubspec.yaml`
+
+On 2026-05-23, the bench-global Flutter was enough to materialize the desktop platform directories, but `flutter pub get` failed under `3.44.0` because `flutter_localizations` there requires `intl 0.20.2` while FEAT-012 is still pinned to `intl ^0.19.0` for the `3.27.0` baseline.
+
+So the rule for this repo is:
+
+- use `flutterBench` for the containerized dev loop
+- but use the pinned Flutter `3.27.0` toolchain for real dependency resolution, analysis, and tests
+
 ## Project layout
 
 ```

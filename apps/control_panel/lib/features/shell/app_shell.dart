@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/common_enums.dart';
 import '../../routing/route_paths.dart';
+import '../registry.dart';
 import 'global_banner.dart';
 import 'project_switcher.dart';
 
@@ -102,7 +103,21 @@ class AppShell extends ConsumerWidget {
                       ),
                       const Divider(height: 1),
                       Expanded(
-                        child: _SubViewPlaceholder(route: route),
+                        child: Builder(
+                          builder: (ctx) {
+                            // Each US-phase task registers its
+                            // workspace+sub-view widget with the
+                            // [WorkspaceRegistry]. If no widget is
+                            // registered yet for `route`, fall back to
+                            // the labelled placeholder so smoke tests +
+                            // operators see what's pending.
+                            final builder =
+                                WorkspaceRegistry.builderFor(route);
+                            return builder != null
+                                ? builder(ctx)
+                                : _SubViewPlaceholder(route: route);
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -121,6 +136,11 @@ class AppShell extends ConsumerWidget {
         Workspace.testingDemo => 'Testing + Demo',
         Workspace.settings => 'Settings',
       };
+
+  /// Public hook for placeholder widgets — used by `_SubViewPlaceholder`
+  /// and by feature widgets that want to title themselves consistently
+  /// with the shell's AppBar.
+  static String workspaceLabel(Workspace w) => _workspaceLabel(w);
 }
 
 /// Placeholder body shown until each US-phase task replaces it with the

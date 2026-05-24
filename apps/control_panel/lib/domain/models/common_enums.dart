@@ -445,3 +445,78 @@ enum HistoryEntryKind {
   static HistoryEntryKind fromWire(String v) =>
       values.firstWhere((e) => e.wireValue == v);
 }
+
+/// FR-017 — log-attachment lifecycle for an [AdoptedAgent]. Data-model §1.2.
+enum LogAttachmentState {
+  active('active'),
+  superseded('superseded'),
+  stale('stale'),
+  detached('detached');
+
+  const LogAttachmentState(this.wireValue);
+  final String wireValue;
+  static LogAttachmentState fromWire(String v) =>
+      values.firstWhere((e) => e.wireValue == v);
+}
+
+/// Discovered class of a pane prior to adoption (FR-014). The daemon
+/// classifies each tmux pane by what process appears to be driving it;
+/// the operator may still adopt with a different `capability` so this
+/// enum is a hint, not a constraint.
+enum PaneDiscoveredClass {
+  claude('claude'),
+  codex('codex'),
+  gemini('gemini'),
+  opencode('opencode'),
+  shell('shell'),
+  unknown('unknown');
+
+  const PaneDiscoveredClass(this.wireValue);
+  final String wireValue;
+  static PaneDiscoveredClass fromWire(String v) => values.firstWhere(
+        (e) => e.wireValue == v,
+        orElse: () => PaneDiscoveredClass.unknown,
+      );
+}
+
+/// FR-020 — 5-state vocabulary for the safe-prompt queue. Data-model §1.16.
+enum QueueRowState {
+  queued('queued'),
+  blocked('blocked'),
+  delivered('delivered'),
+  canceled('canceled'),
+  failed('failed');
+
+  const QueueRowState(this.wireValue);
+  final String wireValue;
+  static QueueRowState fromWire(String v) =>
+      values.firstWhere((e) => e.wireValue == v);
+
+  /// `delivered`, `canceled`, and `failed` are terminal — they cannot
+  /// transition further. Used by the Queue view to disable per-row
+  /// actions appropriately.
+  bool get isTerminal => switch (this) {
+        QueueRowState.delivered ||
+        QueueRowState.canceled ||
+        QueueRowState.failed =>
+          true,
+        QueueRowState.queued || QueueRowState.blocked => false,
+      };
+}
+
+/// FEAT-011 high-level container lifecycle. The daemon may report
+/// additional values; consumers MUST handle [unknown] gracefully.
+enum ContainerState {
+  running('running'),
+  exited('exited'),
+  paused('paused'),
+  restarting('restarting'),
+  unknown('unknown');
+
+  const ContainerState(this.wireValue);
+  final String wireValue;
+  static ContainerState fromWire(String v) => values.firstWhere(
+        (e) => e.wireValue == v,
+        orElse: () => ContainerState.unknown,
+      );
+}

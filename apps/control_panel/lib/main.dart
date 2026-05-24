@@ -14,6 +14,7 @@ import 'core/persistence/compatibility.dart';
 import 'core/persistence/paths.dart';
 import 'core/persistence/ux_state_repository.dart';
 import 'core/providers.dart';
+import 'features/agent_ops/module.dart';
 
 /// App entrypoint. T044 (Phase 2 Foundational).
 ///
@@ -47,6 +48,7 @@ Future<void> main() async {
   await uxState.load();
 
   seedMvpContractDeclarations();
+  registerAgentOps(); // Phase 3 US1 surfaces (T065-T076).
 
   final socketClient = SocketClient(_defaultDaemonSocketPath());
   final daemonSession = DaemonSession(client: socketClient);

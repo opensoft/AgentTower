@@ -135,6 +135,30 @@ FEAT-012 needs **three separate test lanes**.
 - mock daemon harness implemented
 - base test pipeline green inside `flutterBench`
 
+### 2026-05-23 execution notes
+
+Actual bench execution on 2026-05-23 produced these results:
+
+1. `flutter-bench` was reachable and the FEAT-012 worktree was mounted correctly.
+2. The project pin is still Flutter `3.27.0`, but the bench-global SDK is Flutter `3.44.0`.
+3. Using `fvm install 3.27.0` inside the bench was not viable yet because:
+   - the bench global git config rewrites `https://github.com/` to `git@github.com:`, which breaks FVM's default clone path unless overridden
+   - the first-run Flutter/Dart artifact bootstrap in the bench is currently slow enough to be operationally impractical
+4. Using the already-warmed bench-global Flutter `3.44.0` was enough to complete the scaffold portion of T009:
+   - `windows/`
+   - `macos/`
+   - `linux/`
+   were successfully generated under `apps/control_panel/`
+5. `flutter pub get` under Flutter `3.44.0` failed exactly where the version pin says it should fail:
+   - `flutter_localizations` from Flutter `3.44.0` requires `intl 0.20.2`
+   - FEAT-012 currently pins `intl ^0.19.0` for the Flutter `3.27.0` baseline
+
+Operational conclusion:
+
+- The repo is now unblocked on platform scaffolding.
+- The remaining container-lane blocker is not project structure; it is **making the pinned Flutter 3.27 toolchain fast and reliable inside `flutterBench`**.
+- Until that is solved, use the bench for filesystem/bootstrap work and keep real package resolution and compatibility checks tied to the pinned SDK.
+
 ## Lane 2 — Host desktop + real daemon integration lane
 
 **Purpose**: Verify the actual product shape:

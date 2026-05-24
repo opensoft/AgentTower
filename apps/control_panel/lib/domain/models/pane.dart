@@ -1,0 +1,35 @@
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+import 'common_enums.dart';
+
+part 'pane.freezed.dart';
+part 'pane.g.dart';
+
+/// FEAT-011 `app.pane` mirror. T058 (Phase 3 US1) + data-model §1.4.
+///
+/// State transitions per FR-014 (encoded in [PaneStateValidator]):
+///   discovered-and-unmanaged ↔ discovered-and-registered (adopt / de-adopt)
+///   any state → inactive/stale on pane disappearance
+///   any state → discovery-degraded on probe failure
+/// No terminal pane states — any state may return to a prior state on
+/// rediscovery / probe recovery.
+///
+/// `registeredAgentId` is populated iff `state == discovered-and-registered`.
+/// The Pane view (T067) uses it to render an inline link to the agent.
+@freezed
+class Pane with _$Pane {
+  const factory Pane({
+    required String paneId,
+    required String containerId,
+    required String tmuxSessionName,
+    required String tmuxWindowIndex,
+    required String tmuxPaneIndex,
+    required PaneState state,
+    String? registeredAgentId,
+    PaneDiscoveredClass? discoveredClass,
+    DateTime? lastSeenAt,
+    required DateTime asOf,
+  }) = _Pane;
+
+  factory Pane.fromJson(Map<String, dynamic> json) => _$PaneFromJson(json);
+}
