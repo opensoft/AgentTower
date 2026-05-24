@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/common_enums.dart';
 import '../../routing/route_paths.dart';
+import '../project_specs/module.dart' show registerProjectSpecsPaletteCommands;
 import '../registry.dart';
 import 'global_banner.dart';
 import 'project_switcher.dart';
@@ -33,6 +34,15 @@ class AppShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final subViews = RoutePath.subViewsFor(route.workspace);
     final selectedSubViewIdx = subViews.indexOf(route.subViewId);
+
+    // Swarm-review CR-5: register Phase 4-6 palette commands. Deferred
+    // to a microtask because Riverpod forbids state mutation during a
+    // widget build. `register` is idempotent on `id` so rebuilds are
+    // safe.
+    Future<void>.microtask(() {
+      if (!ref.context.mounted) return;
+      registerProjectSpecsPaletteCommands(ref);
+    });
 
     return Scaffold(
       appBar: AppBar(

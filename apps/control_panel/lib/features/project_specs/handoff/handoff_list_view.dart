@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/models/common_enums.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import 'handoff_detail_view.dart';
 import 'providers.dart';
 
@@ -65,9 +66,19 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
           ),
         ],
       ),
-      body: list.when(
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Handoffs',
+          onRetry: () => ref.invalidate(handoffListProvider(_query)),
+        ),
+        onIncompatible: (s) =>
+            ContractIncompatStateView(state: s, surfaceLabel: 'Handoffs'),
+        child: list.when(
         data: (rows) => rows.isEmpty
-            ? const Center(child: Text('No handoffs match the current filter.'))
+            ? const HealthyEmptyStateView(
+                message: 'No handoffs match the current filter.',
+              )
             : ListView.builder(
                 itemCount: rows.length,
                 itemBuilder: (_, i) {
@@ -99,8 +110,13 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
                   );
                 },
               ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Failed to load handoffs: $err')),
+        loading: () => const LoadingStateView(),
+        error: (err, _) => ErrorStateView(
+          error: err,
+          surfaceLabel: 'handoffs',
+          onRetry: () => ref.invalidate(handoffListProvider(_query)),
+        ),
+      ),
       ),
     );
   }

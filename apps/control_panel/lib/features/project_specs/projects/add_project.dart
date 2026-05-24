@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
+import '../../../ui/widgets/contract_checked_button.dart';
 
 /// Explicit "Add Project" dialog. T089 (Phase 4 US2).
 ///
@@ -76,15 +77,19 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
           onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: _submitting ? null : _submit,
-          child: _submitting
-              ? const SizedBox(
-                  height: 16,
-                  width: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Add'),
+        ContractCheckedButton(
+          additionalGate: !_submitting,
+          onPressed: _submit,
+          builder: (ctx, onPressed, reason) => FilledButton(
+            onPressed: onPressed,
+            child: _submitting
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Add'),
+          ),
         ),
       ],
     );

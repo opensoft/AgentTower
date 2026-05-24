@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/drift_signal.dart';
 import '../../../domain/models/drift_supporting.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart' as project_providers;
 import 'drift_detail_view.dart';
 import 'providers.dart';
@@ -66,15 +67,36 @@ class _DriftViewState extends ConsumerState<DriftView> {
           ),
         ],
       ),
-      body: list.when(
-        data: (rows) => rows.isEmpty
-            ? const _EmptyState()
-            : ListView.builder(
-                itemCount: rows.length,
-                itemBuilder: (_, i) => _DriftRow(drift: rows[i]),
-              ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Failed to load drift: $err')),
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Drift',
+          onRetry: () => ref.invalidate(driftListProvider(query)),
+        ),
+        onIncompatible: (s) =>
+            ContractIncompatStateView(state: s, surfaceLabel: 'Drift'),
+        onDegraded: (s) => DegradedStateView(
+          state: s,
+          surfaceLabel: 'Drift',
+          onRetry: () => ref.invalidate(driftListProvider(query)),
+        ),
+        child: list.when(
+          data: (rows) => rows.isEmpty
+              ? const HealthyEmptyStateView(
+                  message: 'No drift findings for this project.',
+                  icon: Icons.check_circle_outline,
+                )
+              : ListView.builder(
+                  itemCount: rows.length,
+                  itemBuilder: (_, i) => _DriftRow(drift: rows[i]),
+                ),
+          loading: () => const LoadingStateView(),
+          error: (err, _) => ErrorStateView(
+            error: err,
+            surfaceLabel: 'drift',
+            onRetry: () => ref.invalidate(driftListProvider(query)),
+          ),
+        ),
       ),
     );
   }
@@ -157,13 +179,4 @@ class _NoProjectSelected extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('No drift findings for this project.'),
-    );
-  }
-}
+// _EmptyState replaced by shared HealthyEmptyStateView (swarm-review CR-6).

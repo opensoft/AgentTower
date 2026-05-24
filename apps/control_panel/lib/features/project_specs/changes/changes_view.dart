@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../ui/widgets/markdown_viewer.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart';
 
 /// FR-032 — Changes view (OpenSpec-side proposed/active changes). T094
@@ -39,7 +40,15 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
           ),
         ],
       ),
-      body: list.when(
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Changes',
+          onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
+        ),
+        onIncompatible: (s) =>
+            ContractIncompatStateView(state: s, surfaceLabel: 'Changes'),
+        child: list.when(
         data: (entries) {
           // Filter to OpenSpec changes — the daemon returns a mixed
           // feature/change list; the `displayId` convention is
@@ -49,7 +58,11 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
           final changes = entries
               .where((e) => !e.displayId.startsWith('FEAT-'))
               .toList(growable: false);
-          if (changes.isEmpty) return const _EmptyState();
+          if (changes.isEmpty) {
+            return const HealthyEmptyStateView(
+              message: 'No proposed OpenSpec changes for this project.',
+            );
+          }
           return Row(
             children: [
               SizedBox(
@@ -78,8 +91,13 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
             ],
           );
         },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Failed to load changes: $err')),
+        loading: () => const LoadingStateView(),
+        error: (err, _) => ErrorStateView(
+          error: err,
+          surfaceLabel: 'changes',
+          onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
+        ),
+      ),
       ),
     );
   }
@@ -123,13 +141,4 @@ class _NoProjectSelected extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('No proposed OpenSpec changes for this project.'),
-    );
-  }
-}
+// _EmptyState replaced by HealthyEmptyStateView (swarm-review CR-6).

@@ -31,6 +31,11 @@ class DriftTransitionAction extends ConsumerWidget {
       );
     }
     final allowed = _legalNextStates(drift.status);
+    // Swarm-review M-1: previously the PopupMenuButton.child was a
+    // FilledButton with onPressed: null — disabled buttons swallow
+    // tap events and the menu never opened. Switch to PopupMenuButton.icon
+    // which renders an IconButton-styled trigger that delegates the
+    // tap to the parent (the actual menu opener).
     return PopupMenuButton<DriftStatus>(
       tooltip: 'Transition to…',
       onSelected: (to) => _onSelected(context, ref, to),
@@ -38,10 +43,17 @@ class DriftTransitionAction extends ConsumerWidget {
         for (final s in allowed)
           PopupMenuItem(value: s, child: Text(s.wireValue)),
       ],
-      child: FilledButton.icon(
-        onPressed: null,
-        icon: const Icon(Icons.swap_horiz),
-        label: const Text('Transition'),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.swap_horiz, size: 18),
+            SizedBox(width: 6),
+            Text('Transition'),
+            Icon(Icons.arrow_drop_down, size: 18),
+          ],
+        ),
       ),
     );
   }
@@ -53,6 +65,24 @@ class DriftTransitionAction extends ConsumerWidget {
   ) async {
     final note = await _promptNote(context, drift.status, to);
     if (note == null) return; // user cancelled
+    // Swarm-review M-17: defense-in-depth pre-flight validator check.
+    // The menu was already filtered via _legalNextStates, but a future
+    // keyboard-shortcut / command-palette caller could invoke
+    // _onSelected with an arbitrary target. The daemon still enforces;
+    // this short-circuit avoids the round-trip on illegal transitions.
+    if (!DriftStateValidator.isValidTransition(drift.status, to)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Illegal transition ${drift.status.wireValue} → '
+              '${to.wireValue} (FR-034). Daemon would reject.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     try {
       await ref.read(appClientProvider).driftTransition(
             findingId: drift.findingId,

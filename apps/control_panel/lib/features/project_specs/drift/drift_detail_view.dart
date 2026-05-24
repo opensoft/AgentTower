@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/models/drift_signal.dart';
 import '../../../domain/models/drift_supporting.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import 'drift_transition.dart';
 import 'providers.dart';
 
@@ -32,10 +33,23 @@ class DriftDetailView extends ConsumerWidget {
           ),
         ],
       ),
-      body: detail.when(
-        data: (d) => _Body(drift: d),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Failed: $err')),
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Drift detail',
+          onRetry: () => ref.invalidate(driftDetailProvider(findingId)),
+        ),
+        onIncompatible: (s) =>
+            ContractIncompatStateView(state: s, surfaceLabel: 'Drift detail'),
+        child: detail.when(
+          data: (d) => _Body(drift: d),
+          loading: () => const LoadingStateView(),
+          error: (err, _) => ErrorStateView(
+            error: err,
+            surfaceLabel: 'drift $findingId',
+            onRetry: () => ref.invalidate(driftDetailProvider(findingId)),
+          ),
+        ),
       ),
     );
   }

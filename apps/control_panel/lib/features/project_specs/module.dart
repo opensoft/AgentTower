@@ -1,9 +1,15 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/daemon/contract_version.dart';
+import '../../core/shortcuts/command_palette.dart';
 import '../../domain/models/common_enums.dart';
+import '../../routing/route_paths.dart';
 import '../registry.dart';
 import 'changes/changes_view.dart';
 import 'current_work/current_work_view.dart';
 import 'drift/drift_view.dart';
+import 'projects/add_project.dart';
 import 'projects/projects_view.dart';
 import 'specs/specs_view.dart';
 
@@ -70,4 +76,85 @@ void registerProjectSpecs() {
     'drift',
     (_) => const DriftView(),
   );
+}
+
+/// Swarm-review CR-5 + FR-075: register Project + Specs primary
+/// actions and sub-view jumps with the command palette so `Ctrl+K`
+/// / `Cmd+K` surfaces them. Called from a `Consumer` mounted at the
+/// `AppShell` level; idempotent on `id`, so re-registration is safe.
+///
+/// Per FR-075: "Every primary action surfaced in the app MUST be
+/// reachable from a documented keyboard shortcut." The palette is
+/// the documented home for actions that don't warrant a per-action
+/// hotkey.
+void registerProjectSpecsPaletteCommands(WidgetRef ref) {
+  final notifier = ref.read(commandRegistryProvider.notifier);
+
+  // ---- Sub-view jumps ----
+  for (final entry in const <(String, String, String)>[
+    ('projects', 'Projects', 'Project + Specs · Projects'),
+    ('current_work', 'Current Work', 'Project + Specs · Current Work'),
+    ('specs', 'Specs', 'Project + Specs · Specs'),
+    ('changes', 'Changes', 'Project + Specs · Changes'),
+    ('drift', 'Drift', 'Project + Specs · Drift'),
+  ]) {
+    final (subView, _, label) = entry;
+    notifier.register(PaletteCommand(
+      id: 'project_specs.goto.$subView',
+      label: 'Go to: $label',
+      category: 'Navigate',
+      invoke: (context) async {
+        await Navigator.of(context).pushNamed(
+          RoutePath(
+            workspace: Workspace.projectSpecs,
+            subViewId: subView,
+          ).toRouteString(),
+        );
+      },
+    ));
+  }
+
+  // ---- Project mutations ----
+  notifier.register(PaletteCommand(
+    id: 'project_specs.add_project',
+    label: 'Add project',
+    category: 'Project',
+    invoke: (context) async {
+      await showDialog<bool>(
+        context: context,
+        builder: (_) => const AddProjectDialog(),
+      );
+    },
+  ));
+
+  // ---- Handoff entry (current-work surface drives the rest) ----
+  notifier.register(PaletteCommand(
+    id: 'project_specs.open_handoff_flow',
+    label: 'Open handoff flow (Current Work)',
+    category: 'Handoff',
+    contextual: true,
+    invoke: (context) async {
+      await Navigator.of(context).pushNamed(
+        const RoutePath(
+          workspace: Workspace.projectSpecs,
+          subViewId: 'current_work',
+        ).toRouteString(),
+      );
+    },
+  ));
+
+  // ---- Drift entry ----
+  notifier.register(PaletteCommand(
+    id: 'project_specs.open_drift',
+    label: 'Open drift findings',
+    category: 'Drift',
+    invoke: (context) async {
+      await Navigator.of(context).pushNamed(
+        const RoutePath(
+          workspace: Workspace.projectSpecs,
+          subViewId: 'drift',
+        ).toRouteString(),
+      );
+    },
+  ));
 }

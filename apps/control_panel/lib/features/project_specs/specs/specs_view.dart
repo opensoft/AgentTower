@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/models/feature_change_status.dart';
 import '../../../ui/widgets/markdown_viewer.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart';
 
 /// FR-031 — Specs view (project-first, then feature). T093 (Phase 4 US2).
@@ -46,9 +47,20 @@ class _SpecsViewState extends ConsumerState<SpecsView> {
           ),
         ],
       ),
-      body: featureChanges.when(
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Specs',
+          onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
+        ),
+        onIncompatible: (s) =>
+            ContractIncompatStateView(state: s, surfaceLabel: 'Specs'),
+        child: featureChanges.when(
         data: (fcs) => fcs.isEmpty
-            ? const _EmptyState()
+            ? const HealthyEmptyStateView(
+                message:
+                    'No features or changes registered for this project yet.',
+              )
             : Row(
                 children: [
                   SizedBox(
@@ -68,8 +80,13 @@ class _SpecsViewState extends ConsumerState<SpecsView> {
                   ),
                 ],
               ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Failed to load specs: $err')),
+        loading: () => const LoadingStateView(),
+        error: (err, _) => ErrorStateView(
+          error: err,
+          surfaceLabel: 'specs',
+          onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
+        ),
+      ),
       ),
     );
   }
@@ -156,13 +173,4 @@ class _NoProjectSelected extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('No features or changes registered for this project yet.'),
-    );
-  }
-}
+// _EmptyState replaced by shared HealthyEmptyStateView (swarm-review CR-6).

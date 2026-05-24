@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
 import '../../../domain/helper_policy/helper_policy.dart';
+import '../../../ui/widgets/contract_checked_button.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/handoff_supporting.dart';
 import '../../../domain/models/project.dart';
@@ -75,16 +76,24 @@ class _HandoffPreviewViewState extends ConsumerState<HandoffPreviewView> {
       appBar: AppBar(
         title: const Text('Handoff preview'),
         actions: [
-          FilledButton.icon(
-            onPressed: _submitting ? null : () => _submit(body),
-            icon: _submitting
-                ? const SizedBox(
-                    height: 16,
-                    width: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.send),
-            label: Text(_submitting ? 'Submitting…' : 'Submit'),
+          // Swarm-review CR-7 + H-B7/H-B8: submission is gated on
+          // both the in-flight state and the contract-version invariant.
+          // ContractCheckedButton disables the action with an inline
+          // tooltip when the daemon is unreachable or contract-incompat.
+          ContractCheckedButton(
+            additionalGate: !_submitting,
+            onPressed: () => _submit(body),
+            builder: (ctx, onPressed, reason) => FilledButton.icon(
+              onPressed: onPressed,
+              icon: _submitting
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send),
+              label: Text(_submitting ? 'Submitting…' : 'Submit'),
+            ),
           ),
           const SizedBox(width: 12),
         ],

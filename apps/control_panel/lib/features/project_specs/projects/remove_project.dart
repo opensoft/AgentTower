@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/persistence/ux_state_repository.dart';
 import '../../../core/providers.dart';
+import '../../../ui/widgets/contract_checked_button.dart';
 import '../providers.dart';
 
 /// FR-077 "Remove project" confirmation dialog. T090 (Phase 4 US2).
@@ -75,18 +76,22 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
           onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor: Theme.of(context).colorScheme.error,
+        ContractCheckedButton(
+          additionalGate: !_submitting,
+          onPressed: _submit,
+          builder: (ctx, onPressed, reason) => FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: onPressed,
+            child: _submitting
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Remove'),
           ),
-          onPressed: _submitting ? null : _submit,
-          child: _submitting
-              ? const SizedBox(
-                  height: 16,
-                  width: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Remove'),
         ),
       ],
     );

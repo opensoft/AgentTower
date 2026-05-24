@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/project.dart';
 import '../../../routing/route_paths.dart';
-import '../../shell/runtime_state_provider.dart';
+import '../../../ui/widgets/contract_checked_button.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart';
 import 'add_project.dart';
 import 'project_card.dart';
@@ -26,23 +27,20 @@ class ProjectsView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final runtime = ref.watch(runtimeStateProvider);
-
-    if (runtime.kind == RuntimeStateKind.runtimeUnreachable) {
-      return _OutageState(
-        onRetry: () => ref.invalidate(projectListProvider),
-      );
-    }
-
     final list = ref.watch(projectListProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
-          IconButton(
-            tooltip: 'Add project',
-            icon: const Icon(Icons.add),
+          // FR-002 mutation gate (swarm-review CR-7): Add stays visible
+          // but disables-with-tooltip on contract-incompatible / unreachable.
+          ContractCheckedButton(
             onPressed: () => _onAdd(context, ref),
+            builder: (ctx, onPressed, reason) => IconButton(
+              tooltip: reason ?? 'Add project',
+              icon: const Icon(Icons.add),
+              onPressed: onPressed,
+            ),
           ),
           IconButton(
             tooltip: 'Refresh',
@@ -51,14 +49,35 @@ class ProjectsView extends ConsumerWidget {
           ),
         ],
       ),
-      body: list.when(
-        data: (projects) => projects.isEmpty
-            ? const _EmptyState()
-            : _ProjectsGrid(projects: projects),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => _ErrorState(
-          error: err,
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Projects',
           onRetry: () => ref.invalidate(projectListProvider),
+        ),
+        onIncompatible: (s) => ContractIncompatStateView(
+          state: s,
+          surfaceLabel: 'Projects',
+        ),
+        onDegraded: (s) => DegradedStateView(
+          state: s,
+          surfaceLabel: 'Projects',
+          onRetry: () => ref.invalidate(projectListProvider),
+        ),
+        child: list.when(
+          data: (projects) => projects.isEmpty
+              ? const HealthyEmptyStateView(
+                  message: 'No projects registered yet.\n\n'
+                      'Use Add Project to register a repository, or adopt a '
+                      'pane whose project_path will auto-register the project.',
+                )
+              : _ProjectsGrid(projects: projects),
+          loading: () => const LoadingStateView(),
+          error: (err, _) => ErrorStateView(
+            error: err,
+            surfaceLabel: 'projects',
+            onRetry: () => ref.invalidate(projectListProvider),
+          ),
         ),
       ),
     );
@@ -158,69 +177,8 @@ class _ProjectsGrid extends ConsumerWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(32),
-        child: Text(
-          'No projects registered yet.\n\n'
-          'Use Add Project to register a repository, or adopt a pane whose '
-          'project_path will auto-register the project (per Assumption: '
-          'project registration model).',
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-
-class _OutageState extends StatelessWidget {
-  const _OutageState({required this.onRetry});
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.cloud_off, size: 48),
-          const SizedBox(height: 12),
-          const Text('runtime-unreachable — daemon not responding'),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: onRetry,
-            child: const Text('Retry'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.error, required this.onRetry});
-  final Object error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.error_outline, size: 48),
-          const SizedBox(height: 12),
-          Text('Failed to load projects:\n$error', textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          FilledButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
-      ),
-    );
-  }
-}
+// Swarm-review CR-6: inline _EmptyState/_OutageState/_ErrorState were
+// replaced with the shared widgets in ui/widgets/runtime_state_views.dart
+// so every Phase 4-6 surface presents the FR-004 5-state vocabulary
+// identically.
 

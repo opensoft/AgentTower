@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/models/feature_change_status.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart';
 import 'driving_master_indicator.dart';
 
@@ -48,14 +49,30 @@ class CurrentWorkView extends ConsumerWidget {
           ),
         ],
       ),
-      body: activeFeature.when(
-        data: (fc) => fc == null
-            ? const _NoActiveFeature()
-            : _CurrentWorkBody(featureChange: fc),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => _ErrorState(
-          error: err,
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Current Work',
           onRetry: () => ref.invalidate(activeFeatureChangeProvider),
+        ),
+        onIncompatible: (s) => ContractIncompatStateView(
+          state: s,
+          surfaceLabel: 'Current Work',
+        ),
+        child: activeFeature.when(
+          data: (fc) => fc == null
+              ? const HealthyEmptyStateView(
+                  message: 'No active feature/change on this project.\n\n'
+                      'Start one by handing it off to a master from the '
+                      'Specs view.',
+                )
+              : _CurrentWorkBody(featureChange: fc),
+          loading: () => const LoadingStateView(),
+          error: (err, _) => ErrorStateView(
+            error: err,
+            surfaceLabel: 'current work',
+            onRetry: () => ref.invalidate(activeFeatureChangeProvider),
+          ),
         ),
       ),
     );
@@ -246,45 +263,5 @@ class _NoProjectSelected extends StatelessWidget {
   }
 }
 
-class _NoActiveFeature extends StatelessWidget {
-  const _NoActiveFeature();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(32),
-        child: Text(
-          'No active feature/change on this project.\n\n'
-          'Start one by handing it off to a master from the Specs view.',
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.error, required this.onRetry});
-  final Object error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.error_outline, size: 48),
-          const SizedBox(height: 12),
-          Text(
-            'Failed to load current work:\n$error',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 12),
-          FilledButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
-      ),
-    );
-  }
-}
+// Inline _NoActiveFeature and _ErrorState replaced by shared
+// HealthyEmptyStateView / ErrorStateView (swarm-review CR-6).

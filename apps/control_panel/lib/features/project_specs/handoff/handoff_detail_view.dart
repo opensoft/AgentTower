@@ -5,6 +5,8 @@ import '../../../core/providers.dart';
 import '../../../domain/models/handoff.dart';
 import '../../../domain/models/handoff_supporting.dart';
 import '../../../domain/models/resolved_work_item.dart';
+import '../../../ui/widgets/contract_checked_button.dart';
+import '../../../ui/widgets/runtime_state_views.dart';
 import 'providers.dart';
 
 /// T111 — Handoff detail surface (data-model §1.6 + FR-042 + FR-044 +
@@ -37,10 +39,23 @@ class HandoffDetailView extends ConsumerWidget {
           ),
         ],
       ),
-      body: detail.when(
-        data: (h) => _Body(handoff: h),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Failed: $err')),
+      body: RuntimeStateGate(
+        onUnreachable: (s) => OutageStateView(
+          state: s,
+          surfaceLabel: 'Handoff detail',
+          onRetry: () => ref.invalidate(handoffDetailProvider(handoffId)),
+        ),
+        onIncompatible: (s) =>
+            ContractIncompatStateView(state: s, surfaceLabel: 'Handoff detail'),
+        child: detail.when(
+          data: (h) => _Body(handoff: h),
+          loading: () => const LoadingStateView(),
+          error: (err, _) => ErrorStateView(
+            error: err,
+            surfaceLabel: 'handoff $handoffId',
+            onRetry: () => ref.invalidate(handoffDetailProvider(handoffId)),
+          ),
+        ),
       ),
     );
   }
@@ -176,9 +191,12 @@ class _Body extends ConsumerWidget {
           if (delivery.kind == HandoffDeliveryStatusKind.failed) ...[
             const SizedBox(width: 8),
             Consumer(
-              builder: (ctx, ref, _) => TextButton(
+              builder: (ctx, ref, _) => ContractCheckedButton(
                 onPressed: () => _retryDelivery(ctx, ref),
-                child: const Text('Retry delivery'),
+                builder: (c, onPressed, reason) => TextButton(
+                  onPressed: onPressed,
+                  child: const Text('Retry delivery'),
+                ),
               ),
             ),
           ],
