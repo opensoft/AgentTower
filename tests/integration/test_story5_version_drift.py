@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from agenttower.app_contract import versioning
+
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
@@ -112,10 +114,10 @@ def test_hello_major_2_returns_major_unsupported_over_socket(
     )
     assert envelope["ok"] is False, envelope
     assert envelope["error"]["code"] == "app_contract_major_unsupported"
-    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     # FR-034a: details carry both versions.
     details = envelope["error"]["details"]
-    assert details["daemon_app_contract_version"] == "1.0"
+    assert details["daemon_app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert details["client_app_contract_major"] == 2
     # FR-036: no session was issued — failure envelope has no result.
     assert "result" not in envelope
@@ -135,7 +137,7 @@ def test_dashboard_without_token_after_rejected_hello_is_session_required(
     dashboard = _one_shot_call(socket_path, "app.dashboard")
     assert dashboard["ok"] is False, dashboard
     assert dashboard["error"]["code"] == "app_session_required"
-    assert dashboard["app_contract_version"] == "1.0"
+    assert dashboard["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert dashboard["error"]["details"] == {}
 
 
@@ -147,7 +149,7 @@ def test_unknown_app_method_returns_unknown_method_over_socket(
     envelope = _one_shot_call(socket_path, "app.future_method")
     assert envelope["ok"] is False, envelope
     assert envelope["error"]["code"] == "unknown_method"
-    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert envelope["error"]["details"] == {}
 
 
@@ -160,6 +162,6 @@ def test_hello_matching_major_still_succeeds_over_socket(
         socket_path, "app.hello", {"client_app_contract_major": 1}
     )
     assert envelope["ok"] is True, envelope
-    assert envelope["result"]["app_contract_version"] == "1.0"
+    assert envelope["result"]["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert isinstance(envelope["result"]["app_session_token"], str)
     assert envelope["result"]["app_session_token"]

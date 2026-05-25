@@ -42,6 +42,8 @@ from pathlib import Path
 
 import pytest
 
+from agenttower.app_contract import versioning
+
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
@@ -130,7 +132,7 @@ def test_preflight_returns_ok_envelope_over_socket(socket_path: Path) -> None:
     assert result["code"] == "ok"
     assert result["socket_reachable"] is True
     assert result["daemon_reachable"] is True
-    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
 
 
 def test_hello_returns_session_token_over_socket(socket_path: Path) -> None:
@@ -154,8 +156,11 @@ def test_hello_returns_session_token_over_socket(socket_path: Path) -> None:
     assert len(result["app_session_token"]) >= 32
     assert isinstance(result["app_session_id"], int)
     assert result["app_session_id"] >= 1
-    assert result["app_contract_version"] == "1.0"
-    assert result["supported_minor_range"] == {"min": "1.0", "max": "1.0"}
+    assert result["app_contract_version"] == versioning.APP_CONTRACT_VERSION
+    # Issue #27 cleanup: supported_minor_range structure unchanged, but
+    # max widens as future minors land. Subset check survives v1.1 + v1.x.
+    assert result["supported_minor_range"]["min"] == "1.0"
+    assert result["supported_minor_range"]["max"] >= "1.1"
     # Round-4 Q4 — capability_flags is always present, empty at v1.0.
     assert result["capability_flags"] == {}
     assert result["state"] == "ok"
@@ -259,7 +264,7 @@ def test_unknown_app_method_returns_unknown_method(
         assert envelope["ok"] is False, (method, envelope)
         assert envelope["error"]["code"] == "unknown_method", method
         # T098: FR-033 envelope shape on app.* unknown-method failures.
-        assert envelope["app_contract_version"] == "1.0", method
+        assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION, method
         assert envelope["error"]["details"] == {}, method
 
     # SC-027: no unknown method name should appear in the audit log, and
@@ -295,7 +300,7 @@ def test_fr003b_wire_framing_stray_cr_returns_malformed_request(
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "malformed_request"
     assert envelope["error"]["details"]["reason"] == "stray CR"
-    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
 
 
 def test_fr003b_wire_framing_embedded_nul_returns_malformed_request(
@@ -420,7 +425,7 @@ def test_fr003a_wire_framing_oversized_app_method_returns_payload_too_large(
     # assertion pins the wire contract to the real enforced value.
     assert details["size_limit_bytes"] == 65536
     assert details["actual_size_bytes"] > details["size_limit_bytes"]
-    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
 
 
 def test_unknown_legacy_method_keeps_legacy_envelope(socket_path: Path) -> None:
