@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
+import '../../../domain/master_qualification.dart';
+import '../../../domain/models/badges.dart';
+import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/feature_change_status.dart';
+import '../../../domain/models/master_summary.dart';
+import '../../../domain/models/project.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../../../ui/widgets/safe_url_launcher.dart';
+import '../handoff/handoff_flow.dart';
 import '../providers.dart';
 import 'driving_master_indicator.dart';
 
@@ -43,6 +49,18 @@ class CurrentWorkView extends ConsumerWidget {
               Text(l10n.currentWorkTitleWithProject(selectedId)),
         ),
         actions: [
+          // T175 (FR-066/FR-067): real `HandoffFlow` entry-point on
+          // Current Work. Previously the only in-app surface that opened
+          // the flow was the drift-repair launcher; the palette command
+          // `open_handoff_flow` only routed back to this view (T168). Now
+          // both the palette command and this button call openHandoffFlow
+          // directly with the selected project's context.
+          IconButton(
+            tooltip: l10n.currentWorkNewHandoffTooltip,
+            icon: const Icon(Icons.add_task),
+            onPressed: () =>
+                openHandoffFlowForSelectedProject(context, ref, selectedId),
+          ),
           IconButton(
             tooltip: l10n.currentWorkRefreshTooltip,
             icon: const Icon(Icons.refresh),
@@ -277,3 +295,98 @@ class _NoProjectSelected extends StatelessWidget {
 
 // Inline _NoActiveFeature and _ErrorState replaced by shared
 // HealthyEmptyStateView / ErrorStateView (swarm-review CR-6).
+
+/// Shared entry-point used by both the Current Work AppBar action and
+/// the `project_specs.open_handoff_flow` palette command (T175).
+///
+/// Pre-conditions: a project must be selected (the caller gates the
+/// affordance on `selectedProjectIdProvider`); a master qualified per
+/// FR-071 must be available. Failure modes degrade to a localized
+/// snackbar so the operator gets actionable feedback instead of a
+/// silent no-op.
+Future<void> openHandoffFlowForSelectedProject(
+  BuildContext context,
+  WidgetRef ref,
+  String? selectedProjectId,
+) async {
+  final l10n = AppLocalizations.of(context);
+  if (selectedProjectId == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.currentWorkNewHandoffNoProjectSnack)),
+    );
+    return;
+  }
+  try {
+    final project = await ref
+        .read(projectDetailProvider(selectedProjectId).future);
+    if (!context.mounted) return;
+    final master = await _resolveDrivingMaster(context, ref, project);
+    if (master == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context).currentWorkNewHandoffNoMasterSnack,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (!context.mounted) return;
+    openHandoffFlow(
+      context,
+      master: master,
+      project: project,
+    );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .currentWorkNewHandoffOpenFailedSnack(e.toString()),),
+        ),
+      );
+    }
+  }
+}
+
+/// Mirrors `DriftDetailView._resolveMaster`: prefer the project's
+/// currently-driving master; synthesize a minimal [MasterSummary]
+/// via the FR-071 gate (`MasterSummary.tryFromAgent`) using the
+/// daemon's master-class capability registry (or a `claude` fallback
+/// when degraded).
+Future<MasterSummary?> _resolveDrivingMaster(
+  BuildContext context,
+  WidgetRef ref,
+  Project project,
+) async {
+  final driverId = project.currentDrivingMasterAgentId;
+  if (driverId == null) return null;
+  final envelope = await ref.read(masterClassCapabilitiesProvider.future);
+  if (!context.mounted) return null;
+  final l10n = AppLocalizations.of(context);
+  return MasterSummary.tryFromAgent(
+    agentId: driverId,
+    label: driverId,
+    capability: envelope.capabilities.isNotEmpty
+        ? envelope.capabilities.first
+        : 'claude',
+    role: AgentRole.master,
+    masterClassCapabilities: envelope.capabilities.isEmpty
+        ? const {'claude'}
+        : envelope.capabilities,
+    assignedProjectId: project.projectId,
+    activeBadge: const ActiveInactiveBadge(active: true),
+    currentStatus: MasterStatus.active,
+    workflowPhase: WorkflowPhase(
+      humanLabel: l10n.driftRepairPlaceholderWorkflowPhase,
+    ),
+    subAgentRollup: const SubAgentRollup(),
+    attentionSeverity: AttentionSeverity.warning,
+    validationBadge: const CompactValidationBadge(
+      kind: ValidationBadgeKind.unknown,
+    ),
+    asOf: DateTime.now().toUtc(),
+  );
+}

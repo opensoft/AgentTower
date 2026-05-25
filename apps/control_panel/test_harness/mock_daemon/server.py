@@ -243,6 +243,25 @@ async def handle_client(reader, writer, fixture):
                 result = response.setdefault("result", {})
                 _stamp_app_hello_result(result, fixture)
 
+            # T174(b) — mirror the submitted `generated_prompt_text` into
+            # the `app.handoff.submit` response row so the daemon
+            # round-trip is observable from the test side (closes the
+            # non-tautological half of T169's SC-004 assertion). The
+            # mock daemon is otherwise stateless / fixture-templated;
+            # this is the narrowest splice that makes the submit echo
+            # what the client actually sent without persisting the
+            # row across calls.
+            if method == "app.handoff.submit" and response.get("ok"):
+                submitted_prompt_text = (
+                    req.get("params", {})
+                    .get("draft", {})
+                    .get("generated_prompt_text")
+                )
+                if submitted_prompt_text is not None:
+                    result = response.setdefault("result", {})
+                    row = result.setdefault("row", {})
+                    row["generated_prompt_text"] = submitted_prompt_text
+
             line_out = (json.dumps(response) + "\n").encode("utf-8")
             if len(line_out) > RESPONSE_CAP:
                 # Shouldn't happen in tests; fixtures should keep responses small.

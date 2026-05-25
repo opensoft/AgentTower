@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../features/shell/runtime_state_provider.dart';
 import '../providers.dart';
@@ -34,7 +35,7 @@ class DashboardView extends ConsumerWidget {
     if (runtime.kind == RuntimeStateKind.runtimeUnreachable) {
       return _OutageState(
         runtime: runtime,
-        onRetry: () => ref.invalidate(dashboardProvider),
+        onRetry: () => _retryConnection(ref),
       );
     }
 
@@ -46,10 +47,32 @@ class DashboardView extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => _DashboardError(
           error: err,
-          onRetry: () => ref.invalidate(dashboardProvider),
+          onRetry: () => _retryConnection(ref),
         ),
       ),
     );
+  }
+
+  /// T174(a): "Retry connection" must re-bootstrap the [DaemonSession]
+  /// before invalidating the dashboard provider. Invalidating alone is
+  /// a no-op when the socket is closed (the new fetch would just hit
+  /// the same dead socket and re-throw). Re-bootstrap opens a fresh
+  /// socket + re-issues `app.hello`, emitting a [SessionReBootstrapped]
+  /// event that the runtime-state provider keys off to flip back from
+  /// `runtimeUnreachable`. Swallows the re-bootstrap exception so a
+  /// failed retry stays on the outage screen instead of crashing the
+  /// surface — the surfaced [runtime.lastError] tells the operator
+  /// why.
+  Future<void> _retryConnection(WidgetRef ref) async {
+    try {
+      await ref.read(daemonSessionProvider).reBootstrap();
+    } catch (_) {
+      // Swallow — the runtime-state provider already routes the
+      // [SessionFailed] event into `runtime.lastError`, which the
+      // _OutageState widget renders. A second crash here would just
+      // unmount the widget tree.
+    }
+    ref.invalidate(dashboardProvider);
   }
 }
 

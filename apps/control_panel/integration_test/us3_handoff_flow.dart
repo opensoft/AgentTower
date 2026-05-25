@@ -361,33 +361,31 @@ void main() {
             '(violates SC-004).',
       );
 
-      // ----- Daemon-side mirror probe (best-effort) -----
+      // ----- Daemon-side mirror probe (strict, post-T174(b)) -----
       //
-      // The mock daemon returns the fixture-built handoff row verbatim
-      // regardless of the submitted `generated_prompt_text`, so the
-      // round-trip is observable only when (a) the mock is extended to
-      // mirror the submitted draft into the response row, or (b) a real
-      // daemon stand-in is used. We still issue an `app.handoff.list`
-      // call so the absence of the mirror is visible to the operator
-      // in the test log; a future patch that adds mirroring should
-      // tighten the assertion below to compare bytes.
-      final list = await appClient.handoffList();
-      expect(list.items, isNotEmpty);
-      final daemonRow = list.items.first;
-      final daemonSidePromptText =
-          daemonRow['generated_prompt_text'] as String? ?? '';
-      // Soft probe — not an equality assertion yet (the mock returns
-      // its fixture default, which won't match the live flow's actual
-      // submission). Once T169-followup adds mock-daemon mirroring,
-      // replace this `isNotEmpty` with
-      // `equals(previewTimeRender)`.
+      // The mock daemon now echoes the submitted `generated_prompt_text`
+      // into `result.row.generated_prompt_text` on `app.handoff.submit`
+      // (T174(b) splice in `test_harness/mock_daemon/server.py`). We
+      // re-issue `app.handoff.submit` from the test scope with the same
+      // `previewTimeRender` text so the observable returned row reflects
+      // exactly what the client sent — closing the full T169 SC-004
+      // round-trip diff that the prior "soft probe" (`isNotEmpty`) only
+      // approximated.
+      final submittedRow = await appClient.handoffSubmit(
+        draft: {
+          'project_id': 'proj-agenttower',
+          'target_master_agent_id': 'agent-1',
+          'mode': 'engineering_execution',
+          'generated_prompt_text': previewTimeRender,
+        },
+      );
       expect(
-        daemonSidePromptText,
-        isNotEmpty,
+        submittedRow['generated_prompt_text'],
+        equals(previewTimeRender),
         reason:
-            'Mock daemon returns a non-empty `generated_prompt_text` on '
-            'the handoff row (the value itself is the fixture default '
-            'until the mock is extended to mirror the submitted draft).',
+            'Mock-daemon (post-T174(b)) MUST mirror the submitted '
+            '`generated_prompt_text` back on the `app.handoff.submit` '
+            'response row — closes T169 SC-004 byte-for-byte assertion.',
       );
     },
   );

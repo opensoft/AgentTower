@@ -37,6 +37,13 @@ class SocketClient {
   static const int responseCapBytes = 8 * 1024 * 1024; // 8 MiB per FR-003a
 
   final String _socketPath;
+
+  /// Read-only view of the configured Unix socket path. Used by
+  /// [DaemonSession.reBootstrap] (T174a) to construct a fresh
+  /// [SocketClient] aimed at the same daemon socket without
+  /// requiring the caller to re-thread the path through Settings.
+  String get socketPath => _socketPath;
+
   Socket? _socket;
   StreamSubscription<List<int>>? _sub;
   final _lineBuffer = BytesBuilder();

@@ -85,6 +85,28 @@ enum AppContractErrorCode {
   bool get shouldNeverReachApp => this == hostOnly;
 }
 
+/// Sentinel error completion for any in-flight `AppClient.*` future that
+/// was waiting on a response from a [SocketClient] that was deliberately
+/// torn down (e.g. by [DaemonSession.reBootstrap]). Distinguishable from
+/// a generic [StateError] so callers can decide whether to surface a
+/// "connection was reset, please retry" affordance vs. treat as a bug.
+///
+/// Per T174(a) pending-request semantics: any future returned by
+/// `AppClient.*` that was in-flight at the moment of `reBootstrap()`
+/// MUST complete with this error. The new session does NOT silently
+/// retry the request — the caller's `idempotency_key` may or may not
+/// be replayable, that's a caller decision.
+class SocketDisconnectedError implements Exception {
+  const SocketDisconnectedError([this.reason]);
+
+  final String? reason;
+
+  @override
+  String toString() => reason == null
+      ? 'SocketDisconnectedError: in-flight request aborted by session teardown'
+      : 'SocketDisconnectedError: $reason';
+}
+
 /// Parsed FEAT-011 error object.
 class AppContractError implements Exception {
   const AppContractError({

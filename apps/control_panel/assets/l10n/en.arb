@@ -731,6 +731,28 @@
   "@currentWorkNoProjectSelected": {
     "description": "From T165 i18n sweep (source: project_specs.json)."
   },
+  "currentWorkNewHandoffTooltip": "New handoff — open handoff flow for this project",
+  "@currentWorkNewHandoffTooltip": {
+    "description": "T175 — AppBar action tooltip + screen-reader label for the New handoff IconButton on the Current Work view (FR-066 accessibility, FR-067 i18n). Used by both the inline AppBar action and the `project_specs.open_handoff_flow` palette command surface."
+  },
+  "currentWorkNewHandoffNoProjectSnack": "No project selected — pick one from Projects view first.",
+  "@currentWorkNewHandoffNoProjectSnack": {
+    "description": "T175 — snackbar shown if the New handoff button is somehow invoked without a selected project (defensive)."
+  },
+  "currentWorkNewHandoffNoMasterSnack": "No master qualified per FR-071 is available for this project. Adopt or assign one, then retry.",
+  "@currentWorkNewHandoffNoMasterSnack": {
+    "description": "T175 — snackbar shown when the project has no currently-driving master to seed the handoff flow."
+  },
+  "currentWorkNewHandoffOpenFailedSnack": "Could not open handoff flow: {error}",
+  "@currentWorkNewHandoffOpenFailedSnack": {
+    "description": "T175 — snackbar shown when resolving the project or master fails before HandoffFlow can mount.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
   "drivingMasterIsDriving": "is driving",
   "@drivingMasterIsDriving": {
     "description": "From T165 i18n sweep (source: project_specs.json)."

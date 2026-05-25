@@ -12,6 +12,7 @@ import 'current_work/current_work_view.dart';
 import 'drift/drift_view.dart';
 import 'projects/add_project.dart';
 import 'projects/projects_view.dart';
+import 'providers.dart' as project_providers;
 import 'specs/specs_view.dart';
 
 /// Project + Specs workspace module. T087-T094 (Phase 4 US2).
@@ -131,18 +132,25 @@ void registerProjectSpecsPaletteCommands(WidgetRef ref) {
   ));
 
   // ---- Handoff entry (current-work surface drives the rest) ----
+  //
+  // T175 (fixes T168): previously this command navigated to the
+  // current_work sub-view — its name promised opening the handoff
+  // flow but its behavior only routed somewhere the flow can be
+  // launched FROM. Now it actually opens HandoffFlow via the shared
+  // `openHandoffFlowForSelectedProject` helper, which resolves the
+  // currently-selected project + driving master at invoke time and
+  // degrades to a localized snackbar when either is missing.
   notifier.register(PaletteCommand(
     id: 'project_specs.open_handoff_flow',
     label: l10n.paletteOpenHandoffFlow,
     category: l10n.paletteCategoryHandoff,
     contextual: true,
     invoke: (context) async {
-      await Navigator.of(context).pushNamed(
-        const RoutePath(
-          workspace: Workspace.projectSpecs,
-          subViewId: 'current_work',
-        ).toRouteString(),
-      );
+      // Read the selected project id at invoke-time (not registration-time)
+      // so the command reflects the operator's current context.
+      final selectedId =
+          ref.read(project_providers.selectedProjectIdProvider);
+      await openHandoffFlowForSelectedProject(context, ref, selectedId);
     },
   ));
 

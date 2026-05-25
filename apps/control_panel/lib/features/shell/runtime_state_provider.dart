@@ -78,6 +78,24 @@ class RuntimeStateNotifier extends Notifier<RuntimeState> {
           daemonVersion: daemonVersion,
           contractCompat: compat,
         );
+      case SessionReBootstrapped(
+          :final daemonVersion,
+          :final appContractVersion,
+        ):
+        // T174(a): "Retry connection" re-bootstrap. The companion
+        // [SessionBootstrapped] above already fired during the wrapped
+        // bootstrap call, so the state has already been transitioned
+        // to its post-bootstrap kind. We re-apply the same
+        // contract-compat computation here so this case is non-empty
+        // and the switch stays exhaustive without falling through to
+        // unintended behavior if the bootstrap event semantics change.
+        final daemonV = ContractVersion.parse(appContractVersion);
+        final compat = ContractCompat.compute(daemonV);
+        state = state.copyWith(
+          kind: compat.runtimeStateKind,
+          daemonVersion: daemonVersion,
+          contractCompat: compat,
+        );
       case SessionFailed(:final error):
         // Map the FR-002 banner trigger explicitly: contract-major
         // unsupported flips us into contract-version-incompatible

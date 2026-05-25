@@ -42,10 +42,29 @@ class SessionFailed extends SessionEvent {
   final Object error;
 }
 
-class DaemonSession {
-  DaemonSession({required this.client});
+/// Emitted by [DaemonSession.reBootstrap] (T174a) after the prior socket
+/// is closed, a fresh [SocketClient] is opened to the same path, and a
+/// new `app.hello` round-trip completes. Dependent providers
+/// (`runtimeStateProvider`, `dashboardProvider`, etc.) listen for this
+/// to invalidate stale per-session state.
+class SessionReBootstrapped extends SessionEvent {
+  const SessionReBootstrapped({
+    required this.appContractVersion,
+    required this.daemonVersion,
+  });
+  final String appContractVersion;
+  final String daemonVersion;
+}
 
-  final SocketClient client;
+class DaemonSession {
+  DaemonSession({required SocketClient client}) : _client = client;
+
+  /// Current socket client. Replaced by [reBootstrap] (T174a) when the
+  /// "Retry connection" affordance needs to open a fresh connection to
+  /// the same daemon socket. External callers should treat the
+  /// reference as ephemeral — never cache it across a session event.
+  SocketClient get client => _client;
+  SocketClient _client;
 
   String? _sessionToken;
   String? _appContractVersion;
@@ -144,6 +163,79 @@ class DaemonSession {
     };
     await client.sendLine(json.encode(payload));
     return completer.future.timeout(timeout);
+  }
+
+  /// "Retry connection" — close the existing socket, discard the in-memory
+  /// session token, open a fresh [SocketClient] aimed at the SAME socket
+  /// path, then re-issue `app.hello` and emit a [SessionReBootstrapped]
+  /// event so dependent providers can invalidate. T174(a).
+  ///
+  /// Steps (per the 5-step API contract in tasks.md T174a):
+  ///   1. Close the current [SocketClient] connection.
+  ///   2. Reset the in-memory `app_session_token` to `null`.
+  ///   3. Open a fresh [SocketClient] to the configured socket path.
+  ///   4. Re-issue `app.hello` and store the new `app_session_token`.
+  ///   5. Emit a [SessionReBootstrapped] event on the broadcast stream.
+  ///
+  /// **Pending-request semantics:** any [Future] returned by an
+  /// `AppClient.*` method that was in-flight at the moment of
+  /// [reBootstrap] completes with a [SocketDisconnectedError]. This
+  /// method does NOT silently retry those requests on the new session —
+  /// the caller's `idempotency_key` may or may not be replayable; that
+  /// is a caller decision (FR-038 / FR-072 retry surfaces).
+  ///
+  /// Re-throws any error raised by [bootstrap] so the caller (typically
+  /// the "Retry connection" affordance) can show an inline failure
+  /// without a separate try/catch.
+  Future<void> reBootstrap() async {
+    // (1) Close existing socket + (2) wipe token state. We don't emit
+    // a [SessionTornDown] here because the runtime-state provider
+    // would route us through `runtimeUnreachable` for a frame and the
+    // "Retry connection" affordance would visibly flicker. The
+    // [SessionReBootstrapped] event below is the canonical signal.
+    final priorPath = _client.socketPath;
+    await _responseSub?.cancel();
+    _responseSub = null;
+    _sessionToken = null;
+    _appContractVersion = null;
+    _daemonVersion = null;
+    // Complete every in-flight request with the documented sentinel so
+    // callers can decide whether to retry. The next session is fresh —
+    // we MUST NOT silently route these futures onto it.
+    for (final c in _pendingRequests.values) {
+      if (!c.isCompleted) {
+        c.completeError(const SocketDisconnectedError(
+          'Session reBootstrapped — in-flight request aborted',
+        ));
+      }
+    }
+    _pendingRequests.clear();
+    await _client.close();
+
+    // (3) Open a fresh client aimed at the same socket path.
+    _client = SocketClient(priorPath);
+
+    // (4) Re-issue `app.hello`. We call [bootstrap] which already
+    // owns the wire-level sequence + envelope parsing + token capture.
+    // Note: `bootstrap` emits [SessionBootstrapped] internally — that
+    // event is what the runtime-state provider keys off, so dependent
+    // providers will see the session move from `runtimeUnreachable`
+    // back to a populated/healthy state through that channel.
+    // The [SessionReBootstrapped] emission below is an ADDITIONAL,
+    // narrower signal for callers that specifically want to invalidate
+    // per-surface caches without listening to the broader bootstrap
+    // event (which also fires on first-launch).
+    await bootstrap();
+
+    // (5) Emit the re-bootstrap event. By the time we reach this line,
+    // [_appContractVersion] and [_daemonVersion] are populated by the
+    // bootstrap success path above.
+    _events.add(
+      SessionReBootstrapped(
+        appContractVersion: _appContractVersion ?? 'unknown',
+        daemonVersion: _daemonVersion ?? 'unknown',
+      ),
+    );
   }
 
   /// Closes the socket + clears in-memory state. Token is discarded per FR-003.
