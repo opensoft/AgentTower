@@ -663,11 +663,15 @@ def app_dashboard(
             "target": rec.target,
         }
         # Wall-clock ISO-8601 UTC ms per Research §TS (NOT the monotonic
-        # clock T013's skip counter uses for window arithmetic).
+        # clock T013's skip counter uses for window arithmetic). Capture
+        # `now` once so the seconds and millisecond components come from
+        # the same point in time (fixes L-T020-CLOCK from the post-T020
+        # analyze: a millisecond-boundary tick between two separate
+        # datetime.now() calls could otherwise mismatch the components).
+        _now = datetime.now(timezone.utc)
         rec_refreshed_at = (
-            datetime.now(timezone.utc)
-            .strftime("%Y-%m-%dT%H:%M:%S.")
-            + f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+            f"{_now.strftime('%Y-%m-%dT%H:%M:%S')}."
+            f"{_now.microsecond // 1000:03d}Z"
         )
     except Exception:  # noqa: BLE001 — FR-021 / Research §FE compute-failure isolation
         _log.warning(
