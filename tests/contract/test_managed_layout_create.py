@@ -39,6 +39,7 @@ from agenttower.managed_sessions.dao import (
 )
 from agenttower.managed_sessions.errors import (
     MANAGED_LAYOUT_CAPACITY_EXCEEDED,
+    MANAGED_PANE_LABEL_CONFLICT,
     MANAGED_SESSION_NAME_CONFLICT,
     ManagedSessionsError,
 )
@@ -189,9 +190,9 @@ def test_label_uniqueness_per_container_enforced(
     conn: sqlite3.Connection, serializer: ContainerSerializer
 ) -> None:
     """FR-003: two layouts in the same container with the same template
-    can't both succeed at non-terminal state (the partial unique index
-    on ``managed_pane(container_id, label)`` blocks the second's m1
-    label)."""
+    can't both succeed at non-terminal state. The service translates
+    the partial-unique-index ``IntegrityError`` into the closed-set
+    ``managed_pane_label_conflict`` (Phase 3b N20 fix)."""
     create_layout(
         conn=conn,
         serializer=serializer,
@@ -202,8 +203,9 @@ def test_label_uniqueness_per_container_enforced(
     # Second create against the same container with overlapping labels +
     # different tmux_session_name. The first layout's m1 / s1 / s2 are
     # in ``creating`` (non-terminal); the second's attempted m1 must be
-    # rejected by the partial unique label index.
-    with pytest.raises(sqlite3.IntegrityError):
+    # rejected by the partial unique label index and translated to the
+    # closed-set code.
+    with pytest.raises(ManagedSessionsError) as exc:
         create_layout(
             conn=conn,
             serializer=serializer,
@@ -211,6 +213,9 @@ def test_label_uniqueness_per_container_enforced(
             template_name="1m+2s",
             tmux_session_name="session-two",
         )
+    assert exc.value.code == MANAGED_PANE_LABEL_CONFLICT
+    assert exc.value.details["container_id"] == "bench-alpha"
+    assert exc.value.details["label"] == "m1"
 
 
 # ─── FR-019: per-container serialization ─────────────────────────────────

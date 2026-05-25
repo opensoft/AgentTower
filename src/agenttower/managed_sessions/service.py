@@ -61,6 +61,7 @@ from .dao import (
 from .errors import (
     MANAGED_LAYOUT_CAPACITY_EXCEEDED,
     MANAGED_LAUNCH_COMMAND_NOT_FOUND,
+    MANAGED_PANE_LABEL_CONFLICT,
     MANAGED_SESSION_NAME_CONFLICT,
     MANAGED_TEMPLATE_NOT_FOUND,
     ManagedSessionsError,
@@ -160,26 +161,30 @@ def _validate_identifier(value: str, *, field_name: str) -> None:
         )
 
 
-def _validation_failed(*, field: str, reason: str) -> Exception:
-    """Build a ``validation_failed`` error.
+class ValidationFailedError(Exception):
+    """Operator-input validation failure shape (FEAT-011 ``validation_failed``).
 
-    Uses the FEAT-011 closed-set code (``validation_failed``) — that code
-    is shared across the FEAT-002/FEAT-011 contract and is the right
-    surface for FR-016 amendment violations per spec.
+    ``code`` is the FEAT-011 closed-set ``validation_failed`` constant
+    (NOT a FEAT-013 code); ``ManagedSessionsError`` is reserved for the
+    FEAT-013 closed set in ``errors.py``. Handlers translate this into
+    the wire envelope's ``error`` block (M1 error list per contracts/
+    managed-methods.md).
+
+    Stable exception type — callers can ``except ValidationFailedError``
+    cleanly, unlike the prior local-class pattern.
     """
 
-    # Note: ``validation_failed`` is a FEAT-011 code, not in FEAT-013's
-    # closed set. We raise a plain Exception with the right shape; the
-    # handlers layer translates it into the envelope. See contracts/
-    # managed-methods.md M1 error list.
-    class _ValidationFailed(Exception):
-        code = "validation_failed"
-        details = {"field": field, "reason": reason}
+    code: Final[str] = "validation_failed"
 
-        def __init__(self) -> None:
-            super().__init__(f"validation_failed: {field}: {reason}")
+    def __init__(self, *, field: str, reason: str) -> None:
+        self.details: dict[str, str] = {"field": field, "reason": reason}
+        super().__init__(f"validation_failed: {field}: {reason}")
 
-    return _ValidationFailed()
+
+def _validation_failed(*, field: str, reason: str) -> ValidationFailedError:
+    """Build a ``ValidationFailedError`` (kept as a thin helper for
+    call-site readability)."""
+    return ValidationFailedError(field=field, reason=reason)
 
 
 # ─── create_layout ──────────────────────────────────────────────────────
@@ -207,9 +212,15 @@ def create_layout(
     ``creating`` until an explicit ``spawn_layout_in_background`` call
     (or a test fixture) advances them.
 
-    Raises ``ManagedSessionsError`` or a ``validation_failed`` shape on
-    contract violations. The handler layer is responsible for translating
-    these into envelope responses.
+    Raises ``ManagedSessionsError`` (closed-set code from
+    ``errors.ALL_CODES``) or ``ValidationFailedError`` (FEAT-011
+    ``validation_failed`` shape) on contract violations. The handler
+    layer (T023/T024 — Phase 3c) is responsible for translating these
+    into envelope responses **and** for verifying that ``container_id``
+    exists in the FEAT-003 container registry before calling this entry
+    point (``container_not_found`` is a handler-layer concern; the
+    service trusts the handler to pre-check, matching FEAT-011's
+    mutations pattern).
     """
     launch_overrides = launch_command_overrides or {}
 
@@ -345,17 +356,34 @@ def create_layout(
                     insert_pane(conn, row)
                 except sqlite3.IntegrityError as exc:
                     conn.execute("ROLLBACK")
-                    # Two non-terminal panes can collide on
-                    # (tmux_session_name, tmux_pane_index) if the operator
-                    # reuses a session name that already has FEAT-013
-                    # panes attached. FR-016: surface as
-                    # managed_session_name_conflict.
-                    if "ux_managed_pane_tmux_target" in str(exc):
+                    # SQLite IntegrityError text includes the colliding
+                    # column names ("UNIQUE constraint failed: ...");
+                    # the index name itself does NOT appear in the
+                    # default message, so we detect by column patterns.
+                    err_text = str(exc)
+                    # (tmux_session_name, tmux_pane_index) → operator
+                    # reused a session name attached to another non-
+                    # terminal layout (FR-016).
+                    if (
+                        "tmux_session_name" in err_text
+                        and "tmux_pane_index" in err_text
+                    ):
                         raise ManagedSessionsError(
                             MANAGED_SESSION_NAME_CONFLICT,
                             details={
                                 "container_id": container_id,
                                 "tmux_session_name": tmux_session_name,
+                            },
+                        ) from exc
+                    # (container_id, label) → two non-terminal panes
+                    # in the same bench container collide on label
+                    # (FR-003 partial unique index).
+                    if "container_id" in err_text and "label" in err_text:
+                        raise ManagedSessionsError(
+                            MANAGED_PANE_LABEL_CONFLICT,
+                            details={
+                                "container_id": container_id,
+                                "label": row.label,
                             },
                         ) from exc
                     raise

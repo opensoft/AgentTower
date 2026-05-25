@@ -108,6 +108,15 @@ The full closed set for an `app.managed_*` or legacy `managed.*` response contin
   ```
 - **Operator action**: Poll `managed.pane.detail` on the in-flight successor; if it lands in `removed` or `failed`, recreate is then permitted.
 
+### `managed_pane_label_conflict` (FR-003)
+
+- **When**: Two non-terminal managed panes in the same bench container attempt to use the same label. Enforced by the SQLite partial unique index `ux_managed_pane_container_label` on `(container_id, label) WHERE state IN ('creating','ready','degraded')`; the service translates the resulting `IntegrityError` into this closed-set code.
+- **Details schema**:
+  ```json
+  {"container_id": "string", "label": "string"}
+  ```
+- **Operator action**: Pick a different layout template, use an operator-overridable template (FR-024) with a non-colliding `label_pattern`, or `managed.pane.remove` the existing pane that holds the colliding label first (terminal-state rows are excluded from the index so the label can be reused once removed).
+
 ---
 
 ## Reused codes (no change)
@@ -127,7 +136,7 @@ These FEAT-011 codes are also returned by FEAT-013 paths and retain their existi
 ## Code count
 
 FEAT-011 baseline: 27 codes.
-FEAT-013 additions: **11** new codes (listed above; includes `managed_layout_capacity_exceeded` and `managed_pane_concurrent_recreate` added during the pre-implement walk session).
-FEAT-013 total in registry: **38** codes.
+FEAT-013 additions: **12** new codes (listed above; includes `managed_layout_capacity_exceeded` and `managed_pane_concurrent_recreate` from the pre-implement walk session, plus `managed_pane_label_conflict` added during Phase 3b implementation when the partial unique index was wired through the service layer).
+FEAT-013 total in registry: **39** codes.
 
 This is an additive evolution within `app_contract_version = "1.0"`; clients that don't recognize the new codes still see the generic `code`/`message`/`details` envelope and can surface them to the operator without protocol changes.

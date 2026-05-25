@@ -96,6 +96,7 @@ src/agenttower/managed_sessions/
 │   └── app.py              # app.managed_* methods registered via FEAT-011 dispatcher; host-only
 ├── view_models.py          # Row shapes for managed_layout / managed_pane list/detail surfaces
 ├── events.py               # FEAT-008-pipeline emitters: managed_layout_*, managed_pane_*
+├── dao.py                  # Thin SQLite row converters + insert/select helpers for managed_layout + managed_pane (Phase 3b T022 addition; called by service.py only)
 ├── errors.py               # Closed-set additions: managed_session_name_conflict,
 │                           #   managed_layout_not_found, managed_pane_not_found,
 │                           #   managed_pane_recreate_chain_too_deep, managed_pane_protected_adopted,

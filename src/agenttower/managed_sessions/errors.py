@@ -28,6 +28,7 @@ MANAGED_PANE_ILLEGAL_RECREATE_SOURCE: Final[str] = "managed_pane_illegal_recreat
 MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP: Final[str] = "managed_pane_recreate_chain_too_deep"
 MANAGED_LAYOUT_CAPACITY_EXCEEDED: Final[str] = "managed_layout_capacity_exceeded"
 MANAGED_PANE_CONCURRENT_RECREATE: Final[str] = "managed_pane_concurrent_recreate"
+MANAGED_PANE_LABEL_CONFLICT: Final[str] = "managed_pane_label_conflict"
 
 
 # All FEAT-013 codes as a frozen set for closed-set membership tests
@@ -45,6 +46,7 @@ ALL_CODES: Final[frozenset[str]] = frozenset(
         MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP,
         MANAGED_LAYOUT_CAPACITY_EXCEEDED,
         MANAGED_PANE_CONCURRENT_RECREATE,
+        MANAGED_PANE_LABEL_CONFLICT,
     }
 )
 
@@ -75,6 +77,7 @@ DETAILS_SCHEMAS: Final[dict[str, tuple[str, ...]]] = {
         "predecessor_pane_id",
         "in_flight_successor_pane_id",
     ),
+    MANAGED_PANE_LABEL_CONFLICT: ("container_id", "label"),
 }
 
 
