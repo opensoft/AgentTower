@@ -1175,6 +1175,190 @@ def test_dashboard_v1_1_fr012_daemon_ignores_unknown_request_fields(
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T017 — US3 wire-level assertions (recommended_next_action)
+#
+# All assertions are @pytest.mark.v1_1. EXPECTED to fail RED with KeyError
+# on 'recommended_next_action' until T020 wires compute_recommendation into
+# the dashboard.py envelope assembly. Once T020 lands, these turn GREEN
+# alongside the FR-021 compute-failure null pathway.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_recommended_next_action_shape(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-011: ``recommended_next_action`` wire-shape — ``code`` is a
+    closed-set string, ``title`` is ≤128 chars, ``detail`` is ≤512 chars
+    or null, ``target`` is the closed-shape object or null. Also asserts
+    the field is present (never omitted, never null when refreshed_at is
+    set)."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    result = env["result"]
+
+    assert "recommended_next_action" in result
+    rec = result["recommended_next_action"]
+    assert rec is not None, "empty daemon should produce no_containers, not null"
+
+    valid_codes = {
+        "subsystem_degraded",
+        "no_containers",
+        "no_panes_discovered",
+        "unadopted_panes_present",
+        "blocked_queue_drain",
+        "no_routes_configured",
+        "all_clear",
+    }
+    assert rec["code"] in valid_codes
+    assert isinstance(rec["title"], str) and 0 < len(rec["title"]) <= 128
+    if rec["detail"] is not None:
+        assert isinstance(rec["detail"], str) and len(rec["detail"]) <= 512
+    if rec["target"] is not None:
+        assert isinstance(rec["target"], dict)
+        assert set(rec["target"].keys()) == {"kind", "id"}
+        valid_kinds = {
+            "container", "pane", "agent", "route", "message", "event", "subsystem",
+        }
+        assert rec["target"]["kind"] in valid_kinds
+        assert isinstance(rec["target"]["id"], str)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_recommendation_paired_null_invariant(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-021 + Research §FE paired-null invariant: when ``recommended_
+    next_action`` is null, ``recommended_next_action_refreshed_at`` MUST
+    also be null. Conversely, when one is populated, both are populated.
+    On a healthy daemon the floor is ``all_clear`` (never null), so on
+    this success path both fields are non-null."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    result = env["result"]
+
+    rec = result["recommended_next_action"]
+    refreshed_at = result["recommended_next_action_refreshed_at"]
+
+    # Paired-null: both null OR both populated.
+    if rec is None:
+        assert refreshed_at is None
+    else:
+        assert refreshed_at is not None
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_recommendation_refreshed_at_iso_8601_utc_ms(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """Research §TS: ``recommended_next_action_refreshed_at`` is an ISO-8601
+    UTC string with millisecond precision, e.g. "2026-05-25T17:23:45.123Z".
+    Wall-clock source, not monotonic (Research §TS rationale)."""
+    import re
+
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    refreshed_at = env["result"]["recommended_next_action_refreshed_at"]
+
+    if refreshed_at is not None:
+        # ISO-8601 UTC ms shape: YYYY-MM-DDTHH:MM:SS.sssZ
+        iso_ms_utc = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+        assert iso_ms_utc.match(refreshed_at), (
+            f"refreshed_at not ISO-8601 UTC ms format: {refreshed_at!r}"
+        )
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_target_id_opacity_no_display_chars(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-011 / FR-024 + Clarifications R1 Q14: when ``target`` is non-null,
+    ``target.id`` is an opaque internal identifier. It MUST NOT contain
+    operator-readable display characters like spaces, slashes, or
+    container-label punctuation that would suggest a human-readable name."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    rec = env["result"]["recommended_next_action"]
+
+    if rec is not None and rec["target"] is not None:
+        target_id = rec["target"]["id"]
+        assert " " not in target_id, (
+            f"target.id leaks display character (space): {target_id!r}"
+        )
+        assert "/" not in target_id, (
+            f"target.id leaks display character (slash): {target_id!r}"
+        )
+        assert "\\" not in target_id, (
+            f"target.id leaks display character (backslash): {target_id!r}"
+        )
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr026_non_suppression_during_subsystem_degraded(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-026 (Clarifications R1 Q7): even when the recommendation is
+    ``subsystem_degraded``, ``counts.panes.by_state`` and
+    ``counts.agents.by_state`` MUST STILL be emitted with all 4-key /
+    5-key vocabularies. Count values may be best-effort during
+    degradation, but the keys themselves are unconditional.
+
+    Note: on a freshly-constructed test ctx without a real readiness probe
+    suite reporting degraded, this test verifies the structural guarantee:
+    by_state is always emitted regardless of recommendation code."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    result = env["result"]
+
+    # by_state keys MUST be present unconditionally — independent of the
+    # recommendation code.
+    panes_by_state = result["counts"]["panes"]["by_state"]
+    agents_by_state = result["counts"]["agents"]["by_state"]
+    assert set(panes_by_state.keys()) == set(PANE_STATE_KEYS)
+    assert set(agents_by_state.keys()) == set(AGENT_STATE_KEYS)
+    for key in PANE_STATE_KEYS:
+        assert isinstance(panes_by_state[key], int)
+    for key in AGENT_STATE_KEYS:
+        assert isinstance(agents_by_state[key], int)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr021_compute_failure_leaves_other_v1_1_fields_intact(
+    daemon_ctx_with_db, host_session, monkeypatch
+) -> None:
+    """FR-021 + Research §FE: when ``compute_recommendation`` raises, the
+    dashboard handler catches the exception, sets BOTH
+    ``recommended_next_action`` and ``recommended_next_action_refreshed_at``
+    to null (paired-null), AND leaves every other v1.1 field populated:
+    ``counts.panes.by_state``, ``counts.agents.by_state``,
+    ``counts.routes.recently_skipped_*``. No new error code is emitted —
+    the response is still a success envelope."""
+    from agenttower.app_contract import recommendations
+
+    def _boom(_state: recommendations.RecommendationState) -> None:
+        raise RuntimeError("simulated compute failure")
+
+    monkeypatch.setattr(recommendations, "compute_recommendation", _boom)
+
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["ok"] is True, "FR-021: compute failure MUST NOT propagate as error"
+    result = env["result"]
+
+    # Paired-null pathway.
+    assert result["recommended_next_action"] is None
+    assert result["recommended_next_action_refreshed_at"] is None
+
+    # Other v1.1 fields all present and well-typed.
+    assert isinstance(result["counts"]["panes"]["by_state"], dict)
+    assert set(result["counts"]["panes"]["by_state"].keys()) == set(PANE_STATE_KEYS)
+    assert isinstance(result["counts"]["agents"]["by_state"], dict)
+    assert set(result["counts"]["agents"]["by_state"].keys()) == set(AGENT_STATE_KEYS)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_count"], int)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_window_ms"], int)
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # FEAT-014 T011 — US2 wire-level assertions (recently_skipped_*)
 #
 # All assertions below are @pytest.mark.v1_1 per the v1.1 marker rule. They
