@@ -54,6 +54,37 @@ class FailedStage(str, Enum):
 PROMOTE_FROM_ADOPTED: Final[str] = "promoted_from_adopted"
 
 
+# Operational-first state ordering for M2 / M4 list responses
+# (contracts/managed-methods.md §M2 "Ordering: (state_priority ASC,
+# created_at DESC)"). Mirrors the FR-021a / FEAT-009 ``STATE_PRIORITY``
+# precedent: in-flight first (operator attention), then degraded
+# (needs operator attention), then ready (happy path), then terminal
+# rows (failed before removed because failed is operator-actionable).
+MANAGED_STATE_PRIORITY: Final[dict[str, int]] = {
+    ManagedState.CREATING.value: 1,
+    ManagedState.DEGRADED.value: 2,
+    ManagedState.READY.value: 3,
+    ManagedState.FAILED.value: 4,
+    ManagedState.REMOVED.value: 5,
+}
+
+
+def _state_priority_sql_expr(column: str = "state") -> str:
+    """Return a SQLite-compatible CASE expression yielding ``state_priority``
+    for ``column`` in the listing ORDER BY clauses. Hard-codes the mapping
+    so the SQL is grep-able and doesn't reach into Python at query time.
+    """
+    return (
+        "CASE " + column
+        + " WHEN 'creating' THEN 1"
+        + " WHEN 'degraded' THEN 2"
+        + " WHEN 'ready' THEN 3"
+        + " WHEN 'failed' THEN 4"
+        + " WHEN 'removed' THEN 5"
+        + " ELSE 99 END"
+    )
+
+
 # Allowed transitions per contracts/state-machine.md §Pane transitions.
 # Mapping: (from_state, to_state) → True.
 _ALLOWED: Final[frozenset[tuple[ManagedState, ManagedState]]] = frozenset(

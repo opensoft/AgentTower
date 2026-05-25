@@ -15,7 +15,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
-from .state_machine import FailedStage, ManagedState
+from .state_machine import FailedStage, ManagedState, _state_priority_sql_expr
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,15 +239,23 @@ def list_layouts(
 ) -> tuple[list[ManagedLayoutRow], Optional[str]]:
     """Paginated layout listing for ``managed.layout.list`` (M2).
 
-    Ordering: ``(created_at DESC, id DESC)``. Pagination uses ``id`` as
-    the opaque cursor; ``after`` is the last seen ``id`` from the prior
-    page. Returns ``(rows, next_cursor)`` where ``next_cursor`` is the
-    last row's id if there might be more results, else ``None``.
+    Ordering: ``(state_priority ASC, created_at DESC, id DESC)`` per
+    contracts/managed-methods.md §M2 — operationally-first (creating /
+    degraded / ready first, terminal failed / removed last) with the
+    most-recent layout breaking state ties, and the row id breaking
+    timestamp ties for determinism. ``state_priority`` mapping lives in
+    ``state_machine.MANAGED_STATE_PRIORITY``.
+
+    Pagination uses ``id`` as the opaque cursor; ``after`` is the last
+    seen ``id`` from the prior page. Returns ``(rows, next_cursor)``
+    where ``next_cursor`` is the last row's id if there might be more
+    results, else ``None``.
 
     ``limit`` is clamped to ``[1, 200]`` per FEAT-011's pagination cap
     (inherited from FR-020a).
     """
     limit = max(1, min(int(limit), _LIST_LIMIT_CAP))
+    sp_expr = _state_priority_sql_expr("state")
     where: list[str] = []
     params: list[object] = []
     if container_id is not None:
@@ -257,21 +265,33 @@ def list_layouts(
         where.append("state = ?")
         params.append(state.value)
     if after is not None:
-        # Skip rows whose created_at is newer than or equal to the cursor
-        # row's created_at; ties broken by id. We reconstruct the cursor's
-        # created_at via subquery to keep the cursor opaque from the
-        # caller's perspective.
-        where.append(
-            "(created_at, id) < (SELECT created_at, id FROM managed_layout WHERE id = ?)"
+        # Cursor: skip rows that come at or before the cursor row in the
+        # ORDER BY direction `(sp ASC, created_at DESC, id DESC)`. Encoded
+        # as three OR-clauses (SQLite tuple comparison doesn't support
+        # mixed-direction ASC/DESC). The cursor row's (sp, created_at, id)
+        # are looked up via subqueries on the after id.
+        sp_cursor = _state_priority_sql_expr(
+            "(SELECT state FROM managed_layout WHERE id = ?)"
         )
-        params.append(after)
+        where.append(
+            f"({sp_expr} > {sp_cursor}"
+            f" OR ({sp_expr} = {sp_cursor}"
+            f"     AND created_at < (SELECT created_at FROM managed_layout WHERE id = ?))"
+            f" OR ({sp_expr} = {sp_cursor}"
+            f"     AND created_at = (SELECT created_at FROM managed_layout WHERE id = ?)"
+            f"     AND id < ?))"
+        )
+        # The sp_cursor expression embeds the `?` placeholder for the
+        # cursor id; we need it 4× because sp_cursor is referenced 4
+        # times above. Then created_at appears 2× and id appears 1×.
+        params.extend([after, after, after, after, after, after, after])
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     cur = conn.execute(
-        "SELECT id, container_id, template_name, intended_pane_count, state, "
-        "failed_stage, idempotency_key, created_at, updated_at "
-        "FROM managed_layout"
+        f"SELECT id, container_id, template_name, intended_pane_count, state, "
+        f"failed_stage, idempotency_key, created_at, updated_at "
+        f"FROM managed_layout"
         + where_sql
-        + " ORDER BY created_at DESC, id DESC LIMIT ?",
+        + f" ORDER BY {sp_expr} ASC, created_at DESC, id DESC LIMIT ?",
         (*params, limit + 1),
     )
     rows = cur.fetchall()
@@ -293,10 +313,14 @@ def list_panes(
 ) -> tuple[list[ManagedPaneRow], Optional[str]]:
     """Paginated pane listing for ``managed.pane.list`` (M4).
 
-    Ordering: ``(layout_id ASC, tmux_pane_index ASC, id ASC)`` per
-    contracts/managed-methods.md M4. Cursor is ``id``.
+    Ordering: ``(state_priority ASC, layout_id ASC, tmux_pane_index ASC,
+    id ASC)`` — operationally-first by state per contracts/managed-methods.md
+    §M4 "Same shape as M2" + the M4-specific ``(layout_id, tmux_pane_index)``
+    secondary ordering. ``state_priority`` mapping lives in
+    ``state_machine.MANAGED_STATE_PRIORITY``. Cursor is ``id``.
     """
     limit = max(1, min(int(limit), _LIST_LIMIT_CAP))
+    sp_expr = _state_priority_sql_expr("state")
     where: list[str] = []
     params: list[object] = []
     if container_id is not None:
@@ -309,20 +333,28 @@ def list_panes(
         where.append("state = ?")
         params.append(state.value)
     if after is not None:
-        where.append(
-            "(layout_id, tmux_pane_index, id) > "
-            "(SELECT layout_id, tmux_pane_index, id FROM managed_pane WHERE id = ?)"
+        # ORDER BY direction is all-ASC across (sp, layout_id, tmux_pane_index, id),
+        # so tuple comparison works directly.
+        sp_cursor = _state_priority_sql_expr(
+            "(SELECT state FROM managed_pane WHERE id = ?)"
         )
-        params.append(after)
+        where.append(
+            f"({sp_expr}, layout_id, tmux_pane_index, id) > "
+            f"({sp_cursor}, "
+            f"(SELECT layout_id FROM managed_pane WHERE id = ?), "
+            f"(SELECT tmux_pane_index FROM managed_pane WHERE id = ?), "
+            f"(SELECT id FROM managed_pane WHERE id = ?))"
+        )
+        params.extend([after, after, after, after])
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     cur = conn.execute(
-        "SELECT id, layout_id, container_id, agent_id, role, capability, label, "
-        "launch_command_ref, tmux_session_name, tmux_pane_index, "
-        "pending_marker_token, state, failed_stage, predecessor_id, "
-        "chain_depth, created_at, updated_at "
-        "FROM managed_pane"
+        f"SELECT id, layout_id, container_id, agent_id, role, capability, label, "
+        f"launch_command_ref, tmux_session_name, tmux_pane_index, "
+        f"pending_marker_token, state, failed_stage, predecessor_id, "
+        f"chain_depth, created_at, updated_at "
+        f"FROM managed_pane"
         + where_sql
-        + " ORDER BY layout_id ASC, tmux_pane_index ASC, id ASC LIMIT ?",
+        + f" ORDER BY {sp_expr} ASC, layout_id ASC, tmux_pane_index ASC, id ASC LIMIT ?",
         (*params, limit + 1),
     )
     rows = cur.fetchall()

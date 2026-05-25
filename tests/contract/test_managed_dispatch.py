@@ -468,6 +468,86 @@ def test_app_pane_detail_unknown_pane_returns_closed_set_code(ctx: Any) -> None:
     assert resp["error"]["details"] == {"pane_id": "01HZ-NOPE"}
 
 
+# ─── M2/M4 state_priority ordering (N33 fix) ─────────────────────────────
+
+
+def test_app_layout_list_orders_by_state_priority_first(ctx: Any) -> None:
+    """N33 / contracts/managed-methods.md §M2: layouts are returned in
+    ``(state_priority ASC, created_at DESC, id DESC)`` order — operational
+    states (creating / degraded / ready) before terminal (failed / removed),
+    most-recent first within a state band.
+
+    Forces multiple states by direct SQL UPDATE (the spawn pipeline that
+    naturally drives state transitions lands in Phase 4b — for an
+    ordering test we don't need the full pipeline).
+    """
+    layout_creating, layout_removed = _create_two_layouts(ctx)
+    # Force the second layout (in bench-beta) to ``removed`` via direct UPDATE.
+    # In production the only path to ``removed`` is the operator-driven
+    # remove_pane → archive flow (Phase 5 T042); for an ordering test we
+    # bypass and write directly to the column.
+    ctx.state_conn.execute(
+        "UPDATE managed_layout SET state = 'removed' WHERE id = ?",
+        (layout_removed,),
+    )
+    ctx.state_conn.commit()
+
+    resp = APP_DISPATCH["app.managed_layout_list"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is True
+    items = resp["result"]["items"]
+    layout_ids_in_order = [item["layout_id"] for item in items]
+    # The creating layout MUST appear before the removed one despite
+    # being older (created earlier in the test). state_priority is 1
+    # for creating and 5 for removed, so creating sorts first regardless
+    # of created_at.
+    assert layout_ids_in_order.index(layout_creating) < layout_ids_in_order.index(
+        layout_removed
+    ), (
+        f"Expected creating layout {layout_creating} to sort before removed "
+        f"layout {layout_removed}, got order {layout_ids_in_order}"
+    )
+
+
+def test_app_pane_list_orders_by_state_priority_first(ctx: Any) -> None:
+    """N33 / contracts/managed-methods.md §M4: panes are returned in
+    ``(state_priority ASC, layout_id ASC, tmux_pane_index ASC, id ASC)``.
+    A degraded pane in a later layout MUST appear before a creating pane
+    of a higher state_priority — wait, creating has lower state_priority
+    than degraded, so creating wins. Test the inverse:
+    A creating pane in the lexicographically-greater layout_id MUST
+    still appear before a degraded pane in the lexicographically-smaller
+    layout_id, because state_priority (1=creating) wins over layout_id
+    in the ordering.
+    """
+    layout_creating, layout_other = _create_two_layouts(ctx)
+    # Force every pane in layout_other to degraded; the panes in
+    # layout_creating stay in creating. Pending-marker token MUST be
+    # cleared first per the CHECK constraint
+    # `pending_marker_token IS NULL OR state = 'creating'`.
+    ctx.state_conn.execute(
+        "UPDATE managed_pane SET pending_marker_token = NULL, state = 'degraded' "
+        "WHERE layout_id = ?",
+        (layout_other,),
+    )
+    ctx.state_conn.commit()
+
+    resp = APP_DISPATCH["app.managed_pane_list"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is True
+    items = resp["result"]["items"]
+    # All creating panes (state_priority=1) must appear before any
+    # degraded pane (state_priority=2), regardless of layout_id ordering.
+    states = [item["state"] for item in items]
+    last_creating = max(
+        (i for i, s in enumerate(states) if s == "creating"), default=-1
+    )
+    first_degraded = next(
+        (i for i, s in enumerate(states) if s == "degraded"), len(states)
+    )
+    assert last_creating < first_degraded, (
+        f"Expected all creating panes before any degraded pane, got states: {states}"
+    )
+
+
 # ─── Synchronous event emission (T032 — Phase 4a) ───────────────────────
 
 
