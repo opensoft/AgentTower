@@ -68,6 +68,17 @@ The Clarifications session in `spec.md` (2026-05-24) already resolved 12 questio
 - **Alternatives considered**: re-raise to the dispatcher (rejected — would surface as an error envelope, violates FR-021); silent null (rejected — operator can't diagnose); emit a synthetic `subsystem_degraded` (rejected — Clarifications Q11 explicitly chose Option A which is the null-fallback).
 - **Resolves**: `error-handling.md` CHK006, `security.md` CHK009.
 
+## §LB — Latency-Budget WARN Event (FR-027)
+
+- **Decision**: When `app.dashboard` end-to-end latency exceeds `_LATENCY_BUDGET_MS` (= 500), the handler emits a single WARN log line with the stable event name `app_dashboard_latency_exceeded` and includes the actual measured latency in milliseconds plus the budget value: `app_dashboard_latency_exceeded latency_ms=<N> budget_ms=500`. The response is returned best-effort — no error code, no missing v1.1 fields, no abort of the response path. The WARN emission lives in a `try/finally` block around the full handler body so it fires regardless of success/error/exception paths.
+- **Rationale**: FR-027 mandates "best-effort response + WARN log". Stable event name is required so operators can write alerts / dashboards that grep for it. Per-call emission (not throttled) is intended — each budget miss is an operator-visible datum. The WARN level (not ERROR) matches §FE's posture for the recommendation-compute-failed event: the dashboard remained operational; the latency is telemetry, not a failure.
+- **Alternatives considered**: 
+  - error envelope (`latency_budget_exceeded` code) — rejected: violates FR-027 best-effort.
+  - throttled WARN (one-per-N-seconds) — rejected: operators want the per-call latency datum for tail-distribution analysis; FEAT-011's audit-stderr throttle exists for a different problem (sustained JSONL write failure, not per-call telemetry).
+  - silent fail-soft — rejected: operators must be able to detect SC-006 regressions.
+- **Stability guarantee**: the event name `app_dashboard_latency_exceeded` is frozen for v1.x. Future minors MAY add structured fields (the current line is space-delimited `key=value` pairs) but MUST NOT rename, change message-level (WARN), or drop the `latency_ms=` token.
+- **Resolves**: `testing-strategy.md` CHK029 (post-FEAT-014 latency-WARN event-name canonicalization).
+
 ## §CC — Concurrent Dashboard Calls and Recommendation Determinism
 
 - **Decision**: Two concurrent `app.dashboard` calls observing identical underlying daemon state MUST receive identical recommendation codes (same-input-same-output). The recommendation function reads state through the same service-layer accessors the dashboard already uses for the other counts; there is no per-call randomness, no global mutex, and no per-call internal cache.

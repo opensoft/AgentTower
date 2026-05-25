@@ -27,7 +27,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from agenttower.routing import skip_counter
 
@@ -50,7 +50,7 @@ _log = logging.getLogger(__name__)
 # FR-027 / SC-006 latency budget. Crossing this triggers a WARN log but
 # the dashboard response is returned best-effort (FR-027 — no error
 # envelope, no missing fields).
-_LATENCY_BUDGET_MS: int = 500
+_LATENCY_BUDGET_MS: Final[int] = 500
 
 
 def _test_only_injection_ms() -> int:
@@ -351,7 +351,15 @@ def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
 
 
 def _oldest_blocked_message_id(ctx: "DaemonContext") -> str | None:
-    """Deterministic oldest blocked queue message by created_at."""
+    """Deterministic oldest blocked queue message by ``enqueued_at``.
+
+    Column-name note (post-swarm B1 fix): the FEAT-009 ``message_queue``
+    table uses ``enqueued_at`` (NOT ``created_at``); see ``_recent_queue``
+    nearby for the same convention. The original implementation queried
+    a non-existent column and the FR-025 broad-except silently masked
+    the SQLite OperationalError, permanently returning ``None`` and
+    breaking the ``blocked_queue_drain`` recommendation target.
+    """
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
         return None
@@ -359,7 +367,7 @@ def _oldest_blocked_message_id(ctx: "DaemonContext") -> str | None:
         row = conn.execute(
             "SELECT message_id FROM message_queue "
             "WHERE state = 'blocked' "
-            "ORDER BY created_at ASC, message_id ASC LIMIT 1"
+            "ORDER BY enqueued_at ASC, message_id ASC LIMIT 1"
         ).fetchone()
     except Exception:  # noqa: BLE001 — FR-025 fallback
         return None
@@ -660,13 +668,20 @@ def app_dashboard(
         # FR-027 budget-miss best-effort: emit a single WARN line when the
         # SC-006 latency budget is exceeded. The response is already on its
         # way to the caller; this log is purely operator-visible telemetry.
-        _latency_ms = (time.monotonic_ns() - _t0) // 1_000_000
-        if _latency_ms > _LATENCY_BUDGET_MS:
-            _log.warning(
-                "app_dashboard_latency_exceeded latency_ms=%d budget_ms=%d",
-                _latency_ms,
-                _LATENCY_BUDGET_MS,
-            )
+        # Post-swarm M8 fix: wrap the WARN emission in a defensive
+        # try/except so a logging-handler fault (e.g. log-file I/O failure)
+        # cannot mask the dashboard response by propagating an exception
+        # out of the finally block.
+        try:
+            _latency_ms = (time.monotonic_ns() - _t0) // 1_000_000
+            if _latency_ms > _LATENCY_BUDGET_MS:
+                _log.warning(
+                    "app_dashboard_latency_exceeded latency_ms=%d budget_ms=%d",
+                    _latency_ms,
+                    _LATENCY_BUDGET_MS,
+                )
+        except Exception:  # noqa: BLE001 — FR-027 best-effort: never abort
+            pass
 
 
 def _app_dashboard_body(

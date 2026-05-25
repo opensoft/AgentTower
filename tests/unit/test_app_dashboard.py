@@ -1073,11 +1073,30 @@ def test_dashboard_v1_1_fr027_warn_when_latency_exceeds_budget(
     the 500 ms budget, the handler emits a single WARN log line with the
     stable event name ``app_dashboard_latency_exceeded`` AND the response
     is returned best-effort (no error envelope, all v1.1 fields present).
-    Uses the test-only env-var hook to inject ~600 ms of latency into
-    one of the v1.1 aggregators."""
+
+    Implementation note (post-swarm M2 fix): we monkey-patch
+    ``time.monotonic_ns`` inside the dashboard module so the latency
+    measurement bookends observe a 600 ms gap WITHOUT actually sleeping
+    600 ms wall-clock. The test runs in microseconds and is timing-noise-
+    immune.
+    """
     import logging
 
-    monkeypatch.setenv("AGENTTOWER_TEST_INJECT_LATENCY_MS", "600")
+    from agenttower.app_contract import dashboard as dashboard_mod
+
+    # Fake a 600 ms latency without real sleep: each call to monotonic_ns
+    # in the latency bookend advances by 600 ms. Sequence: first call
+    # captures _t0 = 0; second call (in the finally block) returns
+    # 600_000_000 ns → _latency_ms = 600 > 500 ms budget → WARN.
+    _calls: list[int] = []
+
+    def _fake_monotonic_ns() -> int:
+        _calls.append(len(_calls))
+        return 0 if len(_calls) == 1 else 600_000_000
+
+    monkeypatch.setattr(
+        dashboard_mod.time, "monotonic_ns", _fake_monotonic_ns
+    )
     caplog.set_level(logging.WARNING, logger="agenttower.app_contract.dashboard")
 
     host_peer, token = host_session

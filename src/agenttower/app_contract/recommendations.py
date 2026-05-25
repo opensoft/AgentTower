@@ -59,13 +59,15 @@ PROBE_ORDER: Final[tuple[str, ...]] = versioning.SUBSYSTEM_NAMES
 # ─── Public dataclasses ─────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RecommendationState:
     """Pure input struct for :func:`compute_recommendation`.
 
-    All fields are keyword-only with sensible defaults so tests can
-    construct sparse instances. The dashboard handler (T020) builds this
-    struct from the same SQLite row sources the v1.0 count helpers use.
+    All fields are keyword-only (enforced by ``kw_only=True``) with
+    sensible defaults so tests can construct sparse instances. ``slots=True``
+    avoids per-instance ``__dict__`` overhead. The dashboard handler (T020)
+    builds this struct from the same SQLite row sources the v1.0 count
+    helpers use.
     """
 
     degraded_subsystems: tuple[str, ...] = ()
@@ -79,7 +81,7 @@ class RecommendationState:
     route_count: int = 0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecommendedNextAction:
     """Pure output struct matching the FR-011 wire shape.
 

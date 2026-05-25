@@ -136,7 +136,7 @@ This is SC-003 in observable form: the higher-precedence code wins regardless of
 
 ## Step 6 — Force compute failure (negative path, FR-021)
 
-A test-only hook in `recommendations.py` (gated by an env var in test fixtures only; never reachable in a release build) makes the recommendation function raise. Calling `app.dashboard` with that hook active:
+A test fixture that monkeypatches `agenttower.app_contract.recommendations.compute_recommendation` to raise (or, equivalently, breaks one of the state-builder inputs) drives the FR-021 compute-failure pathway. The try/except boundary lives in **the dashboard handler** (`dashboard.py::app_dashboard`), NOT inside `compute_recommendation` itself — the recommendation function is pure and its return type is non-optional `RecommendedNextAction`; the wire-null pathway is the dashboard's responsibility per Research §FE. Calling `app.dashboard` with the monkeypatch active:
 
 ```python
 result = c.call("app.dashboard", {})["result"]

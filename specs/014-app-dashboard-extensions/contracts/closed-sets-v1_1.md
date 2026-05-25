@@ -117,3 +117,5 @@ Wire format for `recommended_next_action_refreshed_at`:
 ## §AppContractVersion (v1.1)
 
 Wire format unchanged from FEAT-011 v1.0 — `"<major>.<minor>"` string. v1.1 value is the literal string `"1.1"`. The supported-minor-range advertisement now includes `1.1` as the maximum.
+
+**Future evolution**: the wire format (`"<major>.<minor>"` string) is frozen for v1.x. v1.x MUST NOT switch to a different encoding (e.g., integer pair, semver-with-patch, dotted-quad). The `supported_minor_range` advertisement grows additively — the `max` widens as future minors land, `min` stays at `"1.0"` for the v1.x lineage. Major-version rejection behavior (FR-035 / FR-036 / FR-014 — `client_major != APP_CONTRACT_MAJOR` → rejected) is preserved for v1.x; a v2.x bump would be a separate breaking-change PR, not an additive evolution.
