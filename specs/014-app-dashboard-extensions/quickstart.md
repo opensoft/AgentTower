@@ -76,17 +76,22 @@ assert (rec is None) == (ts is None)        # paired-null invariant (Research §
 by_state = result["counts"]["panes"]["by_state"]
 panes_v1 = result["counts"]["panes"]
 
-# Three independent equalities (FR-019)
-assert by_state["discovered-and-registered"] == panes_v1["registered"]
+# Post-R3 one-sided invariants (FR-019, Clarifications §Session 2026-05-25-r3 Q1):
+# `discovered-and-registered` can be STRICTLY LESS THAN v1.0 `registered` when a
+# registered agent sits on an inactive or `degraded_scan` container — Research §PB
+# routes that pane into `inactive-or-stale` / `discovery-degraded` rather than
+# `discovered-and-registered`. The same gap shows up on the unregistered side.
+assert by_state["discovered-and-registered"] <= panes_v1["registered"]
 assert (
     by_state["discovered-and-unmanaged"]
     + by_state["inactive-or-stale"]
     + by_state["discovery-degraded"]
-) == panes_v1["unregistered"]
+) >= panes_v1["unregistered"]
+# Total-sum invariant remains STRICT — the v1.1 partition is exhaustive.
 assert sum(by_state.values()) == panes_v1["total"]
 ```
 
-**Expected**: all three equalities hold. They are enforced *by construction* in `view_models.py` (same row set, partitioned).
+**Expected**: all three invariants hold. They are enforced *by construction* in `dashboard.py` (same row set, partitioned per Research §PB priority).
 
 ## Step 4 — Verify FR-020 agent partition
 
@@ -164,6 +169,6 @@ This is the assertion from US4 acceptance #1: a v1.1 daemon emitting unknown-to-
 
 - Pushing skip events into the ring buffer manually (FEAT-010 routing worker does this; see `tests/unit/test_skip_counter.py` for direct exercise).
 - Performance assertions (SC-002 / SC-006 are covered by `tests/integration/test_story1_dashboard_bootstrap.py`).
-- Versioning regressions (covered by extended `tests/contract/test_app_versioning.py`).
+- Versioning regressions (covered by the new `tests/unit/test_app_versioning.py` — T021; no `tests/contract/` directory in this repo).
 
 These belong in the structured test suite, not the operator-facing walkthrough.
