@@ -81,10 +81,10 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
 
 - Type: object with exactly four integer-valued keys (closed set; see `closed-sets-v1_1.md` §PaneState).
 - Empty buckets are present as `0`, never omitted, never `null` (FR-003).
-- Cross-check invariants (FR-019), checkable by callers:
-  - `by_state["discovered-and-registered"]` == `counts.panes.registered`
-  - `by_state["discovered-and-unmanaged"] + by_state["inactive-or-stale"] + by_state["discovery-degraded"]` == `counts.panes.unregistered`
-  - Sum of all four == `counts.panes.total`
+- Cross-check invariants (FR-019, post-R3 one-sided per Clarifications §Session 2026-05-25-r3 Q1):
+  - `by_state["discovered-and-registered"]` **≤** `counts.panes.registered` — strict gap when a registered agent sits on an inactive or `degraded_scan` container (Research §PB routes such panes to `inactive-or-stale` / `discovery-degraded` instead of `discovered-and-registered`).
+  - `by_state["discovered-and-unmanaged"] + by_state["inactive-or-stale"] + by_state["discovery-degraded"]` **≥** `counts.panes.unregistered` — mirror of the gap above.
+  - Sum of all four **==** `counts.panes.total` — the v1.1 partition is exhaustive; this invariant remains strict.
 
 ### `counts.agents.by_state` (object, required)
 
