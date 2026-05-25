@@ -106,7 +106,20 @@ The two cross-checks were loosened from strict equality to one-sided invariants 
 
 "First" means *deterministic-first by FEAT-011's normative orderings* (Research §CC).
 
-**Compute-failure null fallback** (FR-021, Research §FE): if the recommendation function raises, both `recommended_next_action` and `recommended_next_action_refreshed_at` are `null` in the response envelope. The dashboard call still succeeds; no new error code is emitted. The daemon logs `app_dashboard_recommendation_compute_failed` at WARN.
+**Compute-failure null fallback** (FR-021, Research §FE): if the recommendation function raises, both `recommended_next_action` and `recommended_next_action_refreshed_at` are `null` in the response envelope. The dashboard call still succeeds; no new error code is emitted. The daemon logs `app_dashboard_recommendation_compute_failed` at WARN. The null pathway lives in the **dashboard handler's** try/except (T020), NOT inside `compute_recommendation` itself — the function's return type is non-optional `RecommendedNextAction`; `all_clear` is the floor that always matches when no higher-precedence condition fires.
+
+**Compute API** (added post-analyze M-T019-API — pins the Python surface so T016 tests and T019 implementation share one canonical contract):
+
+The recommendation engine lives in `src/agenttower/app_contract/recommendations.py` and exposes four symbols:
+
+| Symbol | Kind | Purpose |
+|---|---|---|
+| `RecommendationState` | `@dataclass(frozen=True)` | Pure input struct, keyword-only with defaults. Fields: `degraded_subsystems: tuple[str, ...] = ()` (caller-supplied; canonical-ordered internally via `PROBE_ORDER`), `container_count: int = 0`, `first_active_container_id: str \| None = None`, `pane_count: int = 0`, `first_unadopted_pane_id: str \| None = None`, `oldest_blocked_message_id: str \| None = None`, `route_count: int = 0`. |
+| `RecommendedNextAction` | `@dataclass(frozen=True)` | Pure output struct matching the FR-011 wire shape: `code: str`, `title: str`, `detail: str \| None`, `target: dict \| None` (`{"kind": str, "id": str}` or `None`). |
+| `PROBE_ORDER` | `Final[tuple[str, ...]]` | Re-export alias for `versioning.SUBSYSTEM_NAMES`. Used internally to canonicalize `degraded_subsystems` order so two callers passing differently-ordered tuples produce the same `target.id` per Research §CC. |
+| `compute_recommendation(state)` | function | Signature: `compute_recommendation(state: RecommendationState) -> RecommendedNextAction`. Pure, no I/O, no cache. Walks the 7-code precedence list top-to-bottom; returns the first match. `all_clear` is the floor — the function never returns `None`. |
+
+The dashboard handler (T020) is responsible for the state-building step (reading SQLite rows + readiness probes and packing them into a `RecommendationState`) AND for the try/except around `compute_recommendation`. The state-building step is INTENTIONALLY outside the recommendation module to keep `compute_recommendation` a pure function over its input dataclass, making it trivially testable (see T016 tests for the canonical fixture pattern).
 
 **`target.id` opacity** (FR-011, Clarifications R1 Q14): `target.id` values are opaque internal identifiers in FEAT-003 / FEAT-004 / FEAT-006 / FEAT-008 / FEAT-009 / FEAT-010 internal-id format (whichever corresponds to `target.kind`), or — for `target.kind == "subsystem"` — one of the FEAT-011 readiness probe names per Research §SS. They MUST NOT carry operator-readable display names, host metadata, paths, credentials, or PII. Clients render `target.id` opaquely or resolve it to a display name via separate `app.<entity>.detail` calls.
 

@@ -94,11 +94,18 @@ src/agenttower/app_contract/
 │                           #   — that module is for entity row projection, not count
 │                           #   aggregation; correction per analyze D-DRIFT-1.)
 ├── recommendations.py      # NEW — pure function `compute_recommendation(state) ->
-│                           #   RecommendedNextAction | None`. Walks the 7-code precedence
-│                           #   list top-to-bottom; returns the first match. No cache, no
-│                           #   side effects, no I/O. Raises only on programmer error
-│                           #   (TypeError / KeyError) — those are caught at the dashboard
-│                           #   boundary and surfaced as null per FR-021.
+│                           #   RecommendedNextAction`. Exposes a 4-symbol public
+│                           #   surface (post analyze M-T019-API): the
+│                           #   `RecommendationState` input dataclass, the
+│                           #   `RecommendedNextAction` output dataclass, the
+│                           #   `PROBE_ORDER` module constant (alias for
+│                           #   versioning.SUBSYSTEM_NAMES), and the function itself.
+│                           #   Walks the 7-code precedence list top-to-bottom; returns
+│                           #   the first match (never None — `all_clear` is the floor).
+│                           #   No cache, no side effects, no I/O. Raises only on
+│                           #   programmer error (TypeError / KeyError) — those are
+│                           #   caught at the dashboard boundary (T020) and surfaced as
+│                           #   null per FR-021.
 └── versioning.py           # MODIFIED — advertised contract version 1.0 → 1.1; supported
                             #   minor range maximum widened to include 1.1; capability_flags
                             #   remains {} per FR-015.
