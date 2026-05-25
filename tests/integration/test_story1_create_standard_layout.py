@@ -27,14 +27,21 @@ from __future__ import annotations
 import pytest
 
 
-# All US1 integration scenarios need the **background spawn pipeline**
-# (FEAT-004 docker-exec + FEAT-006 register-self + FEAT-007 log attach).
+# All US1 integration scenarios need the **production wiring of real
+# tmux / FEAT-006 / FEAT-007 backends** into the spawn pipeline.
+#
 # T022 (synchronous create_layout) landed in Phase 3b (commit `83285b8`);
 # T023/T024/T025 (handlers + dispatcher registration) landed in Phase 3c
-# (commit `1b85389`); the remaining gate is Phase 4 (T029/T030 spawn
-# pipeline + T034 FEAT-004 scan update).
+# (commit `1b85389`); T029/T030 (background spawn task with injectable
+# backends) landed in Phase 4b. What's still missing for US1 end-to-end
+# is the daemon-side wiring that constructs concrete backends from the
+# AgentService + LogService + FEAT-004 docker-exec channel and kicks the
+# spawn task off after `create_layout` returns. That landing is paired
+# with Phase 4c (T034 FEAT-004 scan update + DaemonContext threading of
+# the spawn backends).
 pytestmark = pytest.mark.skip(
-    reason="US1 end-to-end needs T029/T030 spawn pipeline (Phase 4)"
+    reason="US1 end-to-end needs production backend wiring + dispatch "
+    "kick-off (Phase 4c)"
 )
 
 

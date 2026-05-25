@@ -55,8 +55,11 @@ from .dao import (
     count_active_layouts,
     insert_layout,
     insert_pane,
+    select_layout,
     select_layout_by_idempotency_key,
     select_panes_for_layout,
+    update_layout_state,
+    update_pane_state,
 )
 from .errors import (
     MANAGED_LAYOUT_CAPACITY_EXCEEDED,
@@ -68,14 +71,19 @@ from .errors import (
 )
 from .events import (
     LAYOUT_CREATED,
+    LAYOUT_STATE_CHANGED,
     PANE_CREATED,
+    PANE_LAUNCH_COMMAND_EXITED,
+    PANE_LOG_ATTACH_FAILED,
+    PANE_PENDING_MARKER_CLEARED,
     PANE_PENDING_MARKER_SET,
+    PANE_STATE_CHANGED,
     build_event,
 )
 from .launch_profiles import LaunchCommandProfile, load_profiles, resolve_profile
 from .pending_marker import new_marker_token
 from .serializer import ContainerSerializer
-from .state_machine import ManagedState
+from .state_machine import FailedStage, ManagedState, aggregate_layout_state
 from .templates import ManagedTemplate, resolve_template
 
 
@@ -490,3 +498,333 @@ def _summarize_layout(
         ],
         replay=replay,
     )
+
+
+# ─── Background spawn pipeline (T029 / T030 — Phase 4b) ────────────────
+#
+# `create_layout` returns synchronously after the SQLite rows are
+# inserted with `state = 'creating'`. The actual tmux spawn + FEAT-006
+# register + FEAT-007 log attach happens in a background task that
+# `spawn_layout_in_background` drives. The task is injectable for
+# testability — the production daemon wires real tmux/FEAT-006/FEAT-007
+# backends; tests pass canned dicts.
+#
+# Per-pane stages (FR-013):
+#   1. tmux spawn        → ok=False  → failed   (failed_stage=pane_create)
+#                          ok=True+launch_alive=False → degraded (failed_stage=launch_command)
+#                                                       AND emit PANE_LAUNCH_COMMAND_EXITED
+#                          ok=True+launch_alive=True  → continue
+#   2. register_agent    → ok=False → failed   (failed_stage=registration)
+#                          ok=True  → continue with agent_id
+#   3. attach_log        → ok=False → degraded (failed_stage=log_attach)
+#                                     AND emit PANE_LOG_ATTACH_FAILED
+#                          ok=True  → ready
+#
+# Per FR-026 no-cascade-kill: each pane runs its own pipeline; a
+# sibling's failure does not affect others. After all panes settle,
+# the layout-level state is recomputed via
+# state_machine.aggregate_layout_state.
+#
+# Per FR-019 per-container serialization: the background task acquires
+# the per-container lock for the duration of the spawn so concurrent
+# spawns (or a remove/recreate against the same container) wait. The
+# lock is the same one `create_layout` used; in production the
+# `create_layout` handler releases it before starting the bg task, then
+# the bg task re-acquires it.
+
+
+# Backend protocols — plain Callables for minimum ceremony. Each takes
+# the pane row + any preceding-stage outputs, returns a result dict.
+
+# (pane) -> {ok: True, tmux_pane_id: str, launch_alive: bool}
+#        or {ok: False, error: {code, message}}
+TmuxSpawnFn = Callable[[ManagedPaneRow], dict[str, object]]
+
+# (pane, tmux_pane_id) -> {ok: True, agent_id: str}
+#                      or {ok: False, error: {code, message}}
+RegisterAgentFn = Callable[[ManagedPaneRow, str], dict[str, object]]
+
+# (pane, agent_id) -> {ok: True} or {ok: False, error: {code, message}}
+LogAttachFn = Callable[[ManagedPaneRow, str], dict[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class SpawnLayoutOutcome:
+    """Summary of the background spawn task after all panes have settled.
+
+    ``layout_state`` is the aggregate state computed from pane outcomes
+    via ``state_machine.aggregate_layout_state``. ``pane_states`` maps
+    each pane id to its final state. Useful for tests that want to
+    assert the full layout disposition without re-reading SQLite.
+    """
+
+    layout_id: str
+    layout_state: ManagedState
+    pane_states: dict[str, ManagedState]
+
+
+def spawn_layout_in_background(
+    layout_id: str,
+    *,
+    conn: sqlite3.Connection,
+    serializer: ContainerSerializer,
+    tmux_spawn_fn: TmuxSpawnFn,
+    register_fn: RegisterAgentFn,
+    log_attach_fn: LogAttachFn,
+    event_emitter: Optional[EventEmitter] = None,
+    clock: Optional[Callable[[], _dt.datetime]] = None,
+) -> SpawnLayoutOutcome:
+    """Run the FEAT-013 spawn pipeline for a previously-inserted layout.
+
+    Returns the :class:`SpawnLayoutOutcome` summary. Mutates the
+    ``managed_pane`` rows in place; the layout state is recomputed once
+    every pane has settled.
+
+    In production this runs in a background thread launched by the
+    handler layer. Tests call it synchronously to avoid threading
+    nondeterminism.
+    """
+    layout = select_layout(conn, layout_id)
+    if layout is None:
+        return SpawnLayoutOutcome(
+            layout_id=layout_id,
+            layout_state=ManagedState.FAILED,
+            pane_states={},
+        )
+
+    pane_states: dict[str, ManagedState] = {}
+    lock = serializer.for_container(layout.container_id)
+    with lock:
+        panes = select_panes_for_layout(conn, layout_id)
+        for pane in panes:
+            final_state = _spawn_single_pane(
+                conn=conn,
+                pane=pane,
+                tmux_spawn_fn=tmux_spawn_fn,
+                register_fn=register_fn,
+                log_attach_fn=log_attach_fn,
+                event_emitter=event_emitter,
+                clock=clock,
+            )
+            pane_states[pane.id] = final_state
+
+        # Aggregate layout state from the now-mutated pane rows. We
+        # re-select so the aggregation runs on the persisted truth, not
+        # the in-memory mapping.
+        refreshed = select_panes_for_layout(conn, layout_id)
+        new_layout_state = aggregate_layout_state([p.state for p in refreshed])
+        if new_layout_state != layout.state:
+            now = _utc_now_rfc3339(clock)
+            # Layout-level failed_stage is set when the aggregate is
+            # `failed`; otherwise cleared. (data-model.md §ManagedLayout
+            # lifecycle: failed iff at least one pane is failed.)
+            layout_failed_stage: Optional[FailedStage] = None
+            if new_layout_state == ManagedState.FAILED:
+                # Surface the FIRST failed pane's failed_stage as the
+                # layout-level signal. Operators consult per-pane detail
+                # for the full disposition.
+                for p in refreshed:
+                    if p.state == ManagedState.FAILED and p.failed_stage is not None:
+                        layout_failed_stage = p.failed_stage
+                        break
+            update_layout_state(
+                conn, layout_id,
+                state=new_layout_state,
+                failed_stage=layout_failed_stage,
+                now=now,
+            )
+            if event_emitter is not None:
+                event_emitter(
+                    build_event(
+                        LAYOUT_STATE_CHANGED,
+                        actor="daemon",
+                        layout_id=layout_id,
+                        sequence=1,  # follows LAYOUT_CREATED (sequence=0)
+                        payload={
+                            "prev_state": layout.state.value,
+                            "new_state": new_layout_state.value,
+                        },
+                    )
+                )
+
+    return SpawnLayoutOutcome(
+        layout_id=layout_id,
+        layout_state=new_layout_state if pane_states else ManagedState.FAILED,
+        pane_states=pane_states,
+    )
+
+
+def _spawn_single_pane(
+    *,
+    conn: sqlite3.Connection,
+    pane: ManagedPaneRow,
+    tmux_spawn_fn: TmuxSpawnFn,
+    register_fn: RegisterAgentFn,
+    log_attach_fn: LogAttachFn,
+    event_emitter: Optional[EventEmitter],
+    clock: Optional[Callable[[], _dt.datetime]],
+) -> ManagedState:
+    """Drive one pane through tmux → register → log attach. Returns the
+    final ``ManagedState`` after persistence.
+
+    Per-pane sequence counter starts at 2 — preserves FR-015 per-pane
+    FIFO ordering from the synchronous side which emitted at sequences
+    0 (`PANE_CREATED`) and 1 (`PANE_PENDING_MARKER_SET`).
+    """
+    seq = 2  # next per-pane sequence after the sync-side events
+
+    def _emit_state_change(prev: ManagedState, new: ManagedState, failed_stage: Optional[FailedStage]) -> None:
+        nonlocal seq
+        if event_emitter is None:
+            return
+        payload: dict[str, object] = {
+            "prev_state": prev.value,
+            "new_state": new.value,
+        }
+        if failed_stage is not None:
+            payload["failed_stage"] = failed_stage.value
+        event_emitter(
+            build_event(
+                PANE_STATE_CHANGED,
+                actor="daemon",
+                layout_id=pane.layout_id,
+                pane_id=pane.id,
+                sequence=seq,
+                payload=payload,
+            )
+        )
+        seq += 1
+
+    def _emit_marker_cleared() -> None:
+        nonlocal seq
+        if event_emitter is None:
+            return
+        event_emitter(
+            build_event(
+                PANE_PENDING_MARKER_CLEARED,
+                actor="daemon",
+                pane_id=pane.id,
+                sequence=seq,
+                payload={"marker_token": pane.pending_marker_token or ""},
+            )
+        )
+        seq += 1
+
+    def _emit_aux(event_type: str, payload: dict[str, object]) -> None:
+        nonlocal seq
+        if event_emitter is None:
+            return
+        event_emitter(
+            build_event(
+                event_type,
+                actor="daemon",
+                layout_id=pane.layout_id,
+                pane_id=pane.id,
+                sequence=seq,
+                payload=payload,
+            )
+        )
+        seq += 1
+
+    # ── Stage 1: tmux spawn ─────────────────────────────────────────
+    spawn_result = tmux_spawn_fn(pane)
+    if not spawn_result.get("ok"):
+        now = _utc_now_rfc3339(clock)
+        update_pane_state(
+            conn, pane.id,
+            state=ManagedState.FAILED,
+            failed_stage=FailedStage.PANE_CREATE,
+            clear_marker=True,
+            now=now,
+        )
+        _emit_marker_cleared()
+        _emit_state_change(ManagedState.CREATING, ManagedState.FAILED, FailedStage.PANE_CREATE)
+        return ManagedState.FAILED
+
+    tmux_pane_id = str(spawn_result.get("tmux_pane_id", ""))
+    launch_alive = bool(spawn_result.get("launch_alive", True))
+
+    if not launch_alive:
+        # Pane exists but the launch command exited within 1s. Record
+        # the event; we still attempt registration so the operator
+        # sees the row in `degraded` with `failed_stage=launch_command`
+        # rather than rolling back to `failed`.
+        _emit_aux(
+            PANE_LAUNCH_COMMAND_EXITED,
+            {
+                "exit_code": int(spawn_result.get("exit_code", -1)),
+                "elapsed_ms": int(spawn_result.get("elapsed_ms", 0)),
+            },
+        )
+
+    # ── Stage 2: FEAT-006 register ─────────────────────────────────
+    register_result = register_fn(pane, tmux_pane_id)
+    if not register_result.get("ok"):
+        now = _utc_now_rfc3339(clock)
+        update_pane_state(
+            conn, pane.id,
+            state=ManagedState.FAILED,
+            failed_stage=FailedStage.REGISTRATION,
+            clear_marker=True,
+            now=now,
+        )
+        _emit_marker_cleared()
+        _emit_state_change(ManagedState.CREATING, ManagedState.FAILED, FailedStage.REGISTRATION)
+        return ManagedState.FAILED
+
+    agent_id = str(register_result.get("agent_id", ""))
+
+    # ── Stage 3: FEAT-007 log attach ──────────────────────────────
+    log_result = log_attach_fn(pane, agent_id)
+    log_ok = bool(log_result.get("ok"))
+
+    now = _utc_now_rfc3339(clock)
+    if not launch_alive:
+        # Launch immediate-exit → degraded(launch_command). Log attach
+        # outcome doesn't move us out of degraded.
+        update_pane_state(
+            conn, pane.id,
+            state=ManagedState.DEGRADED,
+            failed_stage=FailedStage.LAUNCH_COMMAND,
+            agent_id=agent_id,
+            clear_marker=True,
+            now=now,
+        )
+        _emit_marker_cleared()
+        _emit_state_change(ManagedState.CREATING, ManagedState.DEGRADED, FailedStage.LAUNCH_COMMAND)
+        return ManagedState.DEGRADED
+
+    if not log_ok:
+        # Log attach failed → degraded(log_attach).
+        _emit_aux(
+            PANE_LOG_ATTACH_FAILED,
+            {
+                "reason": str(
+                    log_result.get("error", {}).get("message", "")
+                    if isinstance(log_result.get("error"), dict) else ""
+                ),
+            },
+        )
+        update_pane_state(
+            conn, pane.id,
+            state=ManagedState.DEGRADED,
+            failed_stage=FailedStage.LOG_ATTACH,
+            agent_id=agent_id,
+            clear_marker=True,
+            now=now,
+        )
+        _emit_marker_cleared()
+        _emit_state_change(ManagedState.CREATING, ManagedState.DEGRADED, FailedStage.LOG_ATTACH)
+        return ManagedState.DEGRADED
+
+    # All stages green → ready.
+    update_pane_state(
+        conn, pane.id,
+        state=ManagedState.READY,
+        agent_id=agent_id,
+        clear_marker=True,
+        now=now,
+    )
+    _emit_marker_cleared()
+    _emit_state_change(ManagedState.CREATING, ManagedState.READY, None)
+    return ManagedState.READY

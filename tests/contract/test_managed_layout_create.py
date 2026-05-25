@@ -364,40 +364,173 @@ def test_capacity_excludes_removed_layouts(
     assert result.state == ManagedState.CREATING
 
 
-# ─── Phase-4 deferred tests (need background spawn pipeline) ─────────────
+# ─── Phase-4b: background spawn pipeline tests ──────────────────────────
 
 
-@pytest.mark.skip(reason="needs FEAT-004 docker-exec channel + spawn pipeline (Phase 4)")
-def test_create_layout_with_launch_command_overrides() -> None:
-    """FR-002: operator-supplied ``launch_command_overrides`` are passed
-    to the background spawn pipeline. Requires the FEAT-004 docker-exec
-    channel to be wired (T029)."""
+from agenttower.managed_sessions.service import (
+    spawn_layout_in_background,
+    SpawnLayoutOutcome,
+)
+from agenttower.managed_sessions.dao import select_panes_for_layout
 
 
-@pytest.mark.skip(reason="needs FEAT-004 tmux list-sessions pre-check (Phase 4)")
+def _good_tmux(pane):  # noqa: ANN001
+    """Backend fake: tmux spawn always succeeds, launch command stays alive."""
+    return {
+        "ok": True,
+        "tmux_pane_id": f"%tmux-{pane.tmux_pane_index}",
+        "launch_alive": True,
+    }
+
+
+def _make_register_backend(conn):  # noqa: ANN001
+    """Build a FEAT-006-shaped register backend that also inserts the
+    agent row into the FK-target ``agents`` table. Mirrors what
+    AgentService.register_agent does — without this, the
+    ``managed_pane.agent_id REFERENCES agents(agent_id)`` FK constraint
+    fails on update.
+    """
+    def register(pane, tmux_pane_id):  # noqa: ANN001
+        agent_id = f"agent-{pane.id[:8]}"
+        conn.execute("INSERT INTO agents (agent_id) VALUES (?)", (agent_id,))
+        return {"ok": True, "agent_id": agent_id}
+    return register
+
+
+def _good_log(pane, agent_id):  # noqa: ANN001
+    """Backend fake: FEAT-007 log attach always succeeds."""
+    return {"ok": True}
+
+
+def test_create_layout_with_launch_command_overrides(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """FR-002: operator-supplied ``launch_command_overrides`` are stored on
+    the managed_pane rows so the background spawn pipeline can reach them.
+
+    Verifies that supplying overrides keyed by ``"<role>:<label>"`` causes
+    the resolved ``launch_command_ref`` to land on the inserted pane row,
+    and that the background pipeline produces a healthy layout when the
+    backends succeed.
+    """
+    # Seed two launch-profile YAMLs in a temp override dir.
+    import os
+    import tempfile
+
+    profile_dir = tempfile.mkdtemp(prefix="feat013_test_profiles_")
+    try:
+        with open(os.path.join(profile_dir, "claude-master.yaml"), "w") as f:
+            f.write('name: claude-master\ncommand: ["bash", "-lc", "echo m"]\n')
+        with open(os.path.join(profile_dir, "claude-worker.yaml"), "w") as f:
+            f.write('name: claude-worker\ncommand: ["bash", "-lc", "echo w"]\n')
+
+        from pathlib import Path
+        result = create_layout(
+            conn=conn,
+            serializer=serializer,
+            container_id="bench-alpha",
+            template_name="1m+2s",
+            tmux_session_name="session-overrides",
+            launch_command_overrides={
+                "master:m1": "claude-master",
+                "slave:s1": "claude-worker",
+                "slave:s2": "claude-worker",
+            },
+            profile_override_dir=Path(profile_dir),
+        )
+
+        # Verify the overrides landed on the pane rows.
+        panes = select_panes_for_layout(conn, result.layout_id)
+        assert [p.launch_command_ref for p in panes] == [
+            "claude-master", "claude-worker", "claude-worker",
+        ]
+
+        # Drive the background pipeline with healthy backends.
+        outcome = spawn_layout_in_background(
+            result.layout_id,
+            conn=conn,
+            serializer=serializer,
+            tmux_spawn_fn=_good_tmux,
+            register_fn=_make_register_backend(conn),
+            log_attach_fn=_good_log,
+        )
+        assert isinstance(outcome, SpawnLayoutOutcome)
+        assert outcome.layout_state == ManagedState.READY
+        assert all(s == ManagedState.READY for s in outcome.pane_states.values())
+        # All marker tokens cleared post-ready (CHECK constraint invariant).
+        refreshed = select_panes_for_layout(conn, result.layout_id)
+        assert all(p.pending_marker_token is None for p in refreshed)
+        assert all(p.agent_id is not None for p in refreshed)
+    finally:
+        import shutil
+        shutil.rmtree(profile_dir, ignore_errors=True)
+
+
+@pytest.mark.skip(reason="needs FEAT-004 tmux list-sessions pre-check (Phase 4c — T034)")
 def test_create_layout_rejects_existing_session_name() -> None:
     """Q6 / FR-016: target tmux session name already exists →
     ``managed_session_name_conflict`` with the conflicting name in details.
 
     Detection requires the daemon to query the bench container via
     FEAT-004 BEFORE attempting tmux new-session. That cross-FEAT call
-    site lands in T029 (Phase 4)."""
+    site lands in Phase 4c alongside the FEAT-004 scan update."""
 
 
-@pytest.mark.skip(reason="needs background spawn pipeline (Phase 4)")
-def test_one_pane_failure_does_not_cascade_kill_siblings() -> None:
+def test_one_pane_failure_does_not_cascade_kill_siblings(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
     """FR-026: when one pane fails mid-create, sibling in-flight panes
-    continue to natural completion. Background spawn pipeline lives in
-    Phase 4."""
+    continue to natural completion (no cascade-kill). Layout state
+    aggregates to ``failed`` per data-model.md ManagedLayout lifecycle
+    rules ("failed iff at least one pane is failed")."""
+    result = create_layout(
+        conn=conn,
+        serializer=serializer,
+        container_id="bench-alpha",
+        template_name="1m+2s",
+        tmux_session_name="session-cascade",
+    )
+
+    # Inject failure on pane index 1 only; panes 0 and 2 succeed.
+    def selective_tmux(pane):  # noqa: ANN001
+        if pane.tmux_pane_index == 1:
+            return {"ok": False, "error": {"code": "tmux_failed", "message": "injected"}}
+        return _good_tmux(pane)
+
+    outcome = spawn_layout_in_background(
+        result.layout_id,
+        conn=conn,
+        serializer=serializer,
+        tmux_spawn_fn=selective_tmux,
+        register_fn=_make_register_backend(conn),
+        log_attach_fn=_good_log,
+    )
+
+    # Per-pane: pane 0 ready, pane 1 failed (pane_create), pane 2 ready.
+    # FR-026: pane 2 was NOT cascade-killed when pane 1 failed.
+    by_index = {p.tmux_pane_index: p for p in select_panes_for_layout(conn, result.layout_id)}
+    assert by_index[0].state == ManagedState.READY
+    assert by_index[1].state == ManagedState.FAILED
+    assert by_index[1].failed_stage.value == "pane_create"
+    assert by_index[2].state == ManagedState.READY  # ← no cascade-kill
+
+    # Aggregate: at least one failed → layout failed.
+    assert outcome.layout_state == ManagedState.FAILED
 
 
-@pytest.mark.skip(reason="needs background spawn pipeline (Phase 4)")
+@pytest.mark.skip(reason="FR-013 timeout is a tmux_create.py-layer concern (separate test target)")
 def test_pane_create_stage_times_out_after_30_seconds() -> None:
-    """FR-013 amendment: per-stage 30s timeout asserted via
-    ``managed_clock`` + ``TmuxRecorder``. Spawn pipeline = Phase 4."""
+    """FR-013 amendment: per-stage 30s timeout. Per plan, the timeout +
+    retry policy is enforced inside ``tmux_create.py`` (T011) — the
+    background spawn pipeline above this layer only sees the final
+    outcome (ok / failed). The timeout test belongs in a dedicated
+    ``test_managed_tmux_create_timeouts.py`` test that exercises
+    ``tmux_create.py`` directly with a recorded clock + recorded RPC
+    backend."""
 
 
-@pytest.mark.skip(reason="needs background spawn pipeline (Phase 4)")
+@pytest.mark.skip(reason="FR-013 retry policy is a tmux_create.py-layer concern (separate test target)")
 def test_transient_failures_retry_2x_with_exponential_backoff() -> None:
     """FR-013 amendment: 2x retry with 1s/2s back-off on transient
-    failures only. Spawn pipeline = Phase 4."""
+    failures only. Same rationale as the timeout test above — the retry
+    policy lives in ``tmux_create.py``, not the spawn-task orchestrator."""

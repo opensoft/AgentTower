@@ -377,6 +377,83 @@ def count_ready_panes_for_layout(
     return int(n)
 
 
+# ─── Background spawn pipeline mutation helpers (T029 / T030) ───────────
+
+
+def update_pane_state(
+    conn: sqlite3.Connection,
+    pane_id: str,
+    *,
+    state: ManagedState,
+    failed_stage: Optional[FailedStage] = None,
+    agent_id: Optional[str] = None,
+    clear_marker: bool = False,
+    now: str,
+) -> None:
+    """Mutate a ``managed_pane`` row's state-track fields.
+
+    Used by the background spawn pipeline to transition panes from
+    ``creating`` → ``ready`` / ``degraded`` / ``failed``. Per the data-
+    model CHECK constraint ``pending_marker_token IS NULL OR
+    state = 'creating'``, callers MUST set ``clear_marker=True`` when
+    transitioning to any non-``creating`` state. This helper enforces
+    that invariant by raising ``ValueError`` on mismatched usage.
+
+    ``agent_id`` is set when the FEAT-006 registration succeeded.
+    ``failed_stage`` is set per FR-013's closed enum.
+    """
+    if state != ManagedState.CREATING and not clear_marker:
+        raise ValueError(
+            f"transition to {state.value!r} requires clear_marker=True "
+            "(CHECK constraint pending_marker_token IS NULL OR state = 'creating')"
+        )
+    sets = ["state = ?", "updated_at = ?"]
+    params: list[object] = [state.value, now]
+    if clear_marker:
+        sets.append("pending_marker_token = NULL")
+    if failed_stage is not None:
+        sets.append("failed_stage = ?")
+        params.append(failed_stage.value)
+    if agent_id is not None:
+        sets.append("agent_id = ?")
+        params.append(agent_id)
+    params.append(pane_id)
+    conn.execute(
+        f"UPDATE managed_pane SET {', '.join(sets)} WHERE id = ?",
+        tuple(params),
+    )
+
+
+def update_layout_state(
+    conn: sqlite3.Connection,
+    layout_id: str,
+    *,
+    state: ManagedState,
+    failed_stage: Optional[FailedStage] = None,
+    now: str,
+) -> None:
+    """Mutate ``managed_layout`` state + failed_stage + updated_at.
+
+    Used by the background spawn pipeline to write the aggregate layout
+    state derived from pane outcomes (state_machine.aggregate_layout_state).
+    """
+    sets = ["state = ?", "updated_at = ?"]
+    params: list[object] = [state.value, now]
+    if failed_stage is not None:
+        sets.append("failed_stage = ?")
+        params.append(failed_stage.value)
+    else:
+        # Explicitly clear failed_stage when the layout aggregates to a
+        # non-failed state — otherwise a transient ``failed`` recorded
+        # earlier could linger on a recovered layout.
+        sets.append("failed_stage = NULL")
+    params.append(layout_id)
+    conn.execute(
+        f"UPDATE managed_layout SET {', '.join(sets)} WHERE id = ?",
+        tuple(params),
+    )
+
+
 # ─── internal row converters ────────────────────────────────────────────
 
 
