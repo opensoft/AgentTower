@@ -29,13 +29,13 @@ This file captures the v1.1 entities, closed-set vocabularies, and derived-aggre
 3. `discovered-and-registered`
 4. `discovered-and-unmanaged`
 
-**Invariants** (FR-019):
+**Invariants** (FR-019, post-R3):
 
-- `discovered-and-registered` == v1.0 `counts.panes.registered`
-- `discovered-and-unmanaged + inactive-or-stale + discovery-degraded` == v1.0 `counts.panes.unregistered`
-- Sum of all four == v1.0 `counts.panes.total`
+- `discovered-and-registered` ≤ v1.0 `counts.panes.registered`. The gap, if any, equals the count of panes whose registered agent is on an inactive or `degraded_scan` container; the Research §PB priority rule routes those panes to `inactive-or-stale` / `discovery-degraded` instead.
+- `discovered-and-unmanaged + inactive-or-stale + discovery-degraded` ≥ v1.0 `counts.panes.unregistered` (the opposite side of the same gap).
+- Sum of all four == v1.0 `counts.panes.total` (strict — the partition is exhaustive).
 
-These are enforced *by construction* — the v1.1 aggregator partitions the same row set the v1.0 counts partition.
+The two cross-checks were loosened from strict equality to one-sided invariants in Clarifications §Session 2026-05-25-r3 Q1, after the MVP implementation surfaced the contradiction with §PB priority. The previous strict-equality wording held only for fixtures with every registered pane on an active container; mixed-state daemon fixtures expose the gap. The total-sum invariant remains strict.
 
 **Lifecycle**: `PaneState` is a purely derived view computed once per `app.dashboard` request from the FEAT-003 / FEAT-004 service-layer accessors. PaneState has no state transitions and no per-instance persistence — there is no entity to "transition" between buckets; each call partitions the current row set anew. A pane that moves from one bucket to another between two consecutive `app.dashboard` calls is simply observed in a different bucket on the second call; nothing is logged or transitioned at the PaneState layer itself.
 

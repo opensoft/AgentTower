@@ -81,13 +81,18 @@ FEAT-014 reuses the existing `src/agenttower/app_contract/` sub-package (created
 
 ```text
 src/agenttower/app_contract/
-├── dashboard.py            # MODIFIED — assembles v1.1 additive fields onto the existing
-│                           #   success envelope; applies FR-021 try/except fallback around
-│                           #   the recommendation call, never letting compute failure
-│                           #   propagate to the other v1.1 fields.
-├── view_models.py          # MODIFIED — adds pane-state and agent-state bucket aggregators
-│                           #   (private helpers); reuses the same row-source the v1.0
-│                           #   panes counts already use, guaranteeing FR-019 by construction.
+├── dashboard.py            # MODIFIED — adds two new private aggregators
+│                           #   (_compute_pane_state_buckets, _compute_agent_state_buckets)
+│                           #   alongside the existing v1.0 _pane_counts / _agent_counts
+│                           #   helpers; reuses the same SQLite row-source the v1.0 counts
+│                           #   use so FR-019's one-sided invariants (post-R3) hold by
+│                           #   construction. Assembles v1.1 additive fields onto the
+│                           #   existing success envelope; in US3 (T020) will also apply
+│                           #   the FR-021 try/except fallback around the recommendation
+│                           #   call to keep compute failure from propagating to the other
+│                           #   v1.1 fields. (view_models.py is intentionally NOT modified
+│                           #   — that module is for entity row projection, not count
+│                           #   aggregation; correction per analyze D-DRIFT-1.)
 ├── recommendations.py      # NEW — pure function `compute_recommendation(state) ->
 │                           #   RecommendedNextAction | None`. Walks the 7-code precedence
 │                           #   list top-to-bottom; returns the first match. No cache, no

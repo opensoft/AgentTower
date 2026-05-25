@@ -292,12 +292,14 @@ def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
 
     FR-025 fallback: returns all-zero if the SQLite accessor fails.
 
-    FR-019 caveat: the ``dar == v1.0 counts.panes.registered`` invariant
-    only holds when every registered pane is on an active container. A
-    registered pane on an inactive container goes to ``inactive-or-stale``
-    by the priority rule, which lowers ``dar`` below v1.0 ``registered``.
-    The US1 acceptance fixture (only active containers) is consistent.
-    Tracked in https://github.com/opensoft/AgentTower/issues/28.
+    FR-019 (post-R3 loosened invariant): ``dar <= v1.0 counts.panes.registered``,
+    with the gap equal to the count of panes whose registered agent is on
+    an inactive or ``degraded_scan`` container. Those panes are routed to
+    ``inactive-or-stale`` / ``discovery-degraded`` by Research §PB priority,
+    not to ``discovered-and-registered``. The US1 acceptance fixture (only
+    active containers) trivially has zero gap, so ``dar == registered``
+    holds there. The contradiction with the previous strict-equality FR-019
+    wording is resolved in Clarifications §Session 2026-05-25-r3 Q1.
     """
     zeros = {k: 0 for k in PANE_STATE_KEYS}
     conn = getattr(ctx, "state_conn", None)
