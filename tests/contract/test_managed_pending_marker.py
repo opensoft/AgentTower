@@ -175,3 +175,196 @@ def test_feat004_filter_returns_immutable_tuple() -> None:
     kept, _skipped = _filter_pending_managed_panes([])
     assert isinstance(kept, tuple)
     assert kept == ()
+
+
+# ─── FR-022 / T050 — sweep() ────────────────────────────────────────────
+
+
+import datetime as _dt
+import sqlite3
+import uuid
+
+from agenttower.managed_sessions.dao import (
+    ManagedLayoutRow,
+    ManagedPaneRow,
+    insert_layout,
+    insert_pane,
+)
+from agenttower.managed_sessions.pending_marker import SweepOutcome, sweep
+from agenttower.managed_sessions.state_machine import ManagedState
+from agenttower.state.schema import _apply_migration_v9
+
+
+def _ts(when: _dt.datetime) -> str:
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=_dt.UTC)
+    return when.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _make_test_conn():  # type: ignore[no-untyped-def]
+    c = sqlite3.connect(":memory:")
+    c.execute("PRAGMA foreign_keys = ON")
+    c.execute("CREATE TABLE agents (agent_id TEXT PRIMARY KEY)")
+    _apply_migration_v9(c)
+    return c
+
+
+def _seed_creating_pane(
+    conn,  # type: ignore[no-untyped-def]
+    *,
+    container_id: str = "bench-alpha",
+    created_at: _dt.datetime,
+    agent_id: str | None = None,
+) -> str:
+    layout_id = str(uuid.uuid4())
+    insert_layout(
+        conn,
+        ManagedLayoutRow(
+            id=layout_id,
+            container_id=container_id,
+            template_name="1m+2s",
+            intended_pane_count=1,
+            state=ManagedState.CREATING,
+            failed_stage=None,
+            idempotency_key=None,
+            created_at=_ts(created_at),
+            updated_at=_ts(created_at),
+        ),
+    )
+    if agent_id is not None:
+        conn.execute("INSERT INTO agents (agent_id) VALUES (?)", (agent_id,))
+    pane_id = str(uuid.uuid4())
+    insert_pane(
+        conn,
+        ManagedPaneRow(
+            id=pane_id,
+            layout_id=layout_id,
+            container_id=container_id,
+            agent_id=agent_id,
+            role="master",
+            capability="orchestrator",
+            label="m1",
+            launch_command_ref=None,
+            tmux_session_name="sweep-test",
+            tmux_pane_index=0,
+            pending_marker_token=str(uuid.uuid4()),
+            state=ManagedState.CREATING,
+            failed_stage=None,
+            predecessor_id=None,
+            chain_depth=0,
+            created_at=_ts(created_at),
+            updated_at=_ts(created_at),
+        ),
+    )
+    conn.commit()
+    return pane_id
+
+
+def test_sweep_skips_fresh_markers():
+    """A pane younger than 5 minutes is untouched by the sweep."""
+    conn = _make_test_conn()
+    now = _dt.datetime.now(_dt.UTC)
+    _seed_creating_pane(conn, created_at=now - _dt.timedelta(seconds=30))
+
+    out = sweep(conn)
+
+    assert isinstance(out, SweepOutcome)
+    assert out.panes_examined == 0
+    assert out.panes_swept == 0
+    row = conn.execute("SELECT state FROM managed_pane").fetchone()
+    assert row[0] == "creating"
+
+
+def test_sweep_transitions_stale_to_failed_with_pane_create_when_unregistered():
+    """A stale pane with `agent_id IS NULL` (registration never happened)
+    → failed_stage=pane_create."""
+    conn = _make_test_conn()
+    now = _dt.datetime.now(_dt.UTC)
+    pane_id = _seed_creating_pane(
+        conn,
+        created_at=now - _dt.timedelta(minutes=10),
+        agent_id=None,
+    )
+
+    out = sweep(conn)
+
+    assert out.panes_swept == 1
+    assert out.pane_create_failures == 1
+    assert out.registration_failures == 0
+    row = conn.execute(
+        "SELECT state, failed_stage, pending_marker_token FROM managed_pane WHERE id = ?",
+        (pane_id,),
+    ).fetchone()
+    assert row[0] == "failed"
+    assert row[1] == "pane_create"
+    assert row[2] is None  # marker cleared per CHECK invariant
+
+
+def test_sweep_transitions_stale_to_failed_with_registration_when_registered():
+    """A stale pane WITH `agent_id` set (registration ran; spawn task
+    didn't finish) → failed_stage=registration."""
+    conn = _make_test_conn()
+    now = _dt.datetime.now(_dt.UTC)
+    pane_id = _seed_creating_pane(
+        conn,
+        created_at=now - _dt.timedelta(minutes=10),
+        agent_id="agent-stale-reg",
+    )
+
+    out = sweep(conn)
+
+    assert out.panes_swept == 1
+    assert out.pane_create_failures == 0
+    assert out.registration_failures == 1
+    row = conn.execute(
+        "SELECT state, failed_stage FROM managed_pane WHERE id = ?",
+        (pane_id,),
+    ).fetchone()
+    assert row[0] == "failed"
+    assert row[1] == "registration"
+
+
+def test_sweep_at_exactly_ttl_treats_as_stale():
+    """Boundary: a pane EXACTLY at the TTL is swept (`created_at < cutoff`
+    means anything not strictly newer; a pane at the cutoff is older or
+    equal and thus stale)."""
+    conn = _make_test_conn()
+    now = _dt.datetime.now(_dt.UTC)
+    _seed_creating_pane(
+        conn,
+        # Created 5min1sec ago — comfortably past the 5min TTL.
+        created_at=now - _dt.timedelta(seconds=5 * 60 + 1),
+    )
+
+    out = sweep(conn)
+    assert out.panes_swept == 1
+
+
+def test_sweep_is_idempotent():
+    """A second sweep on already-swept rows is a no-op (the WHERE clause
+    filters to state='creating'; swept rows are now 'failed')."""
+    conn = _make_test_conn()
+    now = _dt.datetime.now(_dt.UTC)
+    _seed_creating_pane(conn, created_at=now - _dt.timedelta(minutes=10))
+
+    sweep(conn)
+    second = sweep(conn)
+    assert second.panes_examined == 0
+    assert second.panes_swept == 0
+
+
+def test_sweep_with_injectable_clock():
+    """Clock injection lets tests advance time deterministically (used by
+    the daemon-boot wiring path + perf-marker tasks)."""
+    conn = _make_test_conn()
+    # Seed a pane "now".
+    real_now = _dt.datetime.now(_dt.UTC)
+    _seed_creating_pane(conn, created_at=real_now)
+
+    # First sweep with clock at real_now+30s → not stale.
+    out_fresh = sweep(conn, clock=lambda: real_now + _dt.timedelta(seconds=30))
+    assert out_fresh.panes_swept == 0
+
+    # Second sweep with clock at real_now+10min → stale.
+    out_stale = sweep(conn, clock=lambda: real_now + _dt.timedelta(minutes=10))
+    assert out_stale.panes_swept == 1

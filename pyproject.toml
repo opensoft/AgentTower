@@ -50,6 +50,9 @@ packages = ["src/agenttower"]
 # the run (e.g., unit-only for the SonarQube workflow).
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "perf: marks performance / SLA-budget tests (FEAT-013 T054/T055/T056). Run all by default; filter with `-m 'not perf'` to skip wall-clock-sensitive tests in CI lanes that can't guarantee timing.",
+]
 
 [tool.coverage.run]
 source = ["src/agenttower"]

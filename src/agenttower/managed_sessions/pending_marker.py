@@ -1,4 +1,4 @@
-"""FEAT-013 pending-managed marker (T012).
+"""FEAT-013 pending-managed marker (T012 + T050).
 
 Tracks ``managed_pane`` rows mid-creation via:
 
@@ -15,17 +15,28 @@ Per FR-022 (research §R5), markers older than 5 minutes are swept:
 ``'registration'`` (tmux pane exists but never registered). The sweep
 runs at boot and every 60 seconds.
 
-This module exposes the data-shape constants + a parse helper. The
-SQLite read/write side is owned by ``service.py`` (T022/T046); the tmux
-title side is owned by ``tmux_create.py`` (T011). The actual sweep loop
-is wired by ``T050`` in Phase 6.
+Daemon-boot wiring (T050): ``sweep(conn, clock)`` below is the function
+the daemon's periodic task scheduler invokes every 60 seconds. The
+scheduler integration itself (registering the task with the daemon's
+existing `run_periodic(...)` infrastructure) is the same kind of follow-
+up as the spawn-backends daemon-boot wiring from Phase 4c — both are
+small daemon.py modifications outside FEAT-013's natural scope. Tests
+exercise `sweep` directly.
+
+This module exposes the data-shape constants + sweep + parse helpers.
+The SQLite read/write side is owned by ``service.py`` (T022) +
+``recovery.py`` (T046); the tmux title side is owned by ``tmux_create.py``
+(T011).
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
+import sqlite3
 import uuid
-from typing import Final
+from dataclasses import dataclass
+from typing import Callable, Final, Optional
 
 # Marker TTL — research §R5, codified in FR-022.
 MARKER_TTL_SECONDS: Final[int] = 5 * 60
@@ -88,3 +99,95 @@ def parse_title(title: str) -> tuple[str, str] | None:
 def is_marker_title(title: str) -> bool:
     """Convenience: True iff ``title`` is a marker title."""
     return parse_title(title) is not None
+
+
+# ─── Sweep (T050 — Phase 6) ─────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class SweepOutcome:
+    """Summary of one sweep pass."""
+
+    panes_examined: int        # creating-state rows with a non-null marker
+    panes_swept: int           # transitioned to failed by this sweep
+    pane_create_failures: int  # transitioned with failed_stage=pane_create
+    registration_failures: int # transitioned with failed_stage=registration
+
+
+def sweep(
+    conn: sqlite3.Connection,
+    *,
+    clock: Optional[Callable[[], _dt.datetime]] = None,
+) -> SweepOutcome:
+    """FR-022 / R5 — sweep stale pending-managed markers.
+
+    Scans ``managed_pane`` rows where ``state = 'creating'`` and
+    ``pending_marker_token IS NOT NULL``. For each row whose
+    ``created_at`` is older than ``MARKER_TTL_SECONDS`` (5 minutes):
+
+    - If ``agent_id IS NULL`` (registration never happened) → transition
+      to ``failed`` with ``failed_stage = 'pane_create'``.
+      Interpretation: per state-machine.md §Recovery, no tmux pane is
+      assumed to back the row.
+    - If ``agent_id IS NOT NULL`` (registration ran but the spawn task
+      didn't complete) → transition to ``failed`` with
+      ``failed_stage = 'registration'``. This branch is rare —
+      registration is the LAST step before ``ready`` — but it covers
+      the case where the daemon crashed between FEAT-006 register and
+      the ``state=ready`` write.
+    - Marker token is cleared in both cases (CHECK invariant
+      ``pending_marker_token IS NULL OR state = 'creating'``).
+
+    The function does NOT emit lifecycle events directly — the daemon
+    wiring layer captures the returned :class:`SweepOutcome` and emits
+    one ``managed_pane_state_changed`` event per swept row through the
+    FEAT-008 audit pipeline. This keeps ``pending_marker.sweep`` pure
+    (SQLite-only) and unit-testable.
+
+    Idempotent: a second call against the same already-swept rows is a
+    no-op because the WHERE clause filters to ``state='creating'``.
+    """
+    now = clock() if clock is not None else _dt.datetime.now(_dt.UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_dt.UTC)
+    # FR-022 / R5 cutoff: anything created at or before this timestamp
+    # is stale.
+    cutoff = now - _dt.timedelta(seconds=MARKER_TTL_SECONDS)
+    cutoff_str = cutoff.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    now_str = now.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    cur = conn.execute(
+        "SELECT id, agent_id "
+        "FROM managed_pane "
+        "WHERE state = 'creating' "
+        "  AND pending_marker_token IS NOT NULL "
+        "  AND created_at < ?",
+        (cutoff_str,),
+    )
+    stale_rows = cur.fetchall()
+
+    pane_create_failures = 0
+    registration_failures = 0
+    for pane_id, agent_id in stale_rows:
+        if agent_id is None:
+            failed_stage = "pane_create"
+            pane_create_failures += 1
+        else:
+            failed_stage = "registration"
+            registration_failures += 1
+        conn.execute(
+            "UPDATE managed_pane SET "
+            "state = 'failed', "
+            "failed_stage = ?, "
+            "pending_marker_token = NULL, "
+            "updated_at = ? "
+            "WHERE id = ?",
+            (failed_stage, now_str, pane_id),
+        )
+
+    return SweepOutcome(
+        panes_examined=len(stale_rows),
+        panes_swept=len(stale_rows),
+        pane_create_failures=pane_create_failures,
+        registration_failures=registration_failures,
+    )
