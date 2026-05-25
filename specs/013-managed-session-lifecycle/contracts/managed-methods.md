@@ -82,7 +82,7 @@ Create a managed layout in a bench container.
 - `managed_session_name_conflict` (FR-016)
 - `managed_pane_label_conflict` (FR-003; two non-terminal panes collide on `(container_id, label)`)
 - `managed_layout_capacity_exceeded` (FR-025; daemon at 40-layout cap)
-- `container_not_found` (existing FEAT-003 code)
+- `container_not_found` (FEAT-013 code — see error-codes.md; earlier drafts mis-attributed it to FEAT-003, but no upstream FEAT defines it. FEAT-013 owns it; the bare name without `managed_` prefix is preserved for compatibility with the original contract draft.)
 - `host_only` (thin-client peer targeting a foreign container)
 - `validation_failed` (any field shape violation; includes FR-016 character/length rules on `tmux_session_name`, `label_pattern`, and `launch_command_overrides` map keys)
 

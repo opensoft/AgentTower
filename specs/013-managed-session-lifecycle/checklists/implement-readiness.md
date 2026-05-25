@@ -10,7 +10,7 @@
 - [x] CHK002 Are all 9 success criteria (SC-001..SC-009) covered by either a perf verification task (T054/T055/T056) or an integration/contract test asserting their bound? [Traceability]
 - [x] CHK003 Do all 3 user-story acceptance scenarios (US1×3, US2×3, US3×3) map to integration tests (T021, T028, T041)? [Coverage]
 - [x] CHK004 Are all 9 Edge Cases bullets covered by tests in T051? [Coverage]
-- [x] CHK005 Are all 11 new FEAT-013 closed-set error codes (in contracts/error-codes.md) defined with `details` schemas? [Completeness]
+- [x] CHK005 Are all 13 new FEAT-013 closed-set error codes (in contracts/error-codes.md) defined with `details` schemas? [Completeness] — Count updated 2026-05-25: 11 → 13 (added `managed_pane_label_conflict` in Phase 3b commit `e3af4d0`, added `container_not_found` in Phase 3c commit `1b85389`).
 - [x] CHK006 Do all 8 contract methods (M1–M8) have at least one implementation task and at least one contract test task? [Coverage]
 - [x] CHK007 Are all 12 lifecycle event types from research §R11 wired into the FEAT-008 audit pipeline via T014? [Coverage]
 - [x] CHK008 Does the data model honor the T1 denormalization fix (container_id NOT NULL on managed_pane) so the partial unique index actually works? [Completeness]
@@ -19,7 +19,7 @@
 
 - [x] CHK009 Are all 4 Clarifications sessions present in spec.md (initial / post-plan review / alignment cleanup / pre-implement walk = 15 + 6 + 5 + 8 = 34 Q/A)? [Completeness, Spec §Clarifications]
 - [x] CHK010 Are the 8 pre-implement-walk decisions (Q1–Q8) integrated into spec.md as FR amendments or new FRs (FR-013/015/016/021/024 amended; FR-025/026/027 added)? [Traceability]
-- [x] CHK011 Are the 11 closed-set error codes (9 original + 2 from pre-implement walk: `managed_layout_capacity_exceeded`, `managed_pane_concurrent_recreate`) referenced by their owning method (M1, M7) in contracts/managed-methods.md? [Consistency]
+- [x] CHK011 Are the 13 closed-set error codes (9 original + 2 from pre-implement walk: `managed_layout_capacity_exceeded`, `managed_pane_concurrent_recreate`; + 1 Phase 3b `managed_pane_label_conflict`; + 1 Phase 3c `container_not_found`) referenced by their owning method (M1, M6, M7) in contracts/managed-methods.md? [Consistency]
 - [x] CHK012 Are the 503 currently-unchecked checklist items either RESOLVED by current artifacts (437 items) or explicitly DEFERRED by design (66 items)? See [CHECKLIST_WALK.md](./CHECKLIST_WALK.md). [Coverage]
 - [x] CHK013 Are zero OPEN items remaining after the pre-implement walk clarify round? (54 OPEN → all 8 topics integrated → 0 OPEN) [Completeness]
 

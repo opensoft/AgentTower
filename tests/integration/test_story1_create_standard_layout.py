@@ -28,14 +28,13 @@ import pytest
 
 
 # All US1 integration scenarios need the **background spawn pipeline**
-# (FEAT-004 docker-exec + FEAT-006 register-self + FEAT-007 log attach)
-# AND the dispatcher wiring (T023/T024 handlers + T025 dispatcher
-# registration). T022 (synchronous create_layout) lands in Phase 3b;
-# the end-to-end integration lands in Phase 3c (T023/T024/T025) +
-# Phase 4 (T029/T030 spawn pipeline).
+# (FEAT-004 docker-exec + FEAT-006 register-self + FEAT-007 log attach).
+# T022 (synchronous create_layout) landed in Phase 3b (commit `83285b8`);
+# T023/T024/T025 (handlers + dispatcher registration) landed in Phase 3c
+# (commit `1b85389`); the remaining gate is Phase 4 (T029/T030 spawn
+# pipeline + T034 FEAT-004 scan update).
 pytestmark = pytest.mark.skip(
-    reason="US1 end-to-end needs T023/T024/T025 (Phase 3c) + "
-    "T029/T030 spawn pipeline (Phase 4)"
+    reason="US1 end-to-end needs T029/T030 spawn pipeline (Phase 4)"
 )
 
 
