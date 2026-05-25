@@ -29,7 +29,7 @@ The FEAT-004 scan checks for the `@MANAGED:` prefix and skips registration; FEAT
 
 ## R2. Per-container serialization primitive (FR-019)
 
-**Decision**: Maintain a dict `dict[container_id, asyncio.Lock]` inside the service module. Each `create-layout` acquires the lock for its container_id before starting; cross-container calls run in parallel. FIFO ordering of waiters is guaranteed by `asyncio.Lock` semantics on Python 3.11+ (the underlying `_FifoMutex`). No timeout: a stuck create surfaces via its `managed_layout.state = 'creating'` row, observable to the operator; cancellation of an in-flight create is **out of scope for MVP** per spec §FR-018 (may be revisited in a later feature).
+**Decision**: Maintain a dict `dict[container_id, threading.Lock]` inside the service module — matching the FEAT-009 `agents/mutex.py` lock-map pattern that already exists in the codebase (the AgentTower daemon is threaded, not asyncio). Each `create-layout` acquires the lock for its container_id before starting; cross-container calls run in parallel. CPython's `threading.Lock` is FIFO under normal contention, so the operator-visible "second request waits in submission order" semantic from Q3 holds. No timeout: a stuck create surfaces via its `managed_layout.state = 'creating'` row, observable to the operator; cancellation of an in-flight create is **out of scope for MVP** per spec §FR-018 (may be revisited in a later feature).
 
 **Rationale**: Matches the FEAT-011 mutation style. Per-container scope is the minimum lock granularity that prevents tmux-level conflicts (same container, same tmux server). No timeout keeps semantics simple and matches Q3's "the second request waits until the first finishes."
 
@@ -189,7 +189,7 @@ The pending-managed marker token (R1) equals `idempotency_key` when present, els
 
 ## R11. Audit / lifecycle event retention (FR-021)
 
-**Decision**: Reuse FEAT-008's JSONL audit pipeline. New event types:
+**Decision**: Reuse FEAT-008's **JSONL audit pipeline only** — `managed_*` events are NOT inserted into the SQLite `events` table because that table's `event_type` CHECK constraint is closed to agent-activity types (`activity` / `waiting_for_input` / `completed` / `error` / etc.) and is intentionally NOT widened by FEAT-013. New event types:
 
 - `managed_layout_created`, `managed_layout_state_changed`
 - `managed_pane_created`, `managed_pane_state_changed`, `managed_pane_recreated`, `managed_pane_removed`
