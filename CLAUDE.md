@@ -138,8 +138,8 @@ Detect "in devBench" deterministically by checking ALL of:
 
 When all three signals hold, run codebase commands directly: `python3`,
 `pytest`, `pip`, the project's CLI, etc. From inside the container, the
-in-container shell IS the runner; the host-path concerns Rule 1 protects
-against don't apply, because the container's filesystem layout is stable
+in-container shell IS the runner; the host-path concerns that Rule 1
+protects against don't apply, because the container's filesystem layout is stable
 across host machines, WSL configurations, and mount-point reshuffles.
 
 When ANY of the three signals is missing, treat the current shell as a host

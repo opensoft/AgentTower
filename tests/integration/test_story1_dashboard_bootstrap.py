@@ -711,14 +711,23 @@ def test_t018_us3_acceptance_recommendation_precedence_over_socket(
 
 
 def _p95_ms(samples: list[float]) -> float:
-    """95th percentile, nearest-rank method (ceil)."""
+    """95th percentile, nearest-rank method (ceil).
+
+    Post-Sourcery-review fix: use ``math.ceil`` instead of ``round`` so the
+    index honors the docstring's "ceil" definition exactly. ``round`` uses
+    banker's rounding and would shift by one for inputs where ``0.95 * N``
+    lands on .5 — never the case at N=100 (=> 95.0) but the ceil form is
+    universally correct.
+    """
+    import math
+
     if len(samples) < 100:
         raise AssertionError(
             f"SC-006: need >=100 samples, got {len(samples)}"
         )
     s = sorted(samples)
     # Nearest-rank: index ⌈0.95 * N⌉ - 1 (0-indexed).
-    idx = max(0, min(len(s) - 1, int(round(0.95 * len(s))) - 1))
+    idx = max(0, min(len(s) - 1, math.ceil(0.95 * len(s)) - 1))
     return s[idx]
 
 

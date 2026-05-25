@@ -88,9 +88,18 @@ class SkipCounter:
         Strict ``>`` filter (Research §CW): an entry recorded at exactly
         ``now_ms - WINDOW_MS`` is **excluded** — the window is a half-open
         interval ``(now_ms - WINDOW_MS, now_ms]``.
+
+        Concurrency note (post-swarm fix per Copilot + Codex P1): we
+        snapshot the deque via ``list()`` before iterating. ``list(deque)``
+        is a single atomic operation in CPython, immune to the
+        ``RuntimeError: deque mutated during iteration`` race that would
+        otherwise be possible when the FEAT-010 routing-worker thread
+        appends concurrently with a dashboard read. The snapshot is also
+        cheap — at MAXLEN=10_000 ints this is ~80 KB per read.
         """
         threshold = now_ms - WINDOW_MS
-        return sum(1 for entry_ms in self._entries if entry_ms > threshold)
+        entries = list(self._entries)
+        return sum(1 for entry_ms in entries if entry_ms > threshold)
 
 
 # ─── Module-level singleton + convenience functions ─────────────────────────

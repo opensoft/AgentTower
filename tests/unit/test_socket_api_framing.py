@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from agenttower.app_contract import versioning
 from agenttower.socket_api import errors
 
 
@@ -276,7 +277,8 @@ def test_dispatch_unknown_app_method_from_container_peer_returns_host_only() -> 
     envelope = _dispatch_line(b'{"method": "app.foo.bar"}\n')
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "host_only"
-    assert envelope["app_contract_version"] == "1.0"
+    # Issue #27 cleanup: assert against the current advertised version.
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert envelope["error"]["details"] == {}
 
 
