@@ -204,7 +204,7 @@ Task: "Integration test in tests/integration/test_story1_create_standard_layout.
 
 ```bash
 # Launch the 10 parallelizable Phase 2 tasks together:
-Task: "Implement errors.py with 12 closed-set codes"
+Task: "Implement errors.py with 13 closed-set codes"
 Task: "Implement state_machine.py with 5-state transition table"
 Task: "Implement templates.py with built-ins + YAML loader"
 Task: "Implement launch_profiles.py YAML loader"

@@ -50,4 +50,4 @@
 
 ## Walk closure (2026-05-25)
 
-24/24 items resolved by FR-013 amendment (30s per-stage timeout + 2x retry with 1s/2s back-off + the closed transient set from spec §Assumptions, all from pre-implement walk topic A) + R7 (failed_stage closed enum) + FR-026 (no-cascade-kill rollback from pre-implement walk topic B) + FR-016 (validation_failed before tmux RPC) + error-codes.md (12 closed-set codes with operator-action prose) + R13 (transient vs non-recoverable mapping to degraded/failed).
+24/24 items resolved by FR-013 amendment (30s per-stage timeout + 2x retry with 1s/2s back-off + the closed transient set from spec §Assumptions, all from pre-implement walk topic A) + R7 (failed_stage closed enum) + FR-026 (no-cascade-kill rollback from pre-implement walk topic B) + FR-016 (validation_failed before tmux RPC) + error-codes.md (13 closed-set codes with operator-action prose) + R13 (transient vs non-recoverable mapping to degraded/failed).

@@ -55,4 +55,4 @@
 
 ## Walk closure (2026-05-25)
 
-29/29 items resolved by contracts/managed-methods.md (M1-M8 with full request/response schemas) + contracts/error-codes.md (12 closed-set codes with details schemas) + R10 (idempotency) + R12 (peer scoping) + FR-016 (input validation) + FR-018 (cancel-in-flight out of scope). Pre-implement walk Clarifications session (4) closed the remaining open items from CHECKLIST_WALK.md (topic D input validation + topic B partial-failure rollback + topic E event ordering).
+29/29 items resolved by contracts/managed-methods.md (M1-M8 with full request/response schemas) + contracts/error-codes.md (13 closed-set codes with details schemas) + R10 (idempotency) + R12 (peer scoping) + FR-016 (input validation) + FR-018 (cancel-in-flight out of scope). Pre-implement walk Clarifications session (4) closed the remaining open items from CHECKLIST_WALK.md (topic D input validation + topic B partial-failure rollback + topic E event ordering).
