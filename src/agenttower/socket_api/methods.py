@@ -88,6 +88,18 @@ class DaemonContext:
     routing_worker_thread: Any = None
     routing_audit_writer: Any = None
     routing_shared_state: Any = None
+    # FEAT-013 — populated at daemon boot. The serializer is the
+    # per-container ``threading.Lock`` map (FR-019). ``managed_spawn_backends``
+    # carries the production tmux + register + log-attach + kill +
+    # list-panes + route-cleanup + log-detach callables produced by
+    # ``managed_sessions.spawn_backends``. The sweep cancel handle is
+    # the boot-registered ``threading.Timer`` so shutdown can cancel
+    # it cleanly. The reconcile-outcome snapshot lets ``status`` /
+    # diagnostics surface the last boot reconcile result.
+    managed_serializer: Any = None
+    managed_spawn_backends: Any = None
+    managed_sweep_cancel: Any = None
+    managed_reconcile_outcome: Any = None
 
 
 def _set_request_peer_context(*, peer_pid: int) -> None:

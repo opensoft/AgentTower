@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Final, Optional
 
+from ._retry import run_stage_with_retry
 from ._tx import tx_guard
 from .dao import (
     ManagedLayoutRow,
@@ -808,7 +809,14 @@ def _spawn_single_pane(
         seq += 1
 
     # ── Stage 1: tmux spawn ─────────────────────────────────────────
-    spawn_result = tmux_spawn_fn(pane)
+    # FR-013 amendment: 30s per-attempt timeout + 2x retry with 1s / 2s
+    # back-off on transient docker_exec / tmux_unavailable / tmux_no_server
+    # / stage_timeout failures. Non-transient failures (label conflict,
+    # session-name conflict, etc.) surface on the first attempt.
+    spawn_result = run_stage_with_retry(
+        lambda: tmux_spawn_fn(pane),
+        stage_name="tmux_spawn",
+    )
     if not spawn_result.get("ok"):
         now = _utc_now_rfc3339(clock)
         with tx_guard(tx_lock):
@@ -840,7 +848,10 @@ def _spawn_single_pane(
         )
 
     # ── Stage 2: FEAT-006 register ─────────────────────────────────
-    register_result = register_fn(pane, tmux_pane_id)
+    register_result = run_stage_with_retry(
+        lambda: register_fn(pane, tmux_pane_id),
+        stage_name="register",
+    )
     if not register_result.get("ok"):
         now = _utc_now_rfc3339(clock)
         with tx_guard(tx_lock):
@@ -858,7 +869,10 @@ def _spawn_single_pane(
     agent_id = str(register_result.get("agent_id", ""))
 
     # ── Stage 3: FEAT-007 log attach ──────────────────────────────
-    log_result = log_attach_fn(pane, agent_id)
+    log_result = run_stage_with_retry(
+        lambda: log_attach_fn(pane, agent_id),
+        stage_name="log_attach",
+    )
     log_ok = bool(log_result.get("ok"))
 
     now = _utc_now_rfc3339(clock)

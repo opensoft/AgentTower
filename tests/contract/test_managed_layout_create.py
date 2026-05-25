@@ -594,19 +594,31 @@ def test_one_pane_failure_does_not_cascade_kill_siblings(
     assert outcome.layout_state == ManagedState.FAILED
 
 
-@pytest.mark.skip(reason="FR-013 timeout is a tmux_create.py-layer concern (separate test target)")
 def test_pane_create_stage_times_out_after_30_seconds() -> None:
-    """FR-013 amendment: per-stage 30s timeout. Per plan, the timeout +
-    retry policy is enforced inside ``tmux_create.py`` (T011) — the
-    background spawn pipeline above this layer only sees the final
-    outcome (ok / failed). The timeout test belongs in a dedicated
-    ``test_managed_tmux_create_timeouts.py`` test that exercises
-    ``tmux_create.py`` directly with a recorded clock + recorded RPC
-    backend."""
+    """FR-013 amendment: per-stage 30s timeout.
+
+    Moved to ``tests/contract/test_managed_fr013_retry.py``:
+    ``test_stage_timeout_surfaces_when_inner_call_exceeds_budget``.
+    The retry policy lives in ``managed_sessions/_retry.py`` rather
+    than ``tmux_create.py`` (the latter holds the policy constants
+    only); the dedicated test file exercises the runtime with
+    injected sleep + recorded backends so we don't burn 30s of
+    wall-clock to test the timeout itself.
+    """
+    # This placeholder stays as documentation; the real coverage is
+    # in the file referenced above.
 
 
-@pytest.mark.skip(reason="FR-013 retry policy is a tmux_create.py-layer concern (separate test target)")
 def test_transient_failures_retry_2x_with_exponential_backoff() -> None:
     """FR-013 amendment: 2x retry with 1s/2s back-off on transient
-    failures only. Same rationale as the timeout test above — the retry
-    policy lives in ``tmux_create.py``, not the spawn-task orchestrator."""
+    failures only.
+
+    Moved to ``tests/contract/test_managed_fr013_retry.py``:
+    ``test_transient_failure_retries_with_documented_backoff``,
+    ``test_transient_then_success_returns_success_after_retry``,
+    ``test_all_documented_transient_codes_trigger_retry``,
+    ``test_permanent_failure_returns_immediately_no_retries``,
+    and ``test_empty_backoff_disables_retries``.
+    """
+    # This placeholder stays as documentation; real coverage lives in
+    # the dedicated test file referenced above.

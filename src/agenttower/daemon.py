@@ -588,6 +588,10 @@ def _build_context(
     routing_worker_thread: object | None = None,
     routing_audit_writer: object | None = None,
     routing_shared_state: object | None = None,
+    managed_serializer: object | None = None,
+    managed_spawn_backends: object | None = None,
+    managed_sweep_cancel: object | None = None,
+    managed_reconcile_outcome: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -618,6 +622,10 @@ def _build_context(
         routing_worker_thread=routing_worker_thread,
         routing_audit_writer=routing_audit_writer,
         routing_shared_state=routing_shared_state,
+        managed_serializer=managed_serializer,
+        managed_spawn_backends=managed_spawn_backends,
+        managed_sweep_cancel=managed_sweep_cancel,
+        managed_reconcile_outcome=managed_reconcile_outcome,
     )
 
 
@@ -922,6 +930,34 @@ def _run(args: argparse.Namespace) -> int:
                 paths=paths,
                 queue_service=queue_service,
             )
+            # FEAT-013 daemon-boot wiring (Workstream 1 / C4 + C6):
+            #   1. Per-container serializer (FR-019).
+            #   2. Reconcile durable rows against live tmux BEFORE the
+            #      socket opens (FR-020 + SC-008).
+            #   3. Schedule the FR-022 5-minute TTL sweep on a 60-second
+            #      periodic timer. Cancel on shutdown.
+            #   4. Production spawn backends are deferred until the
+            #      real tmux backend is composed (separate follow-up);
+            #      the M1 handler's kickoff_spawn_pipeline() is a no-op
+            #      when ``managed_spawn_backends`` stays None.
+            from .managed_sessions.daemon_boot import (
+                make_managed_serializer,
+                reconcile_managed_state_at_boot,
+                start_pending_marker_sweep,
+            )
+            managed_serializer = make_managed_serializer()
+            managed_reconcile_outcome = reconcile_managed_state_at_boot(
+                conn=worker_conn,
+                serializer=managed_serializer,
+                tmux_list_panes_fn=None,  # production backend follow-up
+                tx_lock=worker_tx_lock,
+            )
+            managed_sweep_cancel = start_pending_marker_sweep(
+                conn=worker_conn,
+                tx_lock=worker_tx_lock,
+                shutdown_event=shutdown_event,
+            )
+
             ctx = _build_context(
                 paths=paths,
                 state_dir=state_dir,
@@ -946,6 +982,9 @@ def _run(args: argparse.Namespace) -> int:
                 routing_worker_thread=routing_worker_thread,
                 routing_audit_writer=routes_audit_writer,
                 routing_shared_state=routing_shared_state,
+                managed_serializer=managed_serializer,
+                managed_sweep_cancel=managed_sweep_cancel,
+                managed_reconcile_outcome=managed_reconcile_outcome,
             )
 
             server = _bind_control_server(paths, ctx, logger)
@@ -970,6 +1009,13 @@ def _run(args: argparse.Namespace) -> int:
             # routing worker stops FIRST (no new route-generated rows),
             # then the heartbeat thread, then the FEAT-009 delivery
             # worker drains.
+            # FEAT-013 sweep cancellation — fire first so the next
+            # scheduled tick can't race the worker_conn close below.
+            try:
+                if "managed_sweep_cancel" in locals() and managed_sweep_cancel is not None:
+                    managed_sweep_cancel()
+            except Exception:  # pragma: no cover — defensive
+                pass
             if routing_worker_thread is not None:
                 try:
                     routing_worker_thread.stop()

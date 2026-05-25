@@ -192,6 +192,12 @@ def app_managed_layout_create(
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
         )
+        # C4 fix: kick off the bg spawn pipeline. No-op when
+        # daemon-boot wiring is incomplete. Replay results skip
+        # (their panes are already past ``creating``).
+        if not result.replay:
+            from ..daemon_boot import kickoff_spawn_pipeline
+            kickoff_spawn_pipeline(layout_id=result.layout_id, ctx=ctx)
     except ValidationFailedError as exc:
         return _envelope.failure(VALIDATION_FAILED, str(exc), details=exc.details)
     except ManagedSessionsError as exc:

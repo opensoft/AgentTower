@@ -247,6 +247,14 @@ def _managed_layout_create(
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
         )
+        # C4 fix: kick off the background spawn pipeline so the new
+        # layout transitions out of ``creating`` in production. The
+        # helper is a no-op when daemon-boot wiring is incomplete
+        # (managed_spawn_backends None). Replay results don't kick
+        # off because their panes are already past ``creating``.
+        if not result.replay:
+            from ..daemon_boot import kickoff_spawn_pipeline
+            kickoff_spawn_pipeline(layout_id=result.layout_id, ctx=ctx)
     except ValidationFailedError as exc:
         return _err(exc.code, str(exc), details=exc.details)
     except ManagedSessionsError as exc:
