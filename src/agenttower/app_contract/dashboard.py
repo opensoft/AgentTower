@@ -22,7 +22,10 @@ slight inter-surface inconsistency is acceptable.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
+
+from agenttower.routing import skip_counter
 
 from . import envelope, view_models
 from .errors import VALIDATION_FAILED
@@ -575,7 +578,16 @@ def app_dashboard(
             "log_attachments": log_attachment_counts,
             "events": {"total": event_total},
             "queue": queue_counts,
-            "routes": route_counts,
+            # FEAT-014 T015 — v1.1 additive route-skip telemetry. v1.0
+            # readers ignore the new keys (FR-012); v1.1 readers consume
+            # them per FR-007 / FR-008.
+            "routes": {
+                **route_counts,
+                "recently_skipped_count": skip_counter.count_in_window(
+                    time.monotonic_ns() // 1_000_000
+                ),
+                "recently_skipped_window_ms": skip_counter.WINDOW_MS,
+            },
         },
         "recent": recents,
         "hints": [h.to_dict() for h in hints],

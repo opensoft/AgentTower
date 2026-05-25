@@ -429,7 +429,11 @@ def test_dashboard_empty_system_all_zero_counts(
     assert c["log_attachments"] == {"active": 0, "degraded": 0, "none": 0}
     assert c["events"] == {"total": 0}
     assert all(v == 0 for v in c["queue"].values())
-    assert c["routes"] == {"enabled": 0, "disabled": 0}
+    # FEAT-014 v1.1 additive bump: `routes` gains `recently_skipped_count`
+    # and `recently_skipped_window_ms`. v1.0 keys still hold their expected
+    # values; the v1.0 compat assertion is field-by-field, not strict-eq.
+    assert c["routes"]["enabled"] == 0
+    assert c["routes"]["disabled"] == 0
     assert r["recent"]["events"] == []
     assert r["recent"]["queue"] == []
     assert r["recent"]["routes"] == []
@@ -522,7 +526,9 @@ def test_dashboard_counts_with_seeded_data(
         "canceled": 0,
         "failed": 0,
     }
-    assert c["routes"] == {"enabled": 1, "disabled": 1}
+    # FEAT-014 v1.1 additive bump: see comment in the empty-system test above.
+    assert c["routes"]["enabled"] == 1
+    assert c["routes"]["disabled"] == 1
 
 
 def test_dashboard_agent_counts_coerces_unknown_role(
