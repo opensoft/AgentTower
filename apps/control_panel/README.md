@@ -69,17 +69,86 @@ Integration tests bring up a Python mock daemon via
 child process (per swarm-review CR-2 repair); `python3` must be on
 PATH.
 
-## Packaging (per FR-068)
+## Packaging (per research R-13 + R-35)
 
-Per-OS packaging scripts live under `tools/`:
+Per-OS packaging scripts live under `tools/`. All three read the
+current version from `pubspec.yaml`, write artifacts under
+`build/dist/<os>/` by default (override via `OUT_DIR`), and accept
+a `FLUTTER` env-var override for non-PATH installs.
 
-- `tools/package_windows.ps1` — MSIX (sideload, no Microsoft Store at MVP)
-- `tools/package_macos.sh` — `.dmg` with notarized + hardened-runtime signing
-- `tools/package_linux.sh` — `.AppImage` + unofficial `.deb`
+### Linux — `tools/package_linux.sh`
 
-T148 tracks the full packaging implementation; the stubs ship today
-so the structure is auditable. Signed with the Opensoft daemon
-code-signing CA per research R-13.
+Produces `AgentTower-Control-Panel-<version>-x86_64.AppImage` plus
+`agenttower-control-panel_<version>_amd64.deb`.
+
+```bash
+# Default: build + AppImage + .deb, unsigned
+bash tools/package_linux.sh
+
+# Signed release (R-13: gpg-detached signature next to each artifact)
+GPG_SIGN_KEY=release@opensoft.one bash tools/package_linux.sh
+
+# CI-friendly: skip flutter build, package a pre-built bundle
+BUNDLE_DIR=build/linux/x64/release/bundle bash tools/package_linux.sh
+```
+
+Requires `appimagetool` + `dpkg-deb` on PATH. `appimagetool` is
+optional — the script will skip the AppImage step with a warning
+and still produce the `.deb` if it's absent.
+
+The placeholder `APP_ICON` is a 1x1 transparent PNG — supply a
+real 256x256 icon via `APP_ICON=/abs/path/to/icon.png` for
+release builds.
+
+### macOS — `tools/package_macos.sh`
+
+Produces `AgentTower-Control-Panel-<version>.dmg`, hardened-runtime
+signed, notarized + stapled.
+
+```bash
+export DEVELOPER_ID_APP="Developer ID Application: Opensoft Inc (ABCDE12345)"
+export NOTARY_PROFILE="opensoft-notary"   # from notarytool store-credentials
+bash tools/package_macos.sh
+
+# Dev build (skips codesign + notarytool; rejected by Gatekeeper)
+SKIP_NOTARIZATION=1 bash tools/package_macos.sh
+```
+
+Requires `codesign`, `create-dmg` (`brew install create-dmg`), and
+`xcrun notarytool` (Xcode 13+). The `NOTARY_PROFILE` must already
+exist via `xcrun notarytool store-credentials` before first run.
+
+### Windows — `tools/package_windows.ps1`
+
+Produces `agenttower-control-panel-<version>.msix` driven by the
+`msix` Dart pub package (added to `dev_dependencies`). The MSIX
+manifest values (publisher display name, identity, capabilities)
+live in `pubspec.yaml` under `msix_config:`.
+
+```powershell
+# Cert-store signing (cert installed in Personal\Certificates)
+$env:PUBLISHER = "CN=Opensoft Inc, O=Opensoft Inc, L=Wellington, S=Wellington, C=NZ"
+.\tools\package_windows.ps1
+
+# .pfx file signing
+$env:CERTIFICATE_PATH = "C:\secrets\opensoft.pfx"
+$env:CERTIFICATE_PASSWORD = "$pfx_password"
+$env:PUBLISHER = "CN=Opensoft Inc, O=Opensoft Inc, L=Wellington, S=Wellington, C=NZ"
+.\tools\package_windows.ps1
+
+# Dev build (Windows requires sideload + developer mode to install)
+$env:SKIP_SIGNING = "1"
+.\tools\package_windows.ps1
+```
+
+Requires `signtool.exe` (Windows 10/11 SDK) when signing.
+
+### Verification status
+
+Linux .deb path is bench-verified end-to-end (synthetic bundle
+fixture, see T148 completion note). AppImage / macOS DMG /
+Windows MSIX paths are operator-verified only — the Linux bench
+lacks `appimagetool`, Apple Developer ID, and a Windows runner.
 
 ## Lint rules
 

@@ -74,6 +74,11 @@ dev_dependencies:
   # Golden tests across theme/density variants (research R-15)
   alchemist: ^0.11.0
 
+  # Windows MSIX packaging driver invoked by tools/package_windows.ps1
+  # (T148 + research R-13). Runs only on Windows hosts; harmless to pull
+  # transitively on other OSes.
+  msix: ^3.16.7
+
 flutter:
   uses-material-design: true
 
@@ -83,3 +88,24 @@ flutter:
 
   # Generated localizations enabled (research R-08)
   generate: true
+
+# Windows MSIX packaging config consumed by `dart run msix:create`, driven
+# from tools/package_windows.ps1 (T148 + research R-13 + R-35).
+#
+# - display_name MUST match the value Windows shows in Start menu + Settings.
+# - publisher_display_name + identity_name + msix_version are overridable from
+#   the PowerShell script at build time (publisher/certificate via env vars).
+# - logo_path points at the project icon when one is committed under
+#   assets/icons/ (currently a placeholder PNG path — operator must supply a
+#   real 256x256 PNG before public release; see package_linux.sh APP_ICON note).
+# - capabilities: kept minimal — local-only app per FR-001/FR-060. No
+#   internetClient, no broadFileSystemAccess, no documentsLibrary.
+msix_config:
+  display_name: AgentTower Control Panel
+  publisher_display_name: Opensoft
+  identity_name: one.opensoft.AgentTowerControlPanel
+  msix_version: 0.1.0.0
+  logo_path: assets/icons/app_logo.png
+  capabilities: ''
+  architecture: x64
+  store: false
