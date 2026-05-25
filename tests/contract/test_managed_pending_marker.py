@@ -124,3 +124,54 @@ def test_label_with_colon_round_trips_via_greedy_match() -> None:
     title = "@MANAGED:tok:label:with:colons"
     parsed = parse_title(title)
     assert parsed == ("tok", "label:with:colons")
+
+
+# ─── FR-014 + T034: FEAT-004 scan integration ────────────────────────────
+
+
+def test_feat004_scan_filter_strips_pending_managed_panes() -> None:
+    """T034: FEAT-004's ``_filter_pending_managed_panes`` helper drops any
+    pane whose title starts with ``@MANAGED:``. Verifies the cross-FEAT
+    contract — the FEAT-013 marker prefix MUST be filterable by the
+    FEAT-004 scan with no SQLite cross-check (research §R1: the title
+    is the scan-side mirror; SQLite is the authoritative source).
+    """
+    from agenttower.discovery.pane_service import _filter_pending_managed_panes
+    from agenttower.tmux.parsers import ParsedPane
+
+    def pp(title: str) -> ParsedPane:
+        return ParsedPane(
+            tmux_session_name="session-a",
+            tmux_window_index=0,
+            tmux_pane_index=0,
+            tmux_pane_id="%1",
+            pane_pid=1234,
+            pane_tty="/dev/pts/0",
+            pane_current_command="bash",
+            pane_current_path="/workspace",
+            pane_title=title,
+            pane_active=False,
+        )
+
+    inputs = [
+        pp("m1"),                        # bare label — kept
+        pp("@MANAGED:abc-123:m2"),       # pending-managed — skipped
+        pp("s1"),                        # bare label — kept
+        pp("@MANAGED:xyz-456:s2"),       # pending-managed — skipped
+        pp(""),                          # empty title (edge case) — kept
+        pp("@MANAGED:no-label"),         # missing-label variant — skipped (prefix matches)
+    ]
+    kept, skipped = _filter_pending_managed_panes(inputs)
+    assert skipped == 3
+    assert [p.pane_title for p in kept] == ["m1", "s1", ""]
+
+
+def test_feat004_filter_returns_immutable_tuple() -> None:
+    """The filter helper returns a ``tuple`` (not a list) so callers can
+    reuse it directly in ``OkSocketScan(panes=...)`` which expects a
+    sequence shape consistent with the unfiltered output."""
+    from agenttower.discovery.pane_service import _filter_pending_managed_panes
+
+    kept, _skipped = _filter_pending_managed_panes([])
+    assert isinstance(kept, tuple)
+    assert kept == ()

@@ -27,21 +27,31 @@ from __future__ import annotations
 import pytest
 
 
-# All US1 integration scenarios need the **production wiring of real
-# tmux / FEAT-006 / FEAT-007 backends** into the spawn pipeline.
+# All US1 integration scenarios need the **production wiring of the
+# tmux spawn backend** plus the **daemon-side kick-off** of the
+# background spawn task after `create_layout` returns.
 #
-# T022 (synchronous create_layout) landed in Phase 3b (commit `83285b8`);
+# T022 (synchronous create_layout) landed in Phase 3b (`83285b8`);
 # T023/T024/T025 (handlers + dispatcher registration) landed in Phase 3c
-# (commit `1b85389`); T029/T030 (background spawn task with injectable
-# backends) landed in Phase 4b. What's still missing for US1 end-to-end
-# is the daemon-side wiring that constructs concrete backends from the
-# AgentService + LogService + FEAT-004 docker-exec channel and kicks the
-# spawn task off after `create_layout` returns. That landing is paired
-# with Phase 4c (T034 FEAT-004 scan update + DaemonContext threading of
-# the spawn backends).
+# (`1b85389`); T029/T030 (background spawn task with injectable
+# backends) landed in Phase 4b (`3271d12`); T034 (FEAT-004 scan @MANAGED:
+# skip) + the spawn_backends.py factory (register + log-attach wired;
+# tmux spawn placeholder) landed in Phase 4c. What's still missing for
+# US1 end-to-end is (a) the tmux spawn backend composition
+# (tmux_create.py + pending_marker.py + FEAT-004 docker-exec channel +
+# tmux list-sessions pre-check for FR-016 managed_session_name_conflict)
+# and (b) the daemon-boot wiring that stores
+# `managed_spawn_backends` on DaemonContext + the handler hook that
+# starts a `threading.Thread(spawn_layout_in_background, ...)` after
+# `create_layout` returns synchronously. Both are tracked as follow-ups
+# in `managed_sessions/spawn_backends.py`.
+#
+# US2 end-to-end coverage with FAKE backends is already exercised by
+# `tests/integration/test_story2_auto_prepare_operations.py` (T028).
 pytestmark = pytest.mark.skip(
-    reason="US1 end-to-end needs production backend wiring + dispatch "
-    "kick-off (Phase 4c)"
+    reason="US1 end-to-end needs production tmux spawn backend + "
+    "daemon-boot wiring of spawn_backends + handler kick-off (follow-up "
+    "after Phase 4c; see managed_sessions/spawn_backends.py)"
 )
 
 
