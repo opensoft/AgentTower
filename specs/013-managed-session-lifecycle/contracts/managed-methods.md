@@ -80,9 +80,10 @@ Create a managed layout in a bench container.
 - `managed_template_not_found`
 - `managed_launch_command_not_found`
 - `managed_session_name_conflict` (FR-016)
+- `managed_layout_capacity_exceeded` (FR-025; daemon at 40-layout cap)
 - `container_not_found` (existing FEAT-003 code)
 - `host_only` (thin-client peer targeting a foreign container)
-- `validation_failed` (any field shape violation)
+- `validation_failed` (any field shape violation; includes FR-016 character/length rules on `tmux_session_name`, `label_pattern`, and `launch_command_overrides` map keys)
 
 ### M2. `managed.layout.list` / `app.managed_layout_list`
 
@@ -225,6 +226,7 @@ Recreate a previously-removed-or-failed managed pane. Produces a new pane row li
 - `managed_pane_not_found`
 - `managed_pane_recreate_chain_too_deep` (R4: predecessor's `chain_depth` ≥ 15)
 - `managed_pane_illegal_recreate_source` (predecessor is `ready`, `degraded`, or `creating`)
+- `managed_pane_concurrent_recreate` (FR-027; another recreate of the same predecessor is in flight)
 - `managed_launch_command_not_found`
 
 ### M8. `managed.pane.promote_from_adopted` / `app.managed_pane_promote_from_adopted` (STUB, FR-018)

@@ -90,6 +90,24 @@ The full closed set for an `app.managed_*` or legacy `managed.*` response contin
   ```
 - **Operator action**: Start a fresh layout rather than continuing the recreate chain.
 
+### `managed_layout_capacity_exceeded` (FR-025)
+
+- **When**: `managed.layout.create` is invoked while the daemon already holds 40 concurrent managed layouts (the per-daemon cap from FR-025).
+- **Details schema**:
+  ```json
+  {"current_count": 40, "limit": 40}
+  ```
+- **Operator action**: Remove an unused managed layout (call `managed.pane.remove` on each of its panes until they all reach `removed`) before retrying.
+
+### `managed_pane_concurrent_recreate` (FR-027)
+
+- **When**: `managed.pane.recreate` references a `predecessor_pane_id` for which another recreate is already in flight (i.e., a successor record exists in `creating` state with the same `predecessor_id`).
+- **Details schema**:
+  ```json
+  {"predecessor_pane_id": "string", "in_flight_successor_pane_id": "string"}
+  ```
+- **Operator action**: Poll `managed.pane.detail` on the in-flight successor; if it lands in `removed` or `failed`, recreate is then permitted.
+
 ---
 
 ## Reused codes (no change)
@@ -109,7 +127,7 @@ These FEAT-011 codes are also returned by FEAT-013 paths and retain their existi
 ## Code count
 
 FEAT-011 baseline: 27 codes.
-FEAT-013 additions: **9** new codes (listed above).
-FEAT-013 total in registry: **36** codes.
+FEAT-013 additions: **11** new codes (listed above; includes `managed_layout_capacity_exceeded` and `managed_pane_concurrent_recreate` added during the pre-implement walk session).
+FEAT-013 total in registry: **38** codes.
 
 This is an additive evolution within `app_contract_version = "1.0"`; clients that don't recognize the new codes still see the generic `code`/`message`/`details` envelope and can surface them to the operator without protocol changes.

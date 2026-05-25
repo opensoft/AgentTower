@@ -240,6 +240,9 @@ The operator can then `app.managed_pane_recreate` against the failed pane to bri
 | Log path not host-readable (Q9) | Affected pane lands in `degraded`; layout `state == "degraded"`; `failed_stage = "log_attach"`. |
 | Discovery scan fires during create (Q7) | Scan sees `@MANAGED:<token>` title prefix and skips the pane until registration clears the prefix. |
 | Recreate chain hits depth 16 (R4) | `managed_pane_recreate_chain_too_deep` with predecessor's chain_depth in `details`. |
+| Daemon already holds 40 concurrent managed layouts; 41st request (FR-025) | `managed_layout_capacity_exceeded` with `{"current_count": 40, "limit": 40}` in `details`; operator removes an unused layout before retrying. |
+| One pane fails mid-create-layout (FR-026) | Sibling in-flight panes continue to natural completion; the layout's aggregate state derives from the worst child (`failed` if any pane is `failed`, else `degraded`, else `ready`); no cascade-kill. |
+| Two `app.managed_pane_recreate` requests target the same predecessor in flight (FR-027) | First proceeds; second returns `managed_pane_concurrent_recreate` with the in-flight successor's `pane_id`; operator polls `app.managed_pane_detail` on that id. |
 
 Each of these is covered by a contract or integration test in `tests/contract/` and `tests/integration/`.
 
