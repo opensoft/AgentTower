@@ -19,6 +19,8 @@ Values for `counts.panes.by_state` keys (exactly 4, hyphenated, Clarifications Q
 
 Bucket-assignment priority is in `data-model.md` §PaneState. Cross-check invariants vs v1.0 are in `dashboard-v1_1.md` §counts.panes.by_state.
 
+**Future evolution**: v1.x MAY add keys additively; clients ignore unknown per FR-012. v1.x MUST NOT rename, renumber, or remove existing keys. Additive-only — no capability flag required per FR-028 (the new key carries operational meaning but is not an opt-in feature flag).
+
 ## §AgentState
 
 Values for `counts.agents.by_state` keys (exactly 5, hyphenated for state vocab + log-state):
@@ -32,6 +34,8 @@ Values for `counts.agents.by_state` keys (exactly 5, hyphenated for state vocab 
 | 5 | `log-detached` | log-attachment partition |
 
 The two partitions are independent (FR-006, FR-020). Sum-of-five MAY exceed total agents.
+
+**Future evolution**: v1.x MAY add keys to either partition additively (e.g., a new configuration-partition bucket alongside `active`/`inactive`/`partially_configured`, or a new log-attachment bucket); clients ignore unknown per FR-012. v1.x MUST NOT rename, renumber, or remove existing keys, and MUST NOT redefine the partition boundary (the configuration partition stays mutually exclusive within itself; the log-attachment partition stays orthogonal). Additive-only — no capability flag required per FR-028.
 
 ## §RecommendationCode
 
@@ -98,6 +102,8 @@ Values for `recommended_next_action.target.kind` (the v1.0 hint-target closed se
 | `event` | FEAT-008 event id (string). |
 | `subsystem` (v1.1) | One of the FEAT-011 readiness probe names: `docker`, `tmux_discovery`, `sqlite`, `jsonl`, `routing_worker`, `log_attachment_workers` (Research §SS). When multiple subsystems are degraded, the daemon picks the first one in that order (deterministic). |
 
+**Future evolution**: v1.1's addition of `subsystem` is itself the precedent — v1.x MAY add new `target.kind` values additively (e.g., a new entity type introduced by a future FEAT-* lineage); clients ignore unknown per FR-012. v1.x MUST NOT rename, renumber, or remove existing kinds, and MUST NOT change the `target.id` format for an existing kind. A new `target.kind` value MUST come with a stable `target.id` format spec in the same minor. Additive-only — no capability flag required per FR-028.
+
 ## §RecommendationTimestamp
 
 Wire format for `recommended_next_action_refreshed_at`:
@@ -105,6 +111,8 @@ Wire format for `recommended_next_action_refreshed_at`:
 - ISO-8601 UTC string with millisecond precision, e.g., `"2026-05-24T17:23:45.123Z"`.
 - Clock source: wall clock (`time.time()`-derived). Monotonic time is used internally for window arithmetic (Research §CW) but NOT exposed on this field.
 - `null` only when `recommended_next_action == null` (paired nulling — Research §FE).
+
+**Future evolution**: the wire format (ISO-8601 UTC ms) and pairing semantics are frozen for v1.x. v1.x MUST NOT switch to a different timestamp encoding (e.g., epoch ms, Unix-seconds, local-timezone) or break the paired-null invariant. A future minor MAY add a SEPARATE timestamp field for a different surface (e.g., `dashboard_refreshed_at` over the whole envelope) — that would be additive — but MUST NOT redefine this one.
 
 ## §AppContractVersion (v1.1)
 

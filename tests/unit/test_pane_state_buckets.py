@@ -97,17 +97,81 @@ def test_us1_acceptance_one_registered_two_unadopted(db_ctx: SimpleNamespace) ->
     }
 
 
-# ─── FR-019 — panes cross-check (sum == total) ─────────────────────────────
+# ─── FR-019 — panes cross-check (post-R3 one-sided invariants) ─────────────
 
 
 @pytest.mark.v1_1
 def test_fr019_cross_check_sum_equals_total_panes(db_ctx: SimpleNamespace) -> None:
-    """FR-019: sum of all four buckets == total panes (no double-counting)."""
+    """FR-019 strict-equality leg: sum of all four buckets == total panes
+    (no double-counting). The total-sum invariant remained strict after R3."""
     seed_container(db_ctx.state_conn, container_id="c1", active=1)
     for i in range(5):
         seed_pane(db_ctx.state_conn, container_id="c1", pane_index=i)
     result = _compute_pane_state_buckets(db_ctx)
     assert sum(result.values()) == 5
+
+
+@pytest.mark.v1_1
+def test_fr019_loosened_invariant_registered_agent_on_inactive_container(
+    db_ctx: SimpleNamespace,
+) -> None:
+    """FR-019 post-R3 ≤/≥ legs (Clarifications §Session 2026-05-25-r3 Q1
+    Option B): when a registered agent sits on an inactive container, the
+    Research §PB priority rule routes its pane to ``inactive-or-stale``
+    instead of ``discovered-and-registered``. This drives the loosened
+    one-sided invariants:
+
+    - ``dar < v1.0 registered`` (strict gap)
+    - ``dau + ios + dd > v1.0 unregistered`` (mirror gap)
+    - total-sum == total panes (still strict)
+
+    Without this test the pre-R3 strict-equality path is the only one
+    exercised — see swarm code-review M1.
+    """
+    from agenttower.app_contract.dashboard import _pane_counts  # local: keep import scope tight
+
+    # Active container with 1 unadopted pane → contributes 1 dau, 1 unregistered.
+    seed_container(db_ctx.state_conn, container_id="c-act", active=1)
+    seed_pane(db_ctx.state_conn, container_id="c-act", pane_index=0)
+
+    # Inactive container with 1 pane + 1 registered agent → §PB sends pane
+    # to ios, BUT v1.0 _pane_counts still flags it as "registered" because
+    # the agent row exists with active=1.
+    seed_container(db_ctx.state_conn, container_id="c-ina", active=0)
+    seed_pane(db_ctx.state_conn, container_id="c-ina", pane_index=0)
+    seed_agent(
+        db_ctx.state_conn,
+        agent_id="a-on-ina",
+        container_id="c-ina",
+        pane_index=0,
+    )
+
+    by_state = _compute_pane_state_buckets(db_ctx)
+    v1_0 = _pane_counts(db_ctx)
+
+    # The gap: v1.0 sees the agent on c-ina as a "registered" pane (count=1),
+    # but §PB routes that pane to ios; dar therefore goes to 0, not 1.
+    assert by_state["discovered-and-registered"] == 0
+    assert by_state["inactive-or-stale"] == 1
+    assert by_state["discovered-and-unmanaged"] == 1
+    assert by_state["discovery-degraded"] == 0
+    assert v1_0["registered"] == 1
+    assert v1_0["unregistered"] == 1
+    assert v1_0["total"] == 2
+
+    # FR-019 post-R3 invariants — STRICTLY one-sided in this fixture:
+    assert by_state["discovered-and-registered"] < v1_0["registered"], (
+        "FR-019 ≤ leg should be strict here (registered agent on inactive container)"
+    )
+    assert (
+        by_state["discovered-and-unmanaged"]
+        + by_state["inactive-or-stale"]
+        + by_state["discovery-degraded"]
+        > v1_0["unregistered"]
+    ), "FR-019 ≥ leg should be strict here (mirror of the dar gap)"
+    assert sum(by_state.values()) == v1_0["total"], (
+        "FR-019 total-sum invariant stays strict (R3 did not loosen this)"
+    )
 
 
 # ─── Research §PB — bucket priority ────────────────────────────────────────

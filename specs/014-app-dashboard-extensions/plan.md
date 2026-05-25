@@ -9,7 +9,7 @@ FEAT-014 extends the FEAT-011 `app.dashboard` method as an **additive v1.1 minor
 
 The work splits into **three thin additive layers** inside the existing `src/agenttower/app_contract/` sub-package, plus one small helper in `src/agenttower/routing/`:
 
-1. **State-bucket aggregators** in `app_contract/view_models.py` — derive `counts.panes.by_state` (4-key `PaneState`) and `counts.agents.by_state` (5-key `AgentState`) from the same daemon-state rows that already back the v1.0 `counts.panes.{total,registered,unregistered}` fields. Bucket assignment uses the FEAT-004/011 semantics fixed by Clarifications Q1–Q3 (no new heuristics). The aggregators satisfy the cross-check equalities in FR-019 by construction (same row set, partitioned).
+1. **State-bucket aggregators** in `app_contract/dashboard.py` — derive `counts.panes.by_state` (4-key `PaneState`) and `counts.agents.by_state` (5-key `AgentState`) from the same daemon-state rows that already back the v1.0 `counts.panes.{total,registered,unregistered}` fields, alongside the existing v1.0 `_pane_counts` / `_agent_counts` helpers. Bucket assignment uses the FEAT-004/011 semantics fixed by Clarifications Q1–Q3 (no new heuristics). The aggregators satisfy the cross-check invariants in FR-019 (post-R3) by construction (same row set, partitioned). (`view_models.py` is intentionally NOT used — that module is pure entity-row projection with no DB I/O; aggregators live alongside the v1.0 count helpers per analyze D-DRIFT-1 correction.)
 2. **Route-skip telemetry** in a new module `src/agenttower/routing/skip_counter.py` — process-local ring buffer of FEAT-010 skip events (timestamped on insertion), with a fixed `300_000` ms sliding window (FR-008, Clarifications Q6). Populated by the FEAT-010 routing worker on each skip decision; read by `dashboard.py` per call. Cleared on daemon process exit (no persistence — Clarifications Q7).
 3. **Recommendation engine** in a new module `src/agenttower/app_contract/recommendations.py` — a pure function over current daemon state that walks the fixed deterministic precedence list `subsystem_degraded → no_containers → no_panes_discovered → unadopted_panes_present → blocked_queue_drain → no_routes_configured → all_clear` and returns the first matching `RecommendedNextAction` (FR-010, Clarifications precedence note). Recomputed on every `app.dashboard` call (Clarifications Q8); no cache. Compute failure inside this module is caught at the dashboard boundary and surfaced as `recommended_next_action: null` with `recommended_next_action_refreshed_at: null` while the rest of the v1.1 payload still succeeds (FR-021).
 
@@ -30,9 +30,9 @@ The legacy v1.0 fields on `app.dashboard` (`counts.panes.{total,registered,unreg
 - No new SQLite migration. No JSONL schema bump. No persisted recommendation history (FR-018).
 - All other fields are derived per call from current FEAT-003/004/006/007/010 state.
 
-**Testing**: pytest, same layout as FEAT-011 (`tests/contract/`, `tests/integration/`, `tests/unit/`).
-- Extend `tests/contract/test_app_dashboard.py` for the v1.1 fields, FR-019 cross-check equalities, FR-020 agent partition, FR-021 compute-failure null fallback, and the v1.0 envelope shape regression.
-- Extend `tests/contract/test_app_versioning.py` for the `1.0 → 1.1` advertisement bump and the "v1.1 daemon emits new fields to a v1.0 client" assertion (Clarifications Q10, FR-013).
+**Testing**: pytest, same layout as FEAT-011 (`tests/integration/`, `tests/unit/`). FEAT-011's `app.dashboard` contract assertions live in `tests/unit/test_app_dashboard.py` (no `tests/contract/` directory in this repo); FEAT-014 follows that convention.
+- Extend `tests/unit/test_app_dashboard.py` for the v1.1 fields, FR-019 cross-check invariants (post-R3 one-sided), FR-020 agent partition, FR-021 compute-failure null fallback, and the v1.0 envelope shape regression.
+- Add `tests/unit/test_app_versioning.py` for the `1.0 → 1.1` advertisement bump and the "v1.1 daemon emits new fields to a v1.0 client" assertion (Clarifications Q10, FR-013).
 - New `tests/unit/test_recommendations.py` — fixture states for all seven codes, adjacent-pair precedence (SC-003 (b)), compute-failure isolation (FR-021).
 - New `tests/unit/test_skip_counter.py` — boundary arithmetic at `300_000` ms (FR-008), restart-resets-to-zero (US2 acceptance #3), ring-buffer overflow drop-oldest.
 - Extend `tests/integration/test_story1_dashboard_bootstrap.py` for SC-002 (cold-start-to-dashboard ≤ 500 ms still holds with v1.1 fields) and SC-006 (no new I/O surface).
@@ -111,14 +111,15 @@ src/agenttower/routing/
                             #     window_ms: int  (constant = 300_000)
                             #   Cleared implicitly on daemon process exit.
 
-tests/contract/
-├── test_app_dashboard.py        # EXTENDED — v1.1 field presence, FR-019 cross-check,
-│                                #   FR-020 agent partition, FR-021 null-on-compute-failure,
-│                                #   v1.0 envelope-shape regression.
-└── test_app_versioning.py       # EXTENDED — 1.0 → 1.1 advertised; v1.0 client receives
-                                 #   v1.1 fields and ignores them (US4 acceptance #1).
-
 tests/unit/
+├── test_app_dashboard.py        # EXTENDED — v1.1 field presence, FR-019 cross-check
+│                                #   (post-R3 one-sided), FR-020 agent partition,
+│                                #   FR-021 null-on-compute-failure, v1.0 envelope-shape
+│                                #   regression. (Same file FEAT-011 ships dashboard
+│                                #   contract assertions in; no separate tests/contract/
+│                                #   in this repo — correction per analyze D-DRIFT-2.)
+├── test_app_versioning.py       # NEW — 1.0 → 1.1 advertised; v1.0 client receives
+│                                #   v1.1 fields and ignores them (US4 acceptance #1).
 ├── test_recommendations.py      # NEW — fixture states for all 7 codes; SC-003 (a) degraded
 │                                #   precedence; SC-003 (b) adjacent-pair (no_containers
 │                                #   beating no_panes_discovered) to demonstrate first-match,

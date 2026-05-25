@@ -122,9 +122,9 @@ This phase is mostly test-extension work; the production change that makes US4 w
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T021 [P] [US4] Extend the contract version test to cover four sub-assertions, each mapped to its FR for traceability: (a) daemon advertises `app_contract_version == "1.1"` after T002 — **FR-013**; (b) supported-minor-range maximum is `1.1` — **FR-013**; (c) `capability_flags == {}` (no new flag) — **FR-015**; (d) major-version rejection behavior unchanged for client major ≠ 1 — **FR-014** + US4 acceptance #2. The four sub-assertions are bundled in one task because they live in the same file and share fixture setup; mark each with its own pytest test-id so a sub-assertion can be skipped or re-run independently. File: `tests/contract/test_app_versioning.py`. **Mark every new assertion `@pytest.mark.v1_1` and do NOT modify any existing FEAT-011 function in this file** — see the v1.1 marker rule in §Notes.
+- [ ] T021 [P] [US4] Extend the contract version test to cover four sub-assertions, each mapped to its FR for traceability: (a) daemon advertises `app_contract_version == "1.1"` after T002 — **FR-013**; (b) supported-minor-range maximum is `1.1` — **FR-013**; (c) `capability_flags == {}` (no new flag) — **FR-015**; (d) major-version rejection behavior unchanged for client major ≠ 1 — **FR-014** + US4 acceptance #2. The four sub-assertions are bundled in one task because they live in the same file and share fixture setup; mark each with its own pytest test-id so a sub-assertion can be skipped or re-run independently. File: `tests/unit/test_app_versioning.py` (NEW — same `tests/unit/` convention as the v1.1 dashboard tests; no `tests/contract/` directory in this repo). **Mark every new assertion `@pytest.mark.v1_1` and do NOT modify any existing FEAT-011 function in this file** — see the v1.1 marker rule in §Notes.
 - [ ] T022 [P] [US4] Add a v1.0-only-reader assertion to the dashboard contract test: a caller that reads only the v1.0 keys (`counts.panes.{total,registered,unregistered}`, `recents`, `hints`) gets back well-typed v1.0 values and is not disturbed by the v1.1 additions appearing in the same envelope (US4 acceptance #1). **Plus FR-012 daemon-side symmetric forward compat** (Clarifications R2 Q3): in a separate sub-test, send the `app.dashboard` request with a synthetic unknown body field (e.g., `{"unknown_future_field": true}`); assert the daemon accepts the call and returns the standard v1.1 success envelope — does NOT respond with `validation_failed.unknown_field`, any other error code, or a non-2xx envelope solely because the client sent an unrecognized request field. (Establishes the symmetric forward-compat convention before any future v1.x minor adds request parameters.) File: `tests/unit/test_app_dashboard.py`. **Mark every new assertion `@pytest.mark.v1_1` and do NOT modify any existing FEAT-011 function in this file** — see the v1.1 marker rule in §Notes.
-- [ ] T023 [P] [US4] Add SC-004 regression as a pytest-fixture-based test (NOT a CI matrix step — keeping the regression inside the same pytest run as the rest of FEAT-014): create `tests/contract/test_v1_0_compat.py` that boots a v1.1-advertising daemon and runs the FEAT-011 v1.0 contract suite via pytest, **deselecting FEAT-014's v1.1 assertions with the marker filter `pytest … -m 'not v1_1'`**. (See the v1.1 marker rule in §Notes — every FEAT-014 extension to a FEAT-011 test file marks its newly-added assertions with `@pytest.mark.v1_1`, so this single deselect catches all of them without needing an explicit file allowlist or git-blame filter.) Assert every selected (i.e., non-`v1_1`) pre-existing assertion passes unchanged against the v1.1 daemon. File: `tests/contract/test_v1_0_compat.py` (NEW).
+- [ ] T023 [P] [US4] Add SC-004 regression as a pytest-fixture-based test (NOT a CI matrix step — keeping the regression inside the same pytest run as the rest of FEAT-014): create `tests/unit/test_v1_0_compat.py` that boots a v1.1-advertising daemon and runs the FEAT-011 v1.0 contract suite via pytest, **deselecting FEAT-014's v1.1 assertions with the marker filter `pytest … -m 'not v1_1'`**. (See the v1.1 marker rule in §Notes — every FEAT-014 extension to a FEAT-011 test file marks its newly-added assertions with `@pytest.mark.v1_1`, so this single deselect catches all of them without needing an explicit file allowlist or git-blame filter.) Assert every selected (i.e., non-`v1_1`) pre-existing assertion passes unchanged against the v1.1 daemon. File: `tests/unit/test_v1_0_compat.py` (NEW — same `tests/unit/` convention as the rest of FEAT-014's tests).
 
 **Checkpoint**: US4 is independently verifiable. v1.0 callers experience the v1.1 daemon as bit-identical to a v1.0 daemon for every v1.0 field/method.
 
@@ -166,11 +166,10 @@ This phase is mostly test-extension work; the production change that makes US4 w
 
 These files are edited in multiple phases — handle the edits in phase order:
 
-- `src/agenttower/app_contract/dashboard.py` — edited by T009 (US1), T015 (US2), T020 (US3).
-- `src/agenttower/app_contract/view_models.py` — edited by T007 + T008 (both US1).
+- `src/agenttower/app_contract/dashboard.py` — edited by T007 + T008 + T009 (US1), T015 (US2), T020 (US3). (T007 and T008 add the two new private aggregators alongside the existing v1.0 count helpers; T009 wires them into the response envelope. View-models module is NOT touched — analyze D-DRIFT-1.)
 - `tests/unit/test_app_dashboard.py` — edited by T005 (US1), T011 (US2), T017 (US3), T022 (US4), T025 (Polish).
 - `tests/integration/test_story1_dashboard_bootstrap.py` — edited by T006 (US1), T012 (US2), T018 (US3), T024 (Polish).
-- `tests/contract/test_app_versioning.py` — edited by T021 (US4) as a single batched extension covering four assertions.
+- `tests/unit/test_app_versioning.py` — NEW; created by T021 (US4) as a single batched extension covering four assertions.
 
 ### Parallel Opportunities
 
@@ -189,9 +188,9 @@ Task: "Unit tests for AgentState buckets in tests/unit/test_agent_state_buckets.
 Task: "Contract test extensions (US1) in tests/unit/test_app_dashboard.py"      # T005
 Task: "Integration scenario (US1 acceptance #1) in tests/integration/test_story1_dashboard_bootstrap.py"  # T006
 
-# Then implement, respecting same-file sequencing:
-Task: "PaneState helper in src/agenttower/app_contract/view_models.py"   # T007 (sequential)
-Task: "AgentState helper in src/agenttower/app_contract/view_models.py"  # T008 (sequential after T007)
+# Then implement, respecting same-file sequencing (all three edit dashboard.py):
+Task: "PaneState helper in src/agenttower/app_contract/dashboard.py"     # T007 (sequential)
+Task: "AgentState helper in src/agenttower/app_contract/dashboard.py"    # T008 (sequential after T007)
 Task: "Wire helpers into src/agenttower/app_contract/dashboard.py"       # T009 (sequential after T007+T008)
 ```
 
