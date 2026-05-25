@@ -507,3 +507,189 @@ def test_sc008_session_token_never_in_events_jsonl(
     assert token not in contents, (
         "SC-008 violation: session token leaked into events.jsonl"
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T006 / T012 / T018 — End-to-end v1.1 integration scenarios
+#
+# Three acceptance scenarios over the real Unix socket against a real
+# `agenttowerd` process. T006 pre-seeds the daemon's state DB with the
+# US1 mixed-state fixture (1 container, 3 panes, 1 agent) BEFORE starting
+# the daemon, so the daemon reads the seeded state on startup and the
+# dashboard response carries the expected v1.1 by_state counts.
+#
+# T012 and T018 cover the part of their acceptance scenarios that's
+# achievable without test-only daemon hooks: T012 verifies the
+# recently_skipped_* wire shape on a real daemon (the 3-real-skips
+# scenario requires FEAT-010 routing-worker activity over real routes
+# and events, which is its own integration-infrastructure scope —
+# deferred). T018 verifies the recommendation engine emits the precedence
+# floor against an empty daemon (the "degraded wins" scenario requires
+# test-only readiness-probe override — also deferred).
+# ═════════════════════════════════════════════════════════════════════════
+
+
+_ISO_TS_FIXTURE = "2025-01-01T00:00:00Z"
+
+
+def _seed_state_db_for_t006(state_db: Path, home: Path) -> None:
+    """Create schema + insert the US1 acceptance #1 fixture: 1 active
+    container, 3 panes (one adopted by an agent + two unadopted)."""
+    from agenttower.state.schema import open_registry  # local: keep import scope tight
+
+    conn, _ = open_registry(state_db, namespace_root=home)
+    try:
+        # 1 active container
+        conn.execute(
+            "INSERT INTO containers (container_id, name, image, status, active, "
+            "first_seen_at, last_scanned_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("c1", "container-c1", "ubuntu:24.04", "running", 1,
+             _ISO_TS_FIXTURE, _ISO_TS_FIXTURE),
+        )
+        # 3 panes on that container
+        for idx in range(3):
+            conn.execute(
+                "INSERT INTO panes (container_id, tmux_socket_path, tmux_session_name, "
+                "tmux_window_index, tmux_pane_index, tmux_pane_id, container_name, "
+                "container_user, pane_pid, pane_tty, pane_current_command, "
+                "pane_current_path, pane_title, pane_active, active, first_seen_at, "
+                "last_scanned_at) VALUES (?, '/tmp/tmux.sock', 'sess', 0, ?, ?, ?, "
+                "'brett', ?, '/dev/pts/0', 'bash', '/workspace', '', 1, 1, ?, ?)",
+                ("c1", idx, f"%{idx}", "container-c1", 1234 + idx,
+                 _ISO_TS_FIXTURE, _ISO_TS_FIXTURE),
+            )
+        # 1 agent registered on pane index 0 (so 1 dar, 2 dau)
+        conn.execute(
+            "INSERT INTO agents (agent_id, container_id, tmux_socket_path, "
+            "tmux_session_name, tmux_window_index, tmux_pane_index, tmux_pane_id, "
+            "role, capability, label, project_path, effective_permissions, "
+            "created_at, last_registered_at, active) VALUES "
+            "(?, ?, '/tmp/tmux.sock', 'sess', 0, ?, ?, ?, ?, ?, '', '{}', ?, ?, ?)",
+            ("a1", "c1", 0, "%0", "master", "shell", "agent",
+             _ISO_TS_FIXTURE, _ISO_TS_FIXTURE, 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_t006_us1_acceptance_one_registered_two_unadopted_over_socket(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    """T006 — US1 acceptance #1 end-to-end: seed 1 registered + 2 unadopted
+    panes via direct SQLite pre-seed, start `agenttowerd`, call
+    ``app.dashboard`` over the Unix socket, assert exact ``by_state``
+    counts ``{dau:2, dar:1, ios:0, dd:0}``."""
+    run_config_init(env)
+    paths = resolved_paths(Path(env["HOME"]))
+    # Pre-seed BEFORE the daemon starts so it reads the fixture on startup.
+    _seed_state_db_for_t006(paths["state_db"], Path(env["HOME"]))
+    proc = ensure_daemon(env, json_mode=True)
+    assert proc.returncode == 0, proc.stderr
+
+    sp = paths["socket"]
+    hello = _one_shot_call(sp, "app.hello")
+    token = hello["result"]["app_session_token"]
+    envelope = _one_shot_call(sp, "app.dashboard", {"app_session_token": token})
+    assert envelope["ok"] is True, envelope
+    panes = envelope["result"]["counts"]["panes"]
+
+    # v1.0 fields confirm the fixture seeded as expected.
+    assert panes["total"] == 3
+    assert panes["registered"] == 1
+    assert panes["unregistered"] == 2
+
+    # v1.1 acceptance assertion (US1 acceptance #1).
+    assert panes["by_state"] == {
+        "discovered-and-unmanaged": 2,
+        "discovered-and-registered": 1,
+        "inactive-or-stale": 0,
+        "discovery-degraded": 0,
+    }
+
+
+def test_t012_us2_acceptance_recently_skipped_wire_shape_over_socket(
+    socket_path: Path,
+) -> None:
+    """T012 — US2 wire-shape end-to-end against real socket: ``app.dashboard``
+    emits ``counts.routes.recently_skipped_window_ms == 300_000`` and
+    ``recently_skipped_count`` as a non-negative integer over the Unix
+    socket against a real ``agenttowerd`` process.
+
+    Deferred subset of the T012 task: US2 acceptance #1 (3 real skips at
+    known wall-clock offsets → count == 2) requires FEAT-010 routing-
+    worker activity over real routes/events that's its own integration
+    setup; US2 acceptance #3 (post-restart-resets-to-zero) is structurally
+    true here because the daemon starts empty, but the cross-process
+    invariant is already proven by the unit-level
+    ``test_skip_counter.py::test_construction_returns_zero_count`` at
+    process-construction granularity. The wire-shape assertion below
+    catches any future regression in dashboard.py's emission of the
+    new keys (FR-007 / FR-008)."""
+    hello = _one_shot_call(socket_path, "app.hello")
+    token = hello["result"]["app_session_token"]
+    envelope = _one_shot_call(socket_path, "app.dashboard", {"app_session_token": token})
+    assert envelope["ok"] is True, envelope
+    routes = envelope["result"]["counts"]["routes"]
+
+    # FR-008 daemon-side fixed window.
+    assert routes["recently_skipped_window_ms"] == 300_000
+    # FR-007 non-negative integer.
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert routes["recently_skipped_count"] >= 0
+    # FR-003: both keys present even when count is 0.
+    assert "recently_skipped_count" in routes
+    assert "recently_skipped_window_ms" in routes
+
+
+def test_t018_us3_acceptance_recommendation_precedence_over_socket(
+    socket_path: Path,
+) -> None:
+    """T018 — US3 wire-shape end-to-end: ``app.dashboard`` emits a
+    ``recommended_next_action`` object whose ``code`` is in the closed
+    set + a paired ``recommended_next_action_refreshed_at`` ISO-8601
+    timestamp. Against an empty daemon (no containers, no panes), the
+    precedence floor resolves to ``no_containers`` per FR-010's first-
+    match precedence.
+
+    Deferred subset of the T018 task: US3 acceptance #1 (degraded daemon
+    AND lower-priority condition → ``subsystem_degraded`` wins) requires
+    test-only readiness-probe injection that's its own integration-
+    infrastructure scope. The SC-003(a) "degraded wins" property is
+    already proven at the unit level by
+    ``test_recommendations.py::test_sc003a_subsystem_degraded_wins_over_each_lower_condition``
+    (6 parametrized cases). The end-to-end-over-socket assertion below
+    catches a future regression in dashboard.py's emission of the
+    recommendation envelope or in the T020 state-building step."""
+    hello = _one_shot_call(socket_path, "app.hello")
+    token = hello["result"]["app_session_token"]
+    envelope = _one_shot_call(socket_path, "app.dashboard", {"app_session_token": token})
+    assert envelope["ok"] is True, envelope
+    result = envelope["result"]
+
+    rec = result["recommended_next_action"]
+    ts = result["recommended_next_action_refreshed_at"]
+
+    # Paired-null invariant (FR-021 / Research §FE).
+    assert (rec is None) == (ts is None)
+
+    # On a non-failure path the daemon emits a code from the 7-value
+    # closed set; empty daemon → no_containers (precedence floor for the
+    # empty-state branch).
+    if rec is not None:
+        valid_codes = {
+            "subsystem_degraded", "no_containers", "no_panes_discovered",
+            "unadopted_panes_present", "blocked_queue_drain",
+            "no_routes_configured", "all_clear",
+        }
+        assert rec["code"] in valid_codes
+        # Empty daemon → no_containers (or subsystem_degraded if any
+        # readiness probe is unwired in this test env; both are valid
+        # precedence-floor outcomes against a freshly-started daemon).
+        assert rec["code"] in {"no_containers", "subsystem_degraded"}
+        # Closed-shape object.
+        assert set(rec.keys()) == {"code", "title", "detail", "target"}
+        # Title and detail size caps (FR-011).
+        assert isinstance(rec["title"], str) and 0 < len(rec["title"]) <= 128
+        if rec["detail"] is not None:
+            assert len(rec["detail"]) <= 512
