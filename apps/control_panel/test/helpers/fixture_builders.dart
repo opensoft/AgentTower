@@ -73,6 +73,11 @@ class Fixtures {
     String containerId = 'bench-1',
     String paneId = 'p1',
     String? lastActivityAt,
+    // T173(e) — natively expose the FR-017 log_attachment wire field
+    // so test code stops splicing it onto the JSON map via toJson()
+    // (the workaround T163 had to use). The model field is
+    // `logAttachment` (camelCase); the wire field is `log_attachment`.
+    LogAttachmentState? logAttachment,
   }) =>
       {
         'agent_id': agentId,
@@ -87,6 +92,7 @@ class Fixtures {
         'pane_id': paneId,
         'last_meaningful_activity_at':
             lastActivityAt ?? DateTime.now().toUtc().toIso8601String(),
+        if (logAttachment != null) 'log_attachment': logAttachment.wireValue,
       };
 
   // ---- Project (real shape lives further down at Phase-4 US2 builder) ----
@@ -360,7 +366,12 @@ class Fixtures {
           },
           'routes': {'enabled': routesEnabled, 'disabled': routesDisabled},
         },
-        'recent': recent ?? const {'events': [], 'queue': [], 'routes': []},
+        'recent': recent ??
+            const <String, List<dynamic>>{
+              'events': <dynamic>[],
+              'queue': <dynamic>[],
+              'routes': <dynamic>[],
+            },
         'hints': hints ?? const [],
       };
 

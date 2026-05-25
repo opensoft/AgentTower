@@ -117,7 +117,7 @@ class OutageStateView extends StatelessWidget {
           ],
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+            FilledButton(onPressed: onRetry, child: const Text('Retry connection')),
           ],
         ],
       ),
@@ -200,7 +200,7 @@ class DegradedStateView extends StatelessWidget {
           ),
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+            FilledButton(onPressed: onRetry, child: const Text('Retry connection')),
           ],
         ],
       ),
@@ -279,7 +279,7 @@ class ErrorStateView extends StatelessWidget {
           ),
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+            FilledButton(onPressed: onRetry, child: const Text('Retry connection')),
           ],
         ],
       ),

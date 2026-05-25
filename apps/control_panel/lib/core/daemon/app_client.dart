@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'envelope.dart';
-import 'errors.dart';
 import 'mutation_keys.dart';
 import 'session.dart';
 

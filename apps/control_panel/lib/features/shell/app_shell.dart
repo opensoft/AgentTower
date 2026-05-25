@@ -216,6 +216,10 @@ class _SubViewStrip extends StatelessWidget {
           children: [
             for (var i = 0; i < subViews.length; i++) ...[
               ChoiceChip(
+                // T173(b) — stable Key for integration-test lookup
+                // (us1_adopt_and_operate.dart resolves a subview chip
+                // 6× per walk; label-text fallback is brittle).
+                key: Key('subview-chip-${subViews[i]}'),
                 label: Text(subViews[i]),
                 selected: i == selectedIndex,
                 onSelected: (_) => onSelected(i),

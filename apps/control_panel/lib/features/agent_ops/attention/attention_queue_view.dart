@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/attention_item.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/severity.dart';

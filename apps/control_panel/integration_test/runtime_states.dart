@@ -16,6 +16,7 @@ import 'package:integration_test/integration_test.dart';
 
 import '../test/helpers/fixture_builders.dart';
 import '../test/helpers/mock_daemon_client.dart';
+import '../test/helpers/pump_until.dart';
 
 /// FR-004 five-state runtime distinction + SC-010 outage/recovery budgets.
 ///
@@ -175,7 +176,7 @@ void main() {
       await harness.stop();
 
       // SC-010 budget: ≤ 2 s for live surfaces to flip to unreachable.
-      final flippedToOutage = await _pumpUntil(
+      final flippedToOutage = await pumpUntilTrue(
         tester,
         () async {
           // Accept any documented unreachable indicator on any live-data
@@ -274,21 +275,8 @@ void main() {
   );
 }
 
-/// Polyfill for `tester.pumpUntil`, which is not in Flutter 3.27.0.
-/// Pumps the widget tree at 100 ms intervals until [check] returns true
-/// or [timeout] elapses. Returns true on success, false on timeout.
-Future<bool> _pumpUntil(
-  WidgetTester tester,
-  Future<bool> Function() check,
-  Duration timeout,
-) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    await tester.pump(const Duration(milliseconds: 100));
-    if (await check()) return true;
-  }
-  return false;
-}
+// pumpUntil polyfill consolidated into test/helpers/pump_until.dart
+// per T173(d). Calls above use `pumpUntilTrue(...)`.
 
 /// Creates an isolated tmp dir for the SC-010 stable socket path so the
 /// outage/recovery cycle reuses the same Unix socket file across two

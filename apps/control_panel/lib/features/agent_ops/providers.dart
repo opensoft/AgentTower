@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/daemon/app_client.dart';
 import '../../core/providers.dart';
 import '../../domain/models/adopted_agent.dart';
 import '../../domain/models/container.dart' as model;

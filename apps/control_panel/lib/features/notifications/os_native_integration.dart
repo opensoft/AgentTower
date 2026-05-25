@@ -5,7 +5,6 @@ import '../../core/notifications/os_native_dispatcher.dart';
 import '../../core/providers.dart';
 import '../../domain/models/common_enums.dart';
 import '../../domain/models/notification.dart';
-import 'providers.dart';
 
 /// FR-058 — OS-native notification integration wrapper. T142 (Phase 8
 /// US6).

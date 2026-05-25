@@ -16,6 +16,7 @@ import 'package:integration_test/integration_test.dart';
 
 import '../test/helpers/fixture_builders.dart';
 import '../test/helpers/mock_daemon_client.dart';
+import '../test/helpers/pump_until.dart';
 
 /// US4 end-to-end integration test. T112 (Phase 6 US4).
 ///
@@ -258,10 +259,12 @@ void main() {
     container.invalidate(projectListProvider);
 
     // ---- Watch the badge for the `(1)` open-count suffix.
-    await _pumpUntil(
+    await pumpUntilOrFail(
       tester,
       () => find.textContaining('(1)').evaluate().isNotEmpty,
       const Duration(seconds: 60),
+      failureMessage:
+          'SC-005 wall-clock check did not become true within 60s',
     );
 
     stopwatch.stop();
@@ -286,24 +289,8 @@ void main() {
   });
 }
 
-/// Polyfill for `tester.pumpUntil` which is not available on Flutter
-/// 3.27.0. Pumps every 100 ms until [check] returns true or [timeout]
-/// expires (in which case the test is failed with a descriptive
-/// message). Uses wall-clock (`DateTime.now()`) rather than the
-/// `Stopwatch` parameter so the test budget tracks real elapsed time,
-/// not pump-cycle time.
-Future<void> _pumpUntil(
-  WidgetTester tester,
-  bool Function() check,
-  Duration timeout,
-) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    await tester.pump(const Duration(milliseconds: 100));
-    if (check()) return;
-  }
-  fail('SC-005 wall-clock check did not become true within $timeout');
-}
+// pumpUntil polyfill consolidated into test/helpers/pump_until.dart
+// per T173(d). Call site above uses `pumpUntilOrFail(...)`.
 
 /// Lightweight AppClient that delegates `projectList` (and
 /// `projectDetail`, used by `selectedProjectProvider`) to a swappable

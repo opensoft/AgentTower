@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/operator_history_entry.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import 'providers.dart';
