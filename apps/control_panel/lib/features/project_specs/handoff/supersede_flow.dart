@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/lifecycles/handoff_state_validator.dart';
 import '../../../domain/models/common_enums.dart';
@@ -36,9 +37,9 @@ Future<void> supersedeHandoff({
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Cannot supersede handoff in state '
-          '${priorHandoff.assignmentState.wireValue} (only submitted / '
-          'accepted are eligible per FR-044).',
+          AppLocalizations.of(context).supersedeIllegalStateSnack(
+            priorHandoff.assignmentState.wireValue,
+          ),
         ),
       ),
     );
@@ -47,10 +48,8 @@ Future<void> supersedeHandoff({
   final priorId = priorHandoff.handoffId;
   if (priorId == null || priorId.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Cannot supersede: prior handoff has no daemon-assigned id.',
-        ),
+      SnackBar(
+        content: Text(AppLocalizations.of(context).supersedeNoIdSnack),
       ),
     );
     return;
@@ -68,7 +67,9 @@ Future<void> supersedeHandoff({
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Supersede failed: $e')),
+        SnackBar(
+            content: Text(AppLocalizations.of(context)
+                .supersedeFailedSnack(e.toString()))),
       );
     }
     return;
@@ -97,8 +98,9 @@ class _SupersedeConfirmDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return AlertDialog(
-      title: const Text('Supersede prior handoff?'),
+      title: Text(l10n.supersedeDialogTitle),
       content: SizedBox(
         width: 460,
         child: Column(
@@ -106,31 +108,25 @@ class _SupersedeConfirmDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Supersede handoff '
-              '${prior.handoffId ?? prior.draftId ?? "?"}',
+              l10n.supersedeDialogPrompt(
+                  prior.handoffId ?? prior.draftId ?? "?"),
               style: Theme.of(context).textTheme.bodyLarge,
             ),
             const SizedBox(height: 12),
-            const Text(
-              'The prior handoff will move to `superseded`. Queue rows '
-              'already created from it will NOT be auto-cancelled (per '
-              'FR-081); cancel them from the Queue view if needed. The '
-              'new handoff records its `supersedes_handoff_id` so the '
-              'lineage is reproducible.',
-            ),
+            Text(l10n.supersedeDialogExplanation),
           ],
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: Text(l10n.supersedeDialogCancel),
         ),
         ContractCheckedButton(
           onPressed: () => Navigator.of(context).pop(true),
           builder: (ctx, onPressed, reason) => FilledButton(
             onPressed: onPressed,
-            child: const Text('Supersede'),
+            child: Text(l10n.supersedeDialogConfirm),
           ),
         ),
       ],

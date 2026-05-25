@@ -14,18 +14,33 @@ import '../../../domain/models/validation_run.dart';
 /// rendering so the UI is safe regardless.
 ///
 /// Returns the effective overall state to render (which may be
-/// downgraded from `ready` to `at_risk`) plus the reason for any
-/// downgrade so the view can show it inline.
+/// downgraded from `ready` to `at_risk`) plus the structured
+/// downgrade details (missing required entrypoint labels + branch)
+/// so the view can format a localized inline reason.
+///
+/// T165 (i18n): the previous version of this helper built an
+/// English reason string here. That has been split out so that
+/// the view layer can construct a localized message via
+/// `AppLocalizations` — no BuildContext is reachable from this
+/// pure-Dart helper.
 class ReadinessRenderResult {
   const ReadinessRenderResult({
     required this.effectiveState,
-    this.downgradeReason,
+    this.missingRequiredLabels = const [],
+    this.branch,
   });
 
   final DemoReadinessState effectiveState;
-  final String? downgradeReason;
 
-  bool get wasDowngraded => downgradeReason != null;
+  /// Labels of the required entrypoints that have not run on
+  /// [branch]. Empty when no downgrade was applied.
+  final List<String> missingRequiredLabels;
+
+  /// Branch the FR-050 invariant was evaluated against. Null when
+  /// no downgrade was applied.
+  final String? branch;
+
+  bool get wasDowngraded => missingRequiredLabels.isNotEmpty;
 }
 
 ReadinessRenderResult enforceRequiredInvariant({
@@ -54,10 +69,9 @@ ReadinessRenderResult enforceRequiredInvariant({
   if (summary.overallState == DemoReadinessState.ready) {
     return ReadinessRenderResult(
       effectiveState: DemoReadinessState.atRisk,
-      downgradeReason: 'Daemon reported `ready` but ${missing.length} required '
-          'entrypoint${missing.length == 1 ? '' : 's'} '
-          '(${missing.map((e) => e.label).join(", ")}) '
-          'have not run on `${summary.branch}` (FR-050).',
+      missingRequiredLabels:
+          missing.map((e) => e.label).toList(growable: false),
+      branch: summary.branch,
     );
   }
   return ReadinessRenderResult(effectiveState: summary.overallState);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import 'handoff_detail_view.dart';
@@ -35,13 +36,14 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final list = ref.watch(handoffListProvider(_query));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Handoffs'),
+        title: Text(l10n.handoffListTitle),
         actions: [
           PopupMenuButton<AssignmentState?>(
-            tooltip: 'Filter by state',
+            tooltip: l10n.handoffListFilterTooltip,
             icon: const Icon(Icons.filter_list),
             onSelected: (v) {
               setState(() {
@@ -54,13 +56,13 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
               });
             },
             itemBuilder: (_) => [
-              const PopupMenuItem(value: null, child: Text('All')),
+              PopupMenuItem(value: null, child: Text(l10n.handoffListFilterAll)),
               for (final s in AssignmentState.values)
                 PopupMenuItem(value: s, child: Text(s.wireValue)),
             ],
           ),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.handoffListRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(handoffListProvider(_query)),
           ),
@@ -69,15 +71,15 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Handoffs',
+          surfaceLabel: l10n.handoffListSurfaceLabel,
           onRetry: () => ref.invalidate(handoffListProvider(_query)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Handoffs'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.handoffListSurfaceLabel),
         child: list.when(
         data: (rows) => rows.isEmpty
-            ? const HealthyEmptyStateView(
-                message: 'No handoffs match the current filter.',
+            ? HealthyEmptyStateView(
+                message: l10n.handoffListEmptyMessage,
               )
             : ListView.builder(
                 itemCount: rows.length,
@@ -87,12 +89,16 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
                     leading: const Icon(Icons.assignment_turned_in),
                     title: Text(
                       h.primaryWorkItem.displayId +
-                          (h.handoffId == null ? ' (draft)' : ''),
+                          (h.handoffId == null
+                              ? l10n.handoffListItemTitleDraftSuffix
+                              : ''),
                     ),
                     subtitle: Text(
-                      'Master: ${h.targetMasterLabel} · '
-                      'State: ${h.assignmentState.wireValue} · '
-                      'Created: ${h.createdAt.toLocal()}',
+                      l10n.handoffListItemSubtitle(
+                        h.targetMasterLabel,
+                        h.assignmentState.wireValue,
+                        h.createdAt.toLocal().toString(),
+                      ),
                     ),
                     trailing: Text(
                       h.handoffId ?? h.draftId ?? '?',
@@ -113,7 +119,7 @@ class _HandoffListViewState extends ConsumerState<HandoffListView> {
         loading: () => const LoadingStateView(),
         error: (err, _) => ErrorStateView(
           error: err,
-          surfaceLabel: 'handoffs',
+          surfaceLabel: l10n.handoffListSurfaceLabelLower,
           onRetry: () => ref.invalidate(handoffListProvider(_query)),
         ),
       ),

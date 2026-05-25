@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -40,12 +41,14 @@ class DemoReadinessView extends ConsumerWidget {
     final query = DemoReadinessQuery(projectId: selectedId, branch: branch);
     final summary = ref.watch(demoReadinessProvider(query));
 
+    final l10n = AppLocalizations.of(context);
+    final demoReadinessLabel = l10n.demoReadinessTitle(branch);
     return Scaffold(
       appBar: AppBar(
-        title: Text('Demo Readiness — $branch'),
+        title: Text(demoReadinessLabel),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.commonRefresh,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(demoReadinessProvider(query)),
           ),
@@ -54,12 +57,12 @@ class DemoReadinessView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Demo Readiness',
+          surfaceLabel: demoReadinessLabel,
           onRetry: () => ref.invalidate(demoReadinessProvider(query)),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Demo Readiness',
+          surfaceLabel: demoReadinessLabel,
         ),
         child: summary.when(
           data: (s) => _Body(
@@ -86,6 +89,7 @@ class _Body extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     // FR-050 invariant: re-check the daemon's overallState against
     // the locally-known entrypoints + runs and downgrade if needed.
     final entrypoints = ref
@@ -121,32 +125,36 @@ class _Body extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                result.downgradeReason!,
+                _formatDowngradeReason(l10n, result),
                 style: TextStyle(color: theme.colorScheme.onErrorContainer),
               ),
             ),
           ],
           const SizedBox(height: 16),
-          Text('Summary', style: theme.textTheme.titleMedium),
+          Text(l10n.demoReadinessSectionSummary,
+              style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(summary.summary),
           const SizedBox(height: 16),
-          Text('Blocking findings', style: theme.textTheme.titleMedium),
+          Text(l10n.demoReadinessSectionBlockingFindings,
+              style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           if (summary.blockingFindings.isEmpty)
-            const Text('None.')
+            Text(l10n.commonNone)
           else
             for (final f in summary.blockingFindings)
               ListTile(
                 leading: const Icon(Icons.block, size: 18),
                 title: Text(f.summary),
-                subtitle: Text('kind: ${f.kind.wireValue}'),
+                subtitle:
+                    Text(l10n.demoReadinessFindingKind(f.kind.wireValue)),
               ),
           const SizedBox(height: 16),
-          Text('Recommended next runs', style: theme.textTheme.titleMedium),
+          Text(l10n.demoReadinessSectionRecommendedNext,
+              style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           if (summary.recommendedNextRuns.isEmpty)
-            const Text('None.')
+            Text(l10n.commonNone)
           else
             for (final r in summary.recommendedNextRuns)
               ListTile(
@@ -158,20 +166,39 @@ class _Body extends ConsumerWidget {
                 subtitle: Text(r.reason),
               ),
           const SizedBox(height: 16),
-          Text('Recent runs', style: theme.textTheme.titleMedium),
+          Text(l10n.demoReadinessSectionRecentRuns,
+              style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           if (summary.recentRunIds.isEmpty)
-            const Text('None.')
+            Text(l10n.commonNone)
           else
             for (final runId in summary.recentRunIds)
               Text('• $runId'),
           const SizedBox(height: 16),
           Text(
-            'Updated: ${summary.updatedAt.toLocal()}',
+            l10n.demoReadinessUpdatedAt(summary.updatedAt.toLocal().toString()),
             style: theme.textTheme.labelSmall,
           ),
         ],
       ),
+    );
+  }
+
+  /// Picks the singular vs many ARB key for the FR-050 downgrade
+  /// banner so plural copy stays correct after future translation.
+  static String _formatDowngradeReason(
+    AppLocalizations l10n,
+    ReadinessRenderResult result,
+  ) {
+    final labels = result.missingRequiredLabels.join(', ');
+    final branch = result.branch ?? '';
+    if (result.missingRequiredLabels.length == 1) {
+      return l10n.demoReadinessDowngradeReasonOne(labels, branch);
+    }
+    return l10n.demoReadinessDowngradeReasonMany(
+      result.missingRequiredLabels.length,
+      labels,
+      branch,
     );
   }
 }
@@ -183,11 +210,28 @@ class _OverallChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final (color, icon, label) = switch (state) {
-      DemoReadinessState.ready => (theme.colorScheme.tertiary, Icons.check_circle, 'Ready'),
-      DemoReadinessState.atRisk => (theme.colorScheme.secondary, Icons.warning, 'At risk'),
-      DemoReadinessState.notReady => (theme.colorScheme.error, Icons.block, 'Not ready'),
-      DemoReadinessState.unknown => (theme.colorScheme.outline, Icons.help_outline, 'Unknown'),
+      DemoReadinessState.ready => (
+          theme.colorScheme.tertiary,
+          Icons.check_circle,
+          l10n.demoReadinessOverallReady,
+        ),
+      DemoReadinessState.atRisk => (
+          theme.colorScheme.secondary,
+          Icons.warning,
+          l10n.demoReadinessOverallAtRisk,
+        ),
+      DemoReadinessState.notReady => (
+          theme.colorScheme.error,
+          Icons.block,
+          l10n.demoReadinessOverallNotReady,
+        ),
+      DemoReadinessState.unknown => (
+          theme.colorScheme.outline,
+          Icons.help_outline,
+          l10n.demoReadinessOverallUnknown,
+        ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -201,7 +245,7 @@ class _OverallChip extends StatelessWidget {
           Icon(icon, color: color),
           const SizedBox(width: 8),
           Text(
-            'Overall: $label',
+            l10n.demoReadinessOverallLabel(label),
             style: TextStyle(color: color, fontWeight: FontWeight.w600),
           ),
         ],
@@ -215,12 +259,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\nPick a project from the Projects view '
-          'to see its demo readiness.',
+          AppLocalizations.of(context).demoReadinessNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/daemon/contract_version.dart';
+import '../../core/l10n/app_localizations.dart';
 import '../../core/shortcuts/command_palette.dart';
 import '../../domain/models/common_enums.dart';
 import '../../routing/route_paths.dart';
@@ -89,20 +90,22 @@ void registerProjectSpecs() {
 /// hotkey.
 void registerProjectSpecsPaletteCommands(WidgetRef ref) {
   final notifier = ref.read(commandRegistryProvider.notifier);
+  final l10n = AppLocalizations.of(ref.context);
 
   // ---- Sub-view jumps ----
-  for (final entry in const <(String, String, String)>[
-    ('projects', 'Projects', 'Project + Specs · Projects'),
-    ('current_work', 'Current Work', 'Project + Specs · Current Work'),
-    ('specs', 'Specs', 'Project + Specs · Specs'),
-    ('changes', 'Changes', 'Project + Specs · Changes'),
-    ('drift', 'Drift', 'Project + Specs · Drift'),
-  ]) {
-    final (subView, _, label) = entry;
+  final entries = <(String, String)>[
+    ('projects', l10n.paletteSubViewLabelProjects),
+    ('current_work', l10n.paletteSubViewLabelCurrentWork),
+    ('specs', l10n.paletteSubViewLabelSpecs),
+    ('changes', l10n.paletteSubViewLabelChanges),
+    ('drift', l10n.paletteSubViewLabelDrift),
+  ];
+  for (final entry in entries) {
+    final (subView, label) = entry;
     notifier.register(PaletteCommand(
       id: 'project_specs.goto.$subView',
-      label: 'Go to: $label',
-      category: 'Navigate',
+      label: l10n.paletteGoToPrefix(label),
+      category: l10n.paletteCategoryNavigate,
       invoke: (context) async {
         await Navigator.of(context).pushNamed(
           RoutePath(
@@ -117,8 +120,8 @@ void registerProjectSpecsPaletteCommands(WidgetRef ref) {
   // ---- Project mutations ----
   notifier.register(PaletteCommand(
     id: 'project_specs.add_project',
-    label: 'Add project',
-    category: 'Project',
+    label: l10n.paletteAddProject,
+    category: l10n.paletteCategoryProject,
     invoke: (context) async {
       await showDialog<bool>(
         context: context,
@@ -130,8 +133,8 @@ void registerProjectSpecsPaletteCommands(WidgetRef ref) {
   // ---- Handoff entry (current-work surface drives the rest) ----
   notifier.register(PaletteCommand(
     id: 'project_specs.open_handoff_flow',
-    label: 'Open handoff flow (Current Work)',
-    category: 'Handoff',
+    label: l10n.paletteOpenHandoffFlow,
+    category: l10n.paletteCategoryHandoff,
     contextual: true,
     invoke: (context) async {
       await Navigator.of(context).pushNamed(
@@ -146,8 +149,8 @@ void registerProjectSpecsPaletteCommands(WidgetRef ref) {
   // ---- Drift entry ----
   notifier.register(PaletteCommand(
     id: 'project_specs.open_drift',
-    label: 'Open drift findings',
-    category: 'Drift',
+    label: l10n.paletteOpenDrift,
+    category: l10n.paletteCategoryDrift,
     invoke: (context) async {
       await Navigator.of(context).pushNamed(
         const RoutePath(

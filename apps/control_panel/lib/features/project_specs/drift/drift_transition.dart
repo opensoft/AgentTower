@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/lifecycles/drift_state_validator.dart';
 import '../../../domain/models/common_enums.dart';
@@ -24,10 +25,11 @@ class DriftTransitionAction extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     if (drift.status.isTerminal) {
       return Chip(
         avatar: const Icon(Icons.lock, size: 14),
-        label: Text('Terminal: ${drift.status.wireValue}'),
+        label: Text(l10n.driftTransitionTerminalChip(drift.status.wireValue)),
       );
     }
     final allowed = _legalNextStates(drift.status);
@@ -37,21 +39,21 @@ class DriftTransitionAction extends ConsumerWidget {
     // which renders an IconButton-styled trigger that delegates the
     // tap to the parent (the actual menu opener).
     return PopupMenuButton<DriftStatus>(
-      tooltip: 'Transition to…',
+      tooltip: l10n.driftTransitionMenuTooltip,
       onSelected: (to) => _onSelected(context, ref, to),
       itemBuilder: (_) => [
         for (final s in allowed)
           PopupMenuItem(value: s, child: Text(s.wireValue)),
       ],
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.swap_horiz, size: 18),
-            SizedBox(width: 6),
-            Text('Transition'),
-            Icon(Icons.arrow_drop_down, size: 18),
+            const Icon(Icons.swap_horiz, size: 18),
+            const SizedBox(width: 6),
+            Text(l10n.driftTransitionButton),
+            const Icon(Icons.arrow_drop_down, size: 18),
           ],
         ),
       ),
@@ -75,8 +77,10 @@ class DriftTransitionAction extends ConsumerWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Illegal transition ${drift.status.wireValue} → '
-              '${to.wireValue} (FR-034). Daemon would reject.',
+              AppLocalizations.of(context).driftTransitionIllegalSnack(
+                drift.status.wireValue,
+                to.wireValue,
+              ),
             ),
           ),
         );
@@ -93,7 +97,9 @@ class DriftTransitionAction extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Transition failed: $e')),
+          SnackBar(
+              content: Text(AppLocalizations.of(context)
+                  .driftTransitionFailedSnack(e.toString()))),
         );
       }
     }
@@ -107,34 +113,37 @@ class DriftTransitionAction extends ConsumerWidget {
     final controller = TextEditingController();
     return showDialog<String?>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          '${from.wireValue} → ${to.wireValue}',
-        ),
-        content: SizedBox(
-          width: 460,
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'Operator note (optional)',
-              helperText: 'Recorded with the transition for audit.',
+      builder: (dialogContext) {
+        final l10n = AppLocalizations.of(dialogContext);
+        return AlertDialog(
+          title: Text(
+            l10n.driftTransitionDialogTitle(from.wireValue, to.wireValue),
+          ),
+          content: SizedBox(
+            width: 460,
+            child: TextField(
+              controller: controller,
+              autofocus: true,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: l10n.driftTransitionNoteLabel,
+                helperText: l10n.driftTransitionNoteHelper,
+              ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(null),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: const Text('Confirm'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(null),
+              child: Text(l10n.driftTransitionDialogCancel),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: Text(l10n.driftTransitionDialogConfirm),
+            ),
+          ],
+        );
+      },
     );
   }
 

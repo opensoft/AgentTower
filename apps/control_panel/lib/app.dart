@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/l10n/app_localizations.dart';
 import 'core/l10n/l10n_wiring.dart';
 import 'domain/models/common_enums.dart' as enums;
 import 'features/notifications/os_native_dispatch_watcher.dart';
@@ -50,7 +51,7 @@ class AgentTowerControlPanel extends ConsumerWidget {
       themeMode: materialThemeMode,
       localizationsDelegates: const [
         ...baseLocalizationDelegates,
-        // AppLocalizations.delegate, // uncomment after flutter gen-l10n
+        AppLocalizations.delegate,
       ],
       supportedLocales: supportedLocales,
       initialRoute: AppRouter.initialRouteName,

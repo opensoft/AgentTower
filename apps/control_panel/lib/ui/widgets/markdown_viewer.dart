@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
@@ -76,7 +77,9 @@ class MarkdownViewer extends StatelessWidget {
                   TextButton.icon(
                     onPressed: () => _openExternal(context, externalOpenUri!),
                     icon: const Icon(Icons.open_in_new, size: 16),
-                    label: const Text('Open externally'),
+                    label: Text(
+                      AppLocalizations.of(context).markdownViewerOpenExternally,
+                    ),
                   ),
               ],
             ),
@@ -99,7 +102,11 @@ class MarkdownViewer extends StatelessWidget {
     final uri = Uri.tryParse(href);
     if (uri == null || !_allowedSchemes.contains(uri.scheme.toLowerCase())) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Link rejected — unsupported scheme: $href')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).markdownViewerLinkRejected(href),
+          ),
+        ),
       );
       return;
     }
@@ -111,7 +118,12 @@ class MarkdownViewer extends StatelessWidget {
   static Future<void> _openExternal(BuildContext context, Uri uri) async {
     if (!_allowedSchemes.contains(uri.scheme.toLowerCase())) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Link rejected — unsupported scheme: $uri')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)
+                .markdownViewerLinkRejected(uri.toString()),
+          ),
+        ),
       );
       return;
     }

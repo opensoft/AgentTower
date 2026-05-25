@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/feature_change_status.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../../../ui/widgets/safe_url_launcher.dart';
@@ -30,17 +31,20 @@ class CurrentWorkView extends ConsumerWidget {
     if (selectedId == null) {
       return const _NoProjectSelected();
     }
+    final l10n = AppLocalizations.of(context);
     final project = ref.watch(selectedProjectProvider);
     final activeFeature = ref.watch(activeFeatureChangeProvider);
     return Scaffold(
       appBar: AppBar(
         title: project.maybeWhen(
-          data: (p) => Text('Current Work — ${p?.label ?? selectedId}'),
-          orElse: () => Text('Current Work — $selectedId'),
+          data: (p) => Text(
+              l10n.currentWorkTitleWithProject(p?.label ?? selectedId)),
+          orElse: () =>
+              Text(l10n.currentWorkTitleWithProject(selectedId)),
         ),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.currentWorkRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () {
               ref.invalidate(selectedProjectProvider);
@@ -52,25 +56,23 @@ class CurrentWorkView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Current Work',
+          surfaceLabel: l10n.currentWorkSurfaceLabel,
           onRetry: () => ref.invalidate(activeFeatureChangeProvider),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Current Work',
+          surfaceLabel: l10n.currentWorkSurfaceLabel,
         ),
         child: activeFeature.when(
           data: (fc) => fc == null
-              ? const HealthyEmptyStateView(
-                  message: 'No active feature/change on this project.\n\n'
-                      'Start one by handing it off to a master from the '
-                      'Specs view.',
+              ? HealthyEmptyStateView(
+                  message: l10n.currentWorkEmptyMessage,
                 )
               : _CurrentWorkBody(featureChange: fc),
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'current work',
+            surfaceLabel: l10n.currentWorkSurfaceLabelLower,
             onRetry: () => ref.invalidate(activeFeatureChangeProvider),
           ),
         ),
@@ -86,6 +88,7 @@ class _CurrentWorkBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -105,7 +108,7 @@ class _CurrentWorkBody extends ConsumerWidget {
           if (featureChange.subphaseToken != null) ...[
             const SizedBox(height: 4),
             Text(
-              'Subphase: ${featureChange.subphaseToken}',
+              l10n.currentWorkSubphase(featureChange.subphaseToken!),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -132,24 +135,27 @@ class _CurrentWorkBody extends ConsumerWidget {
             )
           else
             Text(
-              'No driver assigned yet.',
+              l10n.currentWorkNoDriverAssigned,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           const SizedBox(height: 24),
-          Text('Linked documents', style: theme.textTheme.titleMedium),
+          Text(l10n.currentWorkLinkedDocumentsHeading,
+              style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           _DocLinks(featureChangeId: featureChange.featureChangeId),
           const SizedBox(height: 24),
           Text(
-            'Stage: ${featureChange.stage.wireValue} · '
-            'Execution: ${featureChange.executionStatus.wireValue}',
+            l10n.currentWorkStageExecutionLine(
+              featureChange.stage.wireValue,
+              featureChange.executionStatus.wireValue,
+            ),
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 4),
           Text(
-            'As of: ${featureChange.asOf.toLocal()}',
+            l10n.currentWorkAsOfLine(featureChange.asOf.toLocal().toString()),
             style: theme.textTheme.labelSmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -163,14 +169,20 @@ class _CurrentWorkBody extends ConsumerWidget {
     // Wired up in Phase 8 attention queue follow-up. For MVP the indicator
     // surfaces the master id so the operator can pivot via the Agents view.
     ScaffoldMessenger.of(c).showSnackBar(
-      SnackBar(content: Text('Master detail: $agentId')),
+      SnackBar(
+        content:
+            Text(AppLocalizations.of(c).currentWorkMasterDetailSnack(agentId)),
+      ),
     );
   }
 
   void _openHandoffDetail(BuildContext c, WidgetRef r, String handoffId) {
     // Phase 5 wires this to the handoff detail route.
     ScaffoldMessenger.of(c).showSnackBar(
-      SnackBar(content: Text('Handoff detail: $handoffId')),
+      SnackBar(
+        content: Text(
+            AppLocalizations.of(c).currentWorkHandoffDetailSnack(handoffId)),
+      ),
     );
   }
 }
@@ -181,6 +193,7 @@ class _DocLinks extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final detail = ref.watch(featureChangeDetailProvider(featureChangeId));
     return detail.when(
       data: (fc) {
@@ -191,11 +204,9 @@ class _DocLinks extends ConsumerWidget {
         // (file:// scheme; permission to read is the operator's).
         // When a path is missing the daemon's "Not found - see Drift"
         // badge takes its place per R-28.
-        final paths = _docPathsFor(fc);
+        final paths = _docPathsFor(context, fc);
         if (paths.isEmpty) {
-          return const Text(
-            'No documents linked yet — see Drift for missing-doc findings.',
-          );
+          return Text(l10n.currentWorkNoLinkedDocuments);
         }
         return Wrap(
           spacing: 8,
@@ -214,22 +225,24 @@ class _DocLinks extends ConsumerWidget {
       },
       loading: () =>
           const Padding(padding: EdgeInsets.all(8), child: LinearProgressIndicator()),
-      error: (e, _) => Text('Failed to load documents: $e'),
+      error: (e, _) => Text(l10n.currentWorkDocsLoadFailed(e.toString())),
     );
   }
 
-  static Map<String, String?> _docPathsFor(FeatureChangeStatus fc) {
+  static Map<String, String?> _docPathsFor(
+      BuildContext context, FeatureChangeStatus fc) {
     // Phase 4 reads the feature/change detail payload generically; the
     // daemon shape for these path fields lands when FEAT-011 exposes
     // the doc-resolution method per R-28. The MVP surface assumes the
     // daemon returns the five buckets as top-level keys on the detail
     // payload; absent keys render as null (disabled chip).
-    return const {
-      'PRD': null,
-      'Architecture': null,
-      'Roadmap': null,
-      'Feature spec': null,
-      'OpenSpec change': null,
+    final l10n = AppLocalizations.of(context);
+    return {
+      l10n.currentWorkDocPrd: null,
+      l10n.currentWorkDocArchitecture: null,
+      l10n.currentWorkDocRoadmap: null,
+      l10n.currentWorkDocFeatureSpec: null,
+      l10n.currentWorkDocOpenSpecChange: null,
     };
   }
 
@@ -250,13 +263,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\n'
-          'Open the Projects view (Project + Specs → Projects) and select '
-          'a project to see its current work.',
+          AppLocalizations.of(context).currentWorkNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

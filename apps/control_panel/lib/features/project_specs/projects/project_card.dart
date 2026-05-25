@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/badges.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/project.dart';
@@ -98,27 +99,39 @@ class ProjectCard extends StatelessWidget {
         if (project.unreadNotificationCount > 0)
           _UnreadBadge(count: project.unreadNotificationCount),
         PopupMenuButton<String>(
-          tooltip: 'Project actions',
+          tooltip: AppLocalizations.of(context).projectCardActionsTooltip,
           onSelected: _onMenu,
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: 'open', child: Text('Open project')),
-            const PopupMenuItem(
-              value: 'current_work',
-              child: Text('Open Current Work'),
-            ),
-            const PopupMenuItem(value: 'specs', child: Text('Open Specs')),
-            const PopupMenuItem(value: 'drift', child: Text('Open Drift')),
-            if (project.currentDrivingMasterAgentId != null)
-              const PopupMenuItem(
-                value: 'master',
-                child: Text('Open driving master'),
+          itemBuilder: (_) {
+            final l10n = AppLocalizations.of(context);
+            return [
+              PopupMenuItem(
+                value: 'open',
+                child: Text(l10n.projectCardMenuOpenProject),
               ),
-            const PopupMenuDivider(),
-            const PopupMenuItem(
-              value: 'remove',
-              child: Text('Remove project'),
-            ),
-          ],
+              PopupMenuItem(
+                value: 'current_work',
+                child: Text(l10n.projectCardMenuOpenCurrentWork),
+              ),
+              PopupMenuItem(
+                value: 'specs',
+                child: Text(l10n.projectCardMenuOpenSpecs),
+              ),
+              PopupMenuItem(
+                value: 'drift',
+                child: Text(l10n.projectCardMenuOpenDrift),
+              ),
+              if (project.currentDrivingMasterAgentId != null)
+                PopupMenuItem(
+                  value: 'master',
+                  child: Text(l10n.projectCardMenuOpenDrivingMaster),
+                ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'remove',
+                child: Text(l10n.projectCardMenuRemoveProject),
+              ),
+            ];
+          },
           icon: const Icon(Icons.more_vert),
         ),
       ],
@@ -167,10 +180,11 @@ class ProjectCard extends StatelessWidget {
   }
 
   Widget _activeFeatureRow(BuildContext context, ThemeData theme) {
+    final l10n = AppLocalizations.of(context);
     final id = project.activeFeatureChangeId;
     if (id == null) {
       return Text(
-        'No active feature/change',
+        l10n.projectCardNoActiveFeatureChange,
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         ),
@@ -180,7 +194,9 @@ class ProjectCard extends StatelessWidget {
     // phase/status next to the active id so the operator can answer
     // "what state is FEAT-N in?" from the card alone.
     final phase = project.currentFeatureChangePhaseLabel;
-    final label = phase == null ? 'Active: $id' : 'Active: $id · $phase';
+    final label = phase == null
+        ? l10n.projectCardActiveFeature(id)
+        : l10n.projectCardActiveFeatureWithPhase(id, phase);
     return Row(
       children: [
         Icon(Icons.assignment, size: 16, color: theme.colorScheme.primary),
@@ -197,10 +213,11 @@ class ProjectCard extends StatelessWidget {
   }
 
   Widget _drivingMasterRow(BuildContext context, ThemeData theme) {
+    final l10n = AppLocalizations.of(context);
     final masterIds = project.primaryMasterAgentIds;
     if (masterIds.isEmpty && project.currentDrivingMasterAgentId == null) {
       return Text(
-        'No driving master',
+        l10n.projectCardNoDrivingMaster,
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         ),
@@ -217,8 +234,10 @@ class ProjectCard extends StatelessWidget {
     // card-only attribution holds without the operator drilling
     // into Current Work.
     final canonicalSentence = (driver != null && featureId != null)
-        ? '$driver is driving $featureId'
-            '${handoff != null ? ' under $handoff' : ''}'
+        ? (handoff != null
+            ? l10n.projectCardDriverDrivingUnderHandoff(
+                driver, featureId, handoff)
+            : l10n.projectCardDriverDriving(driver, featureId))
         : null;
     return Row(
       children: [
@@ -230,10 +249,12 @@ class ProjectCard extends StatelessWidget {
               if (canonicalSentence != null)
                 canonicalSentence
               else if (driver != null)
-                'Driver: $driver',
+                l10n.projectCardDriverPrefix(driver),
               if (masterIds.isNotEmpty && canonicalSentence == null)
-                'Masters: $visible${overflow > 0 ? ' (+$overflow)' : ''}',
-              'Sub-agents: ${project.subAgentCount}',
+                overflow > 0
+                    ? l10n.projectCardMastersWithOverflow(visible, overflow)
+                    : l10n.projectCardMasters(visible),
+              l10n.projectCardSubAgents(project.subAgentCount),
             ].join(' · '),
             style: theme.textTheme.bodySmall,
             overflow: TextOverflow.ellipsis,
@@ -247,7 +268,8 @@ class ProjectCard extends StatelessWidget {
     return Row(
       children: [
         Text(
-          'Last activity: ${_formatTime(project.lastActivityAt)}',
+          AppLocalizations.of(context)
+              .projectCardLastActivity(_formatTime(project.lastActivityAt)),
           style: theme.textTheme.labelSmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -313,7 +335,10 @@ class _BranchChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Chip(
       icon: Icons.alt_route,
-      label: badge.detached ? '${badge.branchName} (detached)' : badge.branchName,
+      label: badge.detached
+          ? AppLocalizations.of(context)
+              .projectCardBranchDetachedSuffix(badge.branchName)
+          : badge.branchName,
     );
   }
 }
@@ -324,13 +349,15 @@ class _ValidationChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final age = badge.lastRunAt;
     final ageLabel = age == null
-        ? '—'
-        : '${DateTime.now().difference(age).inMinutes}m ago';
+        ? l10n.projectCardValidationChipUnknownAge
+        : l10n.projectCardValidationChipAge(
+            DateTime.now().difference(age).inMinutes);
     return _Chip(
       icon: _iconFor(badge.kind),
-      label: 'val: ${badge.kind.wireValue} ($ageLabel)',
+      label: l10n.projectCardValidationChipLabel(badge.kind.wireValue, ageLabel),
     );
   }
 
@@ -355,11 +382,19 @@ class _DriftChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final parts = <String>['drift: ${badge.highestSeverity.wireValue}'];
-    if (badge.openCount > 0) parts.add('(${badge.openCount})');
-    if (source != null) parts.add('src=${source!.wireValue}');
+    final l10n = AppLocalizations.of(context);
+    final parts = <String>[
+      l10n.projectCardDriftChipLabel(badge.highestSeverity.wireValue),
+    ];
+    if (badge.openCount > 0) {
+      parts.add(l10n.projectCardDriftChipOpenCount(badge.openCount));
+    }
+    if (source != null) {
+      parts.add(l10n.projectCardDriftChipSource(source!.wireValue));
+    }
     if (age != null) {
-      parts.add('${DateTime.now().difference(age!).inMinutes}m');
+      parts.add(l10n
+          .projectCardDriftChipAge(DateTime.now().difference(age!).inMinutes));
     }
     return _Chip(icon: Icons.flag, label: parts.join(' '));
   }
@@ -373,7 +408,10 @@ class _AttentionChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Chip(
       icon: Icons.notifications_active,
-      label: 'attn: ${summary.highestSeverity.wireValue} (${summary.openCount})',
+      label: AppLocalizations.of(context).projectCardAttentionChipLabel(
+        summary.highestSeverity.wireValue,
+        summary.openCount,
+      ),
     );
   }
 }

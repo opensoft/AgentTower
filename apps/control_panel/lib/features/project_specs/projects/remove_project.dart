@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/ux_state_repository.dart';
 import '../../../core/providers.dart';
 import '../../../ui/widgets/contract_checked_button.dart';
@@ -41,8 +42,9 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return AlertDialog(
-      title: const Text('Remove project?'),
+      title: Text(l10n.removeProjectDialogTitle),
       content: SizedBox(
         width: 460,
         child: Column(
@@ -50,17 +52,11 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Remove "${widget.projectLabel}" from the project list?',
+              l10n.removeProjectConfirmPrompt(widget.projectLabel),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
-            const Text(
-              'This clears the project from your app view and resets its '
-              'saved sort/filter selections. Daemon-side data (agents, '
-              'handoffs, drift findings, validation runs) is preserved. '
-              'The project may reappear automatically if it is later '
-              'inferred from an adopted agent.',
-            ),
+            Text(l10n.removeProjectExplanation),
             if (_error != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -74,7 +70,7 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
       actions: [
         TextButton(
           onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: Text(l10n.removeProjectCancel),
         ),
         ContractCheckedButton(
           additionalGate: !_submitting,
@@ -90,7 +86,7 @@ class _RemoveProjectDialogState extends ConsumerState<RemoveProjectDialog> {
                     width: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Remove'),
+                : Text(l10n.removeProjectConfirm),
           ),
         ),
       ],

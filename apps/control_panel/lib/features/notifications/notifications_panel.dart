@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../core/notifications/grouping_rule.dart';
 import '../../core/providers.dart';
 import '../../domain/models/notification.dart';
@@ -48,12 +49,13 @@ class _NotificationsPanelState extends ConsumerState<NotificationsPanel> {
       lifecycle: 'incoming',
     );
     final list = ref.watch(notificationListProvider(query));
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notifications'),
+        title: Text(l10n.notificationsPanelTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.notificationsRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(notificationListProvider(query)),
           ),
@@ -62,18 +64,18 @@ class _NotificationsPanelState extends ConsumerState<NotificationsPanel> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Notifications',
+          surfaceLabel: l10n.notificationsPanelTitle,
           onRetry: () => ref.invalidate(notificationListProvider(query)),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Notifications',
+          surfaceLabel: l10n.notificationsPanelTitle,
         ),
         child: list.when(
           data: (rows) {
             if (rows.isEmpty) {
-              return const HealthyEmptyStateView(
-                message: 'No unread notifications.',
+              return HealthyEmptyStateView(
+                message: l10n.notificationsPanelEmptyState,
                 icon: Icons.notifications_none,
               );
             }
@@ -98,7 +100,7 @@ class _NotificationsPanelState extends ConsumerState<NotificationsPanel> {
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'notifications',
+            surfaceLabel: l10n.notificationsPanelSurfaceLabel,
             onRetry: () => ref.invalidate(notificationListProvider(query)),
           ),
         ),
@@ -141,7 +143,12 @@ class _NotificationsPanelState extends ConsumerState<NotificationsPanel> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Acknowledge failed: $e')),
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)
+                  .notificationsAcknowledgeFailed(e.toString()),
+            ),
+          ),
         );
       }
     }
@@ -164,6 +171,7 @@ class _GroupRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final head = row.head;
     final sev = SeverityVisuals.forNotification(head.severity, theme.brightness);
     if (!row.isGrouped) {
@@ -177,15 +185,23 @@ class _GroupRow extends StatelessWidget {
             child: Icon(sev.icon, color: sev.onColor, size: 18),
           ),
           title: Text(
-            '${head.eventClass} from ${head.agentId} — '
-            '${row.count} notifications grouped',
+            l10n.notificationsGroupRowTitle(
+              head.eventClass,
+              head.agentId,
+              row.count,
+            ),
           ),
           subtitle: Text(
-            '${sev.label} · most recent ${head.emittedAt.toLocal()}',
+            l10n.notificationsGroupRowSubtitle(
+              sev.label,
+              head.emittedAt.toLocal().toString(),
+            ),
           ),
           trailing: IconButton(
             icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
-            tooltip: expanded ? 'Collapse group' : 'Expand group',
+            tooltip: expanded
+                ? l10n.notificationsGroupCollapseTooltip
+                : l10n.notificationsGroupExpandTooltip,
             onPressed: onToggleExpand,
           ),
         ),
@@ -204,8 +220,12 @@ class _GroupRow extends StatelessWidget {
     NotificationCandidate n,
     SeverityVisuals sev,
   ) {
+    final l10n = AppLocalizations.of(context);
     return Semantics(
-      label: '${sev.semanticDescription} notification: ${n.summary}',
+      label: l10n.notificationItemSemanticsLabel(
+        sev.semanticDescription,
+        n.summary,
+      ),
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: sev.color,
@@ -213,13 +233,17 @@ class _GroupRow extends StatelessWidget {
         ),
         title: Text(n.summary),
         subtitle: Text(
-          '${sev.label} · ${n.eventClass} · agent ${n.agentId} · '
-          '${n.emittedAt.toLocal()}',
+          l10n.notificationItemSubtitle(
+            sev.label,
+            n.eventClass,
+            n.agentId,
+            n.emittedAt.toLocal().toString(),
+          ),
         ),
         trailing: ContractCheckedButton(
           onPressed: () => onAcknowledge(n.notificationId),
           builder: (ctx, onPressed, reason) => IconButton(
-            tooltip: reason ?? 'Acknowledge',
+            tooltip: reason ?? l10n.notificationAcknowledgeTooltip,
             icon: const Icon(Icons.check),
             onPressed: onPressed,
           ),

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/l10n/app_localizations.dart';
+
 /// FR-029 "agent X is driving FEAT-N under handoff H" indicator. T092
 /// (Phase 4 US2).
 ///
@@ -42,6 +44,7 @@ class DrivingMasterIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final hasConflict = conflictingDrivers.isNotEmpty;
     return Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
@@ -60,7 +63,7 @@ class DrivingMasterIndicator extends StatelessWidget {
             ),
           ),
         ),
-        Text('is driving', style: theme.textTheme.bodyMedium),
+        Text(l10n.drivingMasterIsDriving, style: theme.textTheme.bodyMedium),
         Text(
           featureChangeDisplayId,
           style: theme.textTheme.bodyMedium?.copyWith(
@@ -68,7 +71,7 @@ class DrivingMasterIndicator extends StatelessWidget {
           ),
         ),
         if (handoffId != null) ...[
-          Text('under', style: theme.textTheme.bodyMedium),
+          Text(l10n.drivingMasterUnder, style: theme.textTheme.bodyMedium),
           InkWell(
             onTap: onOpenHandoff,
             child: Text(
@@ -84,10 +87,11 @@ class DrivingMasterIndicator extends StatelessWidget {
         ],
         if (hasConflict)
           Tooltip(
-            message: 'Conflict: ${conflictingDrivers.join(", ")}',
+            message: l10n.drivingMasterConflictTooltip(
+                conflictingDrivers.join(", ")),
             child: Chip(
               avatar: const Icon(Icons.warning, size: 14),
-              label: const Text('conflict'),
+              label: Text(l10n.drivingMasterConflictChipLabel),
               padding: EdgeInsets.zero,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               visualDensity: VisualDensity.compact,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../domain/severity.dart';
 import '../../ui/widgets/runtime_state_views.dart';
 import '../project_specs/providers.dart' as project_providers;
@@ -18,12 +19,13 @@ class NotificationHistoryView extends ConsumerWidget {
     final selectedId =
         ref.watch(project_providers.selectedProjectIdProvider);
     final list = ref.watch(notificationHistoryProvider(selectedId));
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notification history'),
+        title: Text(l10n.notificationHistoryTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.notificationsRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () =>
                 ref.invalidate(notificationHistoryProvider(selectedId)),
@@ -33,19 +35,19 @@ class NotificationHistoryView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Notification history',
+          surfaceLabel: l10n.notificationHistoryTitle,
           onRetry: () =>
               ref.invalidate(notificationHistoryProvider(selectedId)),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Notification history',
+          surfaceLabel: l10n.notificationHistoryTitle,
         ),
         child: list.when(
           data: (rows) {
             if (rows.isEmpty) {
-              return const HealthyEmptyStateView(
-                message: 'No notifications in history yet.',
+              return HealthyEmptyStateView(
+                message: l10n.notificationHistoryEmptyState,
                 icon: Icons.history,
               );
             }
@@ -64,8 +66,12 @@ class NotificationHistoryView extends ConsumerWidget {
                   ),
                   title: Text(n.summary),
                   subtitle: Text(
-                    '${sev.label} · ${n.eventClass} · agent ${n.agentId} · '
-                    'emitted ${n.emittedAt.toLocal()}',
+                    l10n.notificationHistoryItemSubtitle(
+                      sev.label,
+                      n.eventClass,
+                      n.agentId,
+                      n.emittedAt.toLocal().toString(),
+                    ),
                   ),
                   trailing: Text(
                     n.lifecycle.wireValue,
@@ -78,7 +84,7 @@ class NotificationHistoryView extends ConsumerWidget {
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'notification history',
+            surfaceLabel: l10n.notificationHistorySurfaceLabel,
             onRetry: () =>
                 ref.invalidate(notificationHistoryProvider(selectedId)),
           ),

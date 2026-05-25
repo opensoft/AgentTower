@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -31,6 +32,7 @@ class _CancelRunButtonState extends ConsumerState<CancelRunButton> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final cancellable = ValidationRunStateValidator.isValidTransition(
       widget.run.state,
       RunState.cancelled,
@@ -39,8 +41,7 @@ class _CancelRunButtonState extends ConsumerState<CancelRunButton> {
       additionalGate: cancellable && !_cancelling,
       disabledReason: cancellable
           ? null
-          : 'Cancel is only legal from `queued` or `running` per FR-048; '
-              'current state is `${widget.run.state.wireValue}`.',
+          : l10n.cancelRunDisabledReason(widget.run.state.wireValue),
       onPressed: _cancel,
       builder: (ctx, onPressed, reason) => OutlinedButton.icon(
         onPressed: onPressed,
@@ -51,7 +52,9 @@ class _CancelRunButtonState extends ConsumerState<CancelRunButton> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.cancel_outlined, size: 16),
-        label: Text(_cancelling ? 'Cancelling…' : 'Cancel'),
+        label: Text(
+          _cancelling ? l10n.cancelRunButtonCancelling : l10n.cancelRunButtonCancel,
+        ),
       ),
     );
   }
@@ -61,6 +64,9 @@ class _CancelRunButtonState extends ConsumerState<CancelRunButton> {
     try {
       await ref.read(appClientProvider).validationRunCancel(
             runId: widget.run.runId,
+            // Audit-trail reason sent to the daemon; not user-facing
+            // UI copy and therefore intentionally not localized
+            // (T165 skip-list).
             reason: 'operator cancel from Runs view',
           );
       ref.invalidate(validationRunDetailProvider(widget.run.runId));
@@ -70,7 +76,11 @@ class _CancelRunButtonState extends ConsumerState<CancelRunButton> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Cancel failed: $e')),
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context).cancelRunSnackBarFailed(e.toString()),
+            ),
+          ),
         );
       }
     } finally {

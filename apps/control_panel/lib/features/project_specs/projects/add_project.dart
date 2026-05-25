@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../ui/widgets/contract_checked_button.dart';
 
@@ -38,8 +39,9 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return AlertDialog(
-      title: const Text('Add project'),
+      title: Text(l10n.addProjectDialogTitle),
       content: SizedBox(
         width: 480,
         child: Column(
@@ -49,17 +51,17 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
             TextField(
               controller: _pathController,
               autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Repository path (absolute)',
-                hintText: '/home/you/projects/example',
+              decoration: InputDecoration(
+                labelText: l10n.addProjectPathLabel,
+                hintText: l10n.addProjectPathHint,
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _labelController,
-              decoration: const InputDecoration(
-                labelText: 'Display label (optional)',
-                hintText: 'My Project',
+              decoration: InputDecoration(
+                labelText: l10n.addProjectLabelLabel,
+                hintText: l10n.addProjectLabelHint,
               ),
             ),
             if (_error != null) ...[
@@ -75,7 +77,7 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
       actions: [
         TextButton(
           onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: Text(l10n.addProjectCancel),
         ),
         ContractCheckedButton(
           additionalGate: !_submitting,
@@ -88,7 +90,7 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
                     width: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Add'),
+                : Text(l10n.addProjectSubmit),
           ),
         ),
       ],
@@ -96,13 +98,14 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
   }
 
   Future<void> _submit() async {
+    final l10n = AppLocalizations.of(context);
     final path = _pathController.text.trim();
     if (path.isEmpty) {
-      setState(() => _error = 'Repository path is required.');
+      setState(() => _error = l10n.addProjectErrorPathRequired);
       return;
     }
     if (!path.startsWith('/') && !RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path)) {
-      setState(() => _error = 'Path must be absolute (FR-026 canonicalization).');
+      setState(() => _error = l10n.addProjectErrorPathAbsolute);
       return;
     }
     final label = _labelController.text.trim();

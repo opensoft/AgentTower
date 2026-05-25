@@ -1,54 +1,1960 @@
 {
   "@@locale": "en",
   "@@author": "AgentTower FEAT-012 team",
-
   "appTitle": "AgentTower Control Panel",
   "@appTitle": {
     "description": "Application title shown in window chrome (FR-010)."
   },
-
   "bannerContractVersionIncompatible": "Daemon contract version {currentVersion} is below the required minimum {requiredVersion}. Update the daemon or downgrade the app.",
   "@bannerContractVersionIncompatible": {
     "description": "Global banner per FR-002 when bootstrap finds the daemon's app_contract_version below the app's minimum required version.",
     "placeholders": {
-      "currentVersion": { "type": "String", "example": "1.0" },
-      "requiredVersion": { "type": "String", "example": "1.1" }
+      "currentVersion": {
+        "type": "String",
+        "example": "1.0"
+      },
+      "requiredVersion": {
+        "type": "String",
+        "example": "1.1"
+      }
     }
   },
-
   "bannerProjectNotResolved": "Last-active project \"{projectLabel}\" could not be restored. Select a project from the Projects view to continue.",
   "@bannerProjectNotResolved": {
     "description": "Non-blocking banner per FR-076 when the persisted last-active project no longer resolves on launch.",
     "placeholders": {
-      "projectLabel": { "type": "String", "example": "agenttower" }
+      "projectLabel": {
+        "type": "String",
+        "example": "agenttower"
+      }
     }
   },
-
   "settingsSectionDisplay": "Display",
-  "@settingsSectionDisplay": { "description": "Settings group label per Round-3 R-25 (Display)." },
-
+  "@settingsSectionDisplay": {
+    "description": "Settings group label per Round-3 R-25 (Display)."
+  },
   "settingsSectionNotifications": "Notifications",
-  "@settingsSectionNotifications": { "description": "Settings group label per Round-3 R-25 (Notifications)." },
-
+  "@settingsSectionNotifications": {
+    "description": "Settings group label per Round-3 R-25 (Notifications)."
+  },
   "settingsSectionConnection": "Connection",
-  "@settingsSectionConnection": { "description": "Settings group label per Round-3 R-25 (Connection)." },
-
+  "@settingsSectionConnection": {
+    "description": "Settings group label per Round-3 R-25 (Connection)."
+  },
   "settingsSectionPrivacy": "Privacy",
-  "@settingsSectionPrivacy": { "description": "Settings group label per Round-3 R-25 (Privacy)." },
-
+  "@settingsSectionPrivacy": {
+    "description": "Settings group label per Round-3 R-25 (Privacy)."
+  },
   "settingsSectionDiagnostics": "Diagnostics",
-  "@settingsSectionDiagnostics": { "description": "Settings group label per Round-3 R-25 (Diagnostics)." },
-
+  "@settingsSectionDiagnostics": {
+    "description": "Settings group label per Round-3 R-25 (Diagnostics)."
+  },
   "settingsResetToDefaults": "Reset to defaults",
-  "@settingsResetToDefaults": { "description": "Settings global reset button per Round-3 R-25." },
-
+  "@settingsResetToDefaults": {
+    "description": "Settings global reset button per Round-3 R-25."
+  },
   "trustModelFirstLaunchStatement": "This app talks only to a daemon running as your local user via a Unix socket. It does not connect to remote services. It does not authenticate users beyond your operating-system user.",
   "@trustModelFirstLaunchStatement": {
     "description": "First-launch trust model statement per FR-061 (verbatim text from Round-3 R-30)."
   },
-
   "attentionQueueEmpty": "All clear — no actionable items",
   "@attentionQueueEmpty": {
     "description": "Empty-state copy for the attention queue per Round-3 R-33."
+  },
+  "attentionQueueAppBarTitle": "Attention queue",
+  "@attentionQueueAppBarTitle": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionQueueRefreshTooltip": "Refresh",
+  "@attentionQueueRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionQueueSurfaceLabel": "Attention queue",
+  "@attentionQueueSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionQueueSurfaceLabelLowercase": "attention queue",
+  "@attentionQueueSurfaceLabelLowercase": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionQueueNoActionableItems": "No actionable attention items.",
+  "@attentionQueueNoActionableItems": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionQueueRowSemanticLabel": "{severity} attention: {summary}",
+  "@attentionQueueRowSemanticLabel": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionQueueRowSubtitle": "{severityLabel} · {className} · {age}",
+  "@attentionQueueRowSubtitle": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionItemAgeDays": "{count}d ago",
+  "@attentionItemAgeDays": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionItemAgeHours": "{count}h ago",
+  "@attentionItemAgeHours": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionItemAgeMinutes": "{count}m ago",
+  "@attentionItemAgeMinutes": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "attentionItemAgeJustNow": "just now",
+  "@attentionItemAgeJustNow": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryAppBarTitle": "Operator history",
+  "@operatorHistoryAppBarTitle": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryRefreshTooltip": "Refresh",
+  "@operatorHistoryRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistorySurfaceLabel": "Operator history",
+  "@operatorHistorySurfaceLabel": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistorySurfaceLabelLowercase": "operator history",
+  "@operatorHistorySurfaceLabelLowercase": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryEmptyState": "No operator history yet.",
+  "@operatorHistoryEmptyState": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryParentAgentTitle": "Agent: {agentId}",
+  "@operatorHistoryParentAgentTitle": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryEntryCount": "{count, plural, =1{1 entry} other{{count} entries}}",
+  "@operatorHistoryEntryCount": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryEntrySubtitle": "{kind} · occurred: {occurredAt}",
+  "@operatorHistoryEntrySubtitle": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "operatorHistoryEntrySubtitleWithSubAgent": "{kind} · occurred: {occurredAt} · sub-agent: {subAgentId}",
+  "@operatorHistoryEntrySubtitleWithSubAgent": {
+    "description": "From T165 i18n sweep (source: attention.json)."
+  },
+  "notificationHistoryTitle": "Notification history",
+  "@notificationHistoryTitle": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationHistoryEmptyState": "No notifications in history yet.",
+  "@notificationHistoryEmptyState": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationHistorySurfaceLabel": "notification history",
+  "@notificationHistorySurfaceLabel": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationHistoryItemSubtitle": "{severity} · {eventClass} · agent {agentId} · emitted {emittedAt}",
+  "@notificationHistoryItemSubtitle": {
+    "description": "From T165 i18n sweep (source: notifications.json).",
+    "placeholders": {
+      "severity": {
+        "type": "String",
+        "example": "Warning"
+      },
+      "eventClass": {
+        "type": "String",
+        "example": "agent_idle"
+      },
+      "agentId": {
+        "type": "String",
+        "example": "agent-1"
+      },
+      "emittedAt": {
+        "type": "String",
+        "example": "2026-05-25 10:00:00.000"
+      }
+    }
+  },
+  "notificationsPanelTitle": "Notifications",
+  "@notificationsPanelTitle": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationsPanelEmptyState": "No unread notifications.",
+  "@notificationsPanelEmptyState": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationsPanelSurfaceLabel": "notifications",
+  "@notificationsPanelSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationsRefreshTooltip": "Refresh",
+  "@notificationsRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationsAcknowledgeFailed": "Acknowledge failed: {error}",
+  "@notificationsAcknowledgeFailed": {
+    "description": "From T165 i18n sweep (source: notifications.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "TimeoutException"
+      }
+    }
+  },
+  "notificationsGroupRowTitle": "{eventClass} from {agentId} — {count} notifications grouped",
+  "@notificationsGroupRowTitle": {
+    "description": "From T165 i18n sweep (source: notifications.json).",
+    "placeholders": {
+      "eventClass": {
+        "type": "String",
+        "example": "agent_idle"
+      },
+      "agentId": {
+        "type": "String",
+        "example": "agent-1"
+      },
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "notificationsGroupRowSubtitle": "{severity} · most recent {emittedAt}",
+  "@notificationsGroupRowSubtitle": {
+    "description": "From T165 i18n sweep (source: notifications.json).",
+    "placeholders": {
+      "severity": {
+        "type": "String",
+        "example": "Warning"
+      },
+      "emittedAt": {
+        "type": "String",
+        "example": "2026-05-25 10:00:00.000"
+      }
+    }
+  },
+  "notificationsGroupCollapseTooltip": "Collapse group",
+  "@notificationsGroupCollapseTooltip": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationsGroupExpandTooltip": "Expand group",
+  "@notificationsGroupExpandTooltip": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "notificationItemSubtitle": "{severity} · {eventClass} · agent {agentId} · {emittedAt}",
+  "@notificationItemSubtitle": {
+    "description": "From T165 i18n sweep (source: notifications.json).",
+    "placeholders": {
+      "severity": {
+        "type": "String",
+        "example": "Warning"
+      },
+      "eventClass": {
+        "type": "String",
+        "example": "agent_idle"
+      },
+      "agentId": {
+        "type": "String",
+        "example": "agent-1"
+      },
+      "emittedAt": {
+        "type": "String",
+        "example": "2026-05-25 10:00:00.000"
+      }
+    }
+  },
+  "notificationItemSemanticsLabel": "{severityDescription} notification: {summary}",
+  "@notificationItemSemanticsLabel": {
+    "description": "From T165 i18n sweep (source: notifications.json).",
+    "placeholders": {
+      "severityDescription": {
+        "type": "String",
+        "example": "warning"
+      },
+      "summary": {
+        "type": "String",
+        "example": "Agent agent-1 has been idle for 5 minutes"
+      }
+    }
+  },
+  "notificationAcknowledgeTooltip": "Acknowledge",
+  "@notificationAcknowledgeTooltip": {
+    "description": "From T165 i18n sweep (source: notifications.json)."
+  },
+  "projectsViewTitle": "Projects",
+  "@projectsViewTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectsAddProjectTooltip": "Add project",
+  "@projectsAddProjectTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectsRefreshTooltip": "Refresh",
+  "@projectsRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectsSurfaceLabel": "Projects",
+  "@projectsSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectsSurfaceLabelLower": "projects",
+  "@projectsSurfaceLabelLower": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectsEmptyMessage": "No projects registered yet.\n\nUse Add Project to register a repository, or adopt a pane whose project_path will auto-register the project.",
+  "@projectsEmptyMessage": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardActionsTooltip": "Project actions",
+  "@projectCardActionsTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardMenuOpenProject": "Open project",
+  "@projectCardMenuOpenProject": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardMenuOpenCurrentWork": "Open Current Work",
+  "@projectCardMenuOpenCurrentWork": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardMenuOpenSpecs": "Open Specs",
+  "@projectCardMenuOpenSpecs": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardMenuOpenDrift": "Open Drift",
+  "@projectCardMenuOpenDrift": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardMenuOpenDrivingMaster": "Open driving master",
+  "@projectCardMenuOpenDrivingMaster": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardMenuRemoveProject": "Remove project",
+  "@projectCardMenuRemoveProject": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardNoActiveFeatureChange": "No active feature/change",
+  "@projectCardNoActiveFeatureChange": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardActiveFeature": "Active: {featureId}",
+  "@projectCardActiveFeature": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "featureId": {
+        "type": "String",
+        "example": "FEAT-12"
+      }
+    }
+  },
+  "projectCardActiveFeatureWithPhase": "Active: {featureId} · {phase}",
+  "@projectCardActiveFeatureWithPhase": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "featureId": {
+        "type": "String",
+        "example": "FEAT-12"
+      },
+      "phase": {
+        "type": "String",
+        "example": "Engineering"
+      }
+    }
+  },
+  "projectCardNoDrivingMaster": "No driving master",
+  "@projectCardNoDrivingMaster": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardDriverDriving": "{driver} is driving {featureId}",
+  "@projectCardDriverDriving": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "driver": {
+        "type": "String",
+        "example": "claude-1"
+      },
+      "featureId": {
+        "type": "String",
+        "example": "FEAT-12"
+      }
+    }
+  },
+  "projectCardDriverDrivingUnderHandoff": "{driver} is driving {featureId} under {handoffId}",
+  "@projectCardDriverDrivingUnderHandoff": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "driver": {
+        "type": "String",
+        "example": "claude-1"
+      },
+      "featureId": {
+        "type": "String",
+        "example": "FEAT-12"
+      },
+      "handoffId": {
+        "type": "String",
+        "example": "H-123"
+      }
+    }
+  },
+  "projectCardDriverPrefix": "Driver: {driver}",
+  "@projectCardDriverPrefix": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "driver": {
+        "type": "String",
+        "example": "claude-1"
+      }
+    }
+  },
+  "projectCardMasters": "Masters: {visible}",
+  "@projectCardMasters": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "visible": {
+        "type": "String",
+        "example": "claude-1, gpt-1"
+      }
+    }
+  },
+  "projectCardMastersWithOverflow": "Masters: {visible} (+{overflow})",
+  "@projectCardMastersWithOverflow": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "visible": {
+        "type": "String",
+        "example": "claude-1, gpt-1"
+      },
+      "overflow": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "projectCardSubAgents": "Sub-agents: {count}",
+  "@projectCardSubAgents": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "projectCardLastActivity": "Last activity: {timestamp}",
+  "@projectCardLastActivity": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "projectCardBranchDetachedSuffix": "{branchName} (detached)",
+  "@projectCardBranchDetachedSuffix": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "branchName": {
+        "type": "String",
+        "example": "main"
+      }
+    }
+  },
+  "projectCardValidationChipUnknownAge": "—",
+  "@projectCardValidationChipUnknownAge": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "projectCardValidationChipAge": "{minutes}m ago",
+  "@projectCardValidationChipAge": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "projectCardValidationChipLabel": "val: {kind} ({age})",
+  "@projectCardValidationChipLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "kind": {
+        "type": "String",
+        "example": "pass"
+      },
+      "age": {
+        "type": "String",
+        "example": "12m ago"
+      }
+    }
+  },
+  "projectCardDriftChipLabel": "drift: {severity}",
+  "@projectCardDriftChipLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "severity": {
+        "type": "String",
+        "example": "warning"
+      }
+    }
+  },
+  "projectCardDriftChipOpenCount": "({openCount})",
+  "@projectCardDriftChipOpenCount": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "openCount": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "projectCardDriftChipSource": "src={source}",
+  "@projectCardDriftChipSource": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "source": {
+        "type": "String",
+        "example": "validator"
+      }
+    }
+  },
+  "projectCardDriftChipAge": "{minutes}m",
+  "@projectCardDriftChipAge": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "projectCardAttentionChipLabel": "attn: {severity} ({openCount})",
+  "@projectCardAttentionChipLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "severity": {
+        "type": "String",
+        "example": "warning"
+      },
+      "openCount": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "addProjectDialogTitle": "Add project",
+  "@addProjectDialogTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectPathLabel": "Repository path (absolute)",
+  "@addProjectPathLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectPathHint": "/home/you/projects/example",
+  "@addProjectPathHint": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectLabelLabel": "Display label (optional)",
+  "@addProjectLabelLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectLabelHint": "My Project",
+  "@addProjectLabelHint": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectCancel": "Cancel",
+  "@addProjectCancel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectSubmit": "Add",
+  "@addProjectSubmit": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectErrorPathRequired": "Repository path is required.",
+  "@addProjectErrorPathRequired": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "addProjectErrorPathAbsolute": "Path must be absolute (FR-026 canonicalization).",
+  "@addProjectErrorPathAbsolute": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "removeProjectDialogTitle": "Remove project?",
+  "@removeProjectDialogTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "removeProjectConfirmPrompt": "Remove \"{projectLabel}\" from the project list?",
+  "@removeProjectConfirmPrompt": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "projectLabel": {
+        "type": "String",
+        "example": "agenttower"
+      }
+    }
+  },
+  "removeProjectExplanation": "This clears the project from your app view and resets its saved sort/filter selections. Daemon-side data (agents, handoffs, drift findings, validation runs) is preserved. The project may reappear automatically if it is later inferred from an adopted agent.",
+  "@removeProjectExplanation": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "removeProjectCancel": "Cancel",
+  "@removeProjectCancel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "removeProjectConfirm": "Remove",
+  "@removeProjectConfirm": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkSurfaceLabel": "Current Work",
+  "@currentWorkSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkSurfaceLabelLower": "current work",
+  "@currentWorkSurfaceLabelLower": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkTitleWithProject": "Current Work — {projectLabel}",
+  "@currentWorkTitleWithProject": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "projectLabel": {
+        "type": "String",
+        "example": "agenttower"
+      }
+    }
+  },
+  "currentWorkRefreshTooltip": "Refresh",
+  "@currentWorkRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkEmptyMessage": "No active feature/change on this project.\n\nStart one by handing it off to a master from the Specs view.",
+  "@currentWorkEmptyMessage": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkSubphase": "Subphase: {subphase}",
+  "@currentWorkSubphase": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "subphase": {
+        "type": "String",
+        "example": "design"
+      }
+    }
+  },
+  "currentWorkNoDriverAssigned": "No driver assigned yet.",
+  "@currentWorkNoDriverAssigned": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkLinkedDocumentsHeading": "Linked documents",
+  "@currentWorkLinkedDocumentsHeading": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkStageExecutionLine": "Stage: {stage} · Execution: {execution}",
+  "@currentWorkStageExecutionLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "stage": {
+        "type": "String",
+        "example": "engineering"
+      },
+      "execution": {
+        "type": "String",
+        "example": "in_progress"
+      }
+    }
+  },
+  "currentWorkAsOfLine": "As of: {timestamp}",
+  "@currentWorkAsOfLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "currentWorkMasterDetailSnack": "Master detail: {agentId}",
+  "@currentWorkMasterDetailSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "agentId": {
+        "type": "String",
+        "example": "claude-1"
+      }
+    }
+  },
+  "currentWorkHandoffDetailSnack": "Handoff detail: {handoffId}",
+  "@currentWorkHandoffDetailSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-123"
+      }
+    }
+  },
+  "currentWorkNoLinkedDocuments": "No documents linked yet — see Drift for missing-doc findings.",
+  "@currentWorkNoLinkedDocuments": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkDocsLoadFailed": "Failed to load documents: {error}",
+  "@currentWorkDocsLoadFailed": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "currentWorkDocPrd": "PRD",
+  "@currentWorkDocPrd": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkDocArchitecture": "Architecture",
+  "@currentWorkDocArchitecture": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkDocRoadmap": "Roadmap",
+  "@currentWorkDocRoadmap": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkDocFeatureSpec": "Feature spec",
+  "@currentWorkDocFeatureSpec": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkDocOpenSpecChange": "OpenSpec change",
+  "@currentWorkDocOpenSpecChange": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "currentWorkNoProjectSelected": "No project selected.\n\nOpen the Projects view (Project + Specs → Projects) and select a project to see its current work.",
+  "@currentWorkNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "drivingMasterIsDriving": "is driving",
+  "@drivingMasterIsDriving": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "drivingMasterUnder": "under",
+  "@drivingMasterUnder": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "drivingMasterConflictTooltip": "Conflict: {drivers}",
+  "@drivingMasterConflictTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "drivers": {
+        "type": "String",
+        "example": "claude-1, gpt-1"
+      }
+    }
+  },
+  "drivingMasterConflictChipLabel": "conflict",
+  "@drivingMasterConflictChipLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsViewTitle": "Specs",
+  "@specsViewTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsSurfaceLabel": "Specs",
+  "@specsSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsSurfaceLabelLower": "specs",
+  "@specsSurfaceLabelLower": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsRefreshTooltip": "Refresh",
+  "@specsRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsEmptyMessage": "No features or changes registered for this project yet.",
+  "@specsEmptyMessage": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsPaneSourceLabel": "spec for {displayId}",
+  "@specsPaneSourceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "displayId": {
+        "type": "String",
+        "example": "FEAT-12"
+      }
+    }
+  },
+  "specsPaneBodyPlaceholder": "# {displayId}\n\n{humanLabel}\n\n_Spec body rendering pending FEAT-011 v1.x doc-content method._",
+  "@specsPaneBodyPlaceholder": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "displayId": {
+        "type": "String",
+        "example": "FEAT-12"
+      },
+      "humanLabel": {
+        "type": "String",
+        "example": "Engineering / In Progress"
+      }
+    }
+  },
+  "specsLoadFailed": "Failed to load spec: {error}",
+  "@specsLoadFailed": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "specsSelectAFeature": "Select a feature/change to view its spec.",
+  "@specsSelectAFeature": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "specsNoProjectSelected": "No project selected.\n\nPick a project from the Projects view to see its specs.",
+  "@specsNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesViewTitle": "Changes",
+  "@changesViewTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesSurfaceLabel": "Changes",
+  "@changesSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesSurfaceLabelLower": "changes",
+  "@changesSurfaceLabelLower": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesRefreshTooltip": "Refresh",
+  "@changesRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesEmptyMessage": "No proposed OpenSpec changes for this project.",
+  "@changesEmptyMessage": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesSelectAChange": "Select a change",
+  "@changesSelectAChange": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "changesPaneSourceLabel": "change {displayId}",
+  "@changesPaneSourceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "displayId": {
+        "type": "String",
+        "example": "CHG-12"
+      }
+    }
+  },
+  "changesPaneBodyPlaceholder": "# {displayId}\n\n{humanLabel}\n\n_OpenSpec change body rendering pending FEAT-011 v1.x doc-content method._",
+  "@changesPaneBodyPlaceholder": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "displayId": {
+        "type": "String",
+        "example": "CHG-12"
+      },
+      "humanLabel": {
+        "type": "String",
+        "example": "Proposed"
+      }
+    }
+  },
+  "changesLoadFailed": "Failed to load change: {error}",
+  "@changesLoadFailed": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "changesNoProjectSelected": "No project selected.\n\nPick a project to see its OpenSpec changes.",
+  "@changesNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftViewTitle": "Drift",
+  "@driftViewTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftSurfaceLabel": "Drift",
+  "@driftSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftSurfaceLabelLower": "drift",
+  "@driftSurfaceLabelLower": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailSurfaceLabel": "Drift detail",
+  "@driftDetailSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftRefreshTooltip": "Refresh",
+  "@driftRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftFilterStatusTooltip": "Filter status",
+  "@driftFilterStatusTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftFilterSeverityTooltip": "Filter severity",
+  "@driftFilterSeverityTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftFilterAllStatuses": "All statuses",
+  "@driftFilterAllStatuses": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftFilterAllSeverities": "All severities",
+  "@driftFilterAllSeverities": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftEmptyMessage": "No drift findings for this project.",
+  "@driftEmptyMessage": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftRowSemantic": "{severityLabel} drift: {summary}",
+  "@driftRowSemantic": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "severityLabel": {
+        "type": "String",
+        "example": "Warning"
+      },
+      "summary": {
+        "type": "String",
+        "example": "PRD missing for FEAT-12"
+      }
+    }
+  },
+  "driftRowSubtitle": "{severityLabel} · {status} · {source} · confidence {confidence} · scope {scope} · {age}",
+  "@driftRowSubtitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "severityLabel": {
+        "type": "String",
+        "example": "Warning"
+      },
+      "status": {
+        "type": "String",
+        "example": "open"
+      },
+      "source": {
+        "type": "String",
+        "example": "validator"
+      },
+      "confidence": {
+        "type": "String",
+        "example": "high"
+      },
+      "scope": {
+        "type": "String",
+        "example": "feature:FEAT-12"
+      },
+      "age": {
+        "type": "String",
+        "example": "3h ago"
+      }
+    }
+  },
+  "driftAgeDays": "{days}d ago",
+  "@driftAgeDays": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "driftAgeHours": "{hours}h ago",
+  "@driftAgeHours": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "driftAgeMinutes": "{minutes}m ago",
+  "@driftAgeMinutes": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "driftAgeJustNow": "just now",
+  "@driftAgeJustNow": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftNoProjectSelected": "No project selected.\n\nPick a project from the Projects view to see its drift findings.",
+  "@driftNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailTitle": "Drift {findingId}",
+  "@driftDetailTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "findingId": {
+        "type": "String",
+        "example": "D-123"
+      }
+    }
+  },
+  "driftDetailSurfaceErrorLabel": "drift {findingId}",
+  "@driftDetailSurfaceErrorLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "findingId": {
+        "type": "String",
+        "example": "D-123"
+      }
+    }
+  },
+  "driftDetailChipStatus": "status: {status}",
+  "@driftDetailChipStatus": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "status": {
+        "type": "String",
+        "example": "open"
+      }
+    }
+  },
+  "driftDetailChipSeverity": "severity: {severity}",
+  "@driftDetailChipSeverity": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "severity": {
+        "type": "String",
+        "example": "warning"
+      }
+    }
+  },
+  "driftDetailChipSource": "source: {source}",
+  "@driftDetailChipSource": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "source": {
+        "type": "String",
+        "example": "validator"
+      }
+    }
+  },
+  "driftDetailChipConfidence": "confidence: {confidence}",
+  "@driftDetailChipConfidence": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "confidence": {
+        "type": "String",
+        "example": "high"
+      }
+    }
+  },
+  "driftDetailChipScope": "scope: {scope}",
+  "@driftDetailChipScope": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "scope": {
+        "type": "String",
+        "example": "feature:FEAT-12"
+      }
+    }
+  },
+  "driftDetailSectionRecommended": "Recommended action",
+  "@driftDetailSectionRecommended": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailSectionLinkedRefs": "Linked refs",
+  "@driftDetailSectionLinkedRefs": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailLinkedFeatures": "Features: {features}",
+  "@driftDetailLinkedFeatures": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "features": {
+        "type": "String",
+        "example": "FEAT-12, FEAT-13"
+      }
+    }
+  },
+  "driftDetailLinkedChanges": "Changes: {changes}",
+  "@driftDetailLinkedChanges": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "changes": {
+        "type": "String",
+        "example": "CHG-2"
+      }
+    }
+  },
+  "driftDetailLinkedBranch": "Branch: {branch}",
+  "@driftDetailLinkedBranch": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "branch": {
+        "type": "String",
+        "example": "feature-12"
+      }
+    }
+  },
+  "driftDetailLinkedWorktree": "Worktree: {worktree}",
+  "@driftDetailLinkedWorktree": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "worktree": {
+        "type": "String",
+        "example": "/path/to/worktree"
+      }
+    }
+  },
+  "driftDetailNoLinkedRefs": "No linked refs",
+  "@driftDetailNoLinkedRefs": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailSectionEvidence": "Evidence",
+  "@driftDetailSectionEvidence": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailNoEvidence": "No evidence supplied",
+  "@driftDetailNoEvidence": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailRepairButton": "Repair this drift",
+  "@driftDetailRepairButton": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailNoProjectSelectedSnack": "No project selected — pick one from Projects view first.",
+  "@driftDetailNoProjectSelectedSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailNoMasterAvailableSnack": "No master qualified per FR-071 is available for this project. Adopt or assign one, then retry.",
+  "@driftDetailNoMasterAvailableSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftDetailHandoffFlowOpenFailedSnack": "Could not open handoff flow: {error}",
+  "@driftDetailHandoffFlowOpenFailedSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "driftRepairPlaceholderWorkflowPhase": "Drift repair (in progress)",
+  "@driftRepairPlaceholderWorkflowPhase": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionTerminalChip": "Terminal: {status}",
+  "@driftTransitionTerminalChip": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "status": {
+        "type": "String",
+        "example": "resolved"
+      }
+    }
+  },
+  "driftTransitionMenuTooltip": "Transition to…",
+  "@driftTransitionMenuTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionButton": "Transition",
+  "@driftTransitionButton": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionDialogTitle": "{from} → {to}",
+  "@driftTransitionDialogTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "from": {
+        "type": "String",
+        "example": "open"
+      },
+      "to": {
+        "type": "String",
+        "example": "resolved"
+      }
+    }
+  },
+  "driftTransitionNoteLabel": "Operator note (optional)",
+  "@driftTransitionNoteLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionNoteHelper": "Recorded with the transition for audit.",
+  "@driftTransitionNoteHelper": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionDialogCancel": "Cancel",
+  "@driftTransitionDialogCancel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionDialogConfirm": "Confirm",
+  "@driftTransitionDialogConfirm": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "driftTransitionIllegalSnack": "Illegal transition {from} → {to} (FR-034). Daemon would reject.",
+  "@driftTransitionIllegalSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "from": {
+        "type": "String",
+        "example": "open"
+      },
+      "to": {
+        "type": "String",
+        "example": "resolved"
+      }
+    }
+  },
+  "driftTransitionFailedSnack": "Transition failed: {error}",
+  "@driftTransitionFailedSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "handoffFlowTitle": "Handoff",
+  "@handoffFlowTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowPreviewAction": "Preview",
+  "@handoffFlowPreviewAction": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowStepTargetMaster": "Target master",
+  "@handoffFlowStepTargetMaster": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowStepProject": "Project",
+  "@handoffFlowStepProject": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowStepWorkItem": "Work item(s)",
+  "@handoffFlowStepWorkItem": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowStepMode": "Mode",
+  "@handoffFlowStepMode": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowStepOptionalInputs": "Optional inputs",
+  "@handoffFlowStepOptionalInputs": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowStepFallback": "Step {index}",
+  "@handoffFlowStepFallback": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "handoffFlowMasterSubtitle": "Capability: {capability}  ·  Status: {status}",
+  "@handoffFlowMasterSubtitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "capability": {
+        "type": "String",
+        "example": "claude"
+      },
+      "status": {
+        "type": "String",
+        "example": "active"
+      }
+    }
+  },
+  "handoffFlowWorkItemLabel": "Work item or range (e.g. FEAT-12 or FEAT-8..FEAT-12)",
+  "@handoffFlowWorkItemLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowWorkItemHelper": "Canonical syntax FEAT-N..FEAT-M (FR-039).",
+  "@handoffFlowWorkItemHelper": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowResolvedCountLine": "Resolved {count} item(s):",
+  "@handoffFlowResolvedCountLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "handoffFlowResolvedItemBullet": "• {item}",
+  "@handoffFlowResolvedItemBullet": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "item": {
+        "type": "String",
+        "example": "FEAT-12 (engineering)"
+      }
+    }
+  },
+  "handoffFlowPriorityLabel": "Priority (optional)",
+  "@handoffFlowPriorityLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowPriorityNone": "—",
+  "@handoffFlowPriorityNone": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowNotesLabel": "Operator notes (optional)",
+  "@handoffFlowNotesLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffFlowNotesHelper": "Preserved through mode changes per FR-040.",
+  "@handoffFlowNotesHelper": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffPreviewTitle": "Handoff preview",
+  "@handoffPreviewTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffPreviewSubmitting": "Submitting…",
+  "@handoffPreviewSubmitting": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffPreviewSubmit": "Submit",
+  "@handoffPreviewSubmit": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffPreviewSubmittedSnack": "Submitted handoff {handoffId}",
+  "@handoffPreviewSubmittedSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-123"
+      }
+    }
+  },
+  "handoffListTitle": "Handoffs",
+  "@handoffListTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListSurfaceLabel": "Handoffs",
+  "@handoffListSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListSurfaceLabelLower": "handoffs",
+  "@handoffListSurfaceLabelLower": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListFilterTooltip": "Filter by state",
+  "@handoffListFilterTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListRefreshTooltip": "Refresh",
+  "@handoffListRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListFilterAll": "All",
+  "@handoffListFilterAll": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListEmptyMessage": "No handoffs match the current filter.",
+  "@handoffListEmptyMessage": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListItemTitleDraftSuffix": " (draft)",
+  "@handoffListItemTitleDraftSuffix": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffListItemSubtitle": "Master: {master} · State: {state} · Created: {createdAt}",
+  "@handoffListItemSubtitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "master": {
+        "type": "String",
+        "example": "claude-1"
+      },
+      "state": {
+        "type": "String",
+        "example": "submitted"
+      },
+      "createdAt": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "handoffDetailTitle": "Handoff {handoffId}",
+  "@handoffDetailTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-123"
+      }
+    }
+  },
+  "handoffDetailSurfaceLabel": "Handoff detail",
+  "@handoffDetailSurfaceLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailSurfaceErrorLabel": "handoff {handoffId}",
+  "@handoffDetailSurfaceErrorLabel": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-123"
+      }
+    }
+  },
+  "handoffDetailRefreshTooltip": "Refresh",
+  "@handoffDetailRefreshTooltip": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailSectionTarget": "Target",
+  "@handoffDetailSectionTarget": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailMasterLine": "Master: {label} ({agentId})",
+  "@handoffDetailMasterLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "claude-1"
+      },
+      "agentId": {
+        "type": "String",
+        "example": "agent-001"
+      }
+    }
+  },
+  "handoffDetailProjectLine": "Project: {label} ({projectId})",
+  "@handoffDetailProjectLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "agenttower"
+      },
+      "projectId": {
+        "type": "String",
+        "example": "p-1"
+      }
+    }
+  },
+  "handoffDetailModeLine": "Mode: {mode}",
+  "@handoffDetailModeLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "mode": {
+        "type": "String",
+        "example": "engineering_execution"
+      }
+    }
+  },
+  "handoffDetailPriorityLine": "Priority: {priority}",
+  "@handoffDetailPriorityLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "priority": {
+        "type": "String",
+        "example": "high"
+      }
+    }
+  },
+  "handoffDetailDeadlineLine": "Deadline: {deadline}",
+  "@handoffDetailDeadlineLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "deadline": {
+        "type": "String",
+        "example": "2025-06-01"
+      }
+    }
+  },
+  "handoffDetailSectionResolvedWorkItems": "Resolved work items",
+  "@handoffDetailSectionResolvedWorkItems": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailResolvedItemBullet": "• {item}",
+  "@handoffDetailResolvedItemBullet": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "item": {
+        "type": "String",
+        "example": "FEAT-12 (engineering)"
+      }
+    }
+  },
+  "handoffDetailSectionHelperPolicy": "Helper policy snapshot",
+  "@handoffDetailSectionHelperPolicy": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailPolicyLine": "Policy: {policyId} ({source})",
+  "@handoffDetailPolicyLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "policyId": {
+        "type": "String",
+        "example": "default"
+      },
+      "source": {
+        "type": "String",
+        "example": "baked_default"
+      }
+    }
+  },
+  "handoffDetailDefaultHelperLine": "Default helper: {capability}",
+  "@handoffDetailDefaultHelperLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "capability": {
+        "type": "String",
+        "example": "shell"
+      }
+    }
+  },
+  "handoffDetailAllowedLine": "Allowed: {allowed}",
+  "@handoffDetailAllowedLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "allowed": {
+        "type": "String",
+        "example": "shell, git"
+      }
+    }
+  },
+  "handoffDetailRepoOverrideLine": "Repo override: {path}",
+  "@handoffDetailRepoOverrideLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/path/to/policy.yaml"
+      }
+    }
+  },
+  "handoffDetailSectionSupersedeChain": "Supersede chain",
+  "@handoffDetailSectionSupersedeChain": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailSupersedesLine": "Supersedes: {handoffId}",
+  "@handoffDetailSupersedesLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-122"
+      }
+    }
+  },
+  "handoffDetailSupersededByLine": "Superseded by: {handoffId}",
+  "@handoffDetailSupersededByLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-124"
+      }
+    }
+  },
+  "handoffDetailNoSupersede": "No supersede relationships.",
+  "@handoffDetailNoSupersede": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailSectionLifecycle": "Lifecycle",
+  "@handoffDetailSectionLifecycle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailCreatedLine": "Created: {timestamp}",
+  "@handoffDetailCreatedLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "handoffDetailSubmittedLine": "Submitted: {timestamp}",
+  "@handoffDetailSubmittedLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "handoffDetailAcceptedLine": "Accepted: {timestamp}",
+  "@handoffDetailAcceptedLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "handoffDetailCompletedLine": "Completed: {timestamp}",
+  "@handoffDetailCompletedLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "handoffDetailCancelledLine": "Cancelled: {timestamp}",
+  "@handoffDetailCancelledLine": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "timestamp": {
+        "type": "String",
+        "example": "2025-05-25 14:23"
+      }
+    }
+  },
+  "handoffDetailSectionGeneratedPrompt": "Generated prompt",
+  "@handoffDetailSectionGeneratedPrompt": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailStateChip": "State: {state}",
+  "@handoffDetailStateChip": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "state": {
+        "type": "String",
+        "example": "submitted"
+      }
+    }
+  },
+  "handoffDetailFailureChip": "Submission failure: {errorCode} — {errorMessage}",
+  "@handoffDetailFailureChip": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "errorCode": {
+        "type": "String",
+        "example": "invalid_input"
+      },
+      "errorMessage": {
+        "type": "String",
+        "example": "missing field"
+      }
+    }
+  },
+  "handoffDetailDeliveryChip": "Delivery: {kind}",
+  "@handoffDetailDeliveryChip": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "kind": {
+        "type": "String",
+        "example": "delivered"
+      }
+    }
+  },
+  "handoffDetailRetryDeliveryButton": "Retry delivery",
+  "@handoffDetailRetryDeliveryButton": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "handoffDetailRetryFailedSnack": "Retry failed: {error}",
+  "@handoffDetailRetryFailedSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "supersedeIllegalStateSnack": "Cannot supersede handoff in state {state} (only submitted / accepted are eligible per FR-044).",
+  "@supersedeIllegalStateSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "state": {
+        "type": "String",
+        "example": "completed"
+      }
+    }
+  },
+  "supersedeNoIdSnack": "Cannot supersede: prior handoff has no daemon-assigned id.",
+  "@supersedeNoIdSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "supersedeFailedSnack": "Supersede failed: {error}",
+  "@supersedeFailedSnack": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "timeout"
+      }
+    }
+  },
+  "supersedeDialogTitle": "Supersede prior handoff?",
+  "@supersedeDialogTitle": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "supersedeDialogPrompt": "Supersede handoff {handoffId}",
+  "@supersedeDialogPrompt": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "handoffId": {
+        "type": "String",
+        "example": "H-123"
+      }
+    }
+  },
+  "supersedeDialogExplanation": "The prior handoff will move to `superseded`. Queue rows already created from it will NOT be auto-cancelled (per FR-081); cancel them from the Queue view if needed. The new handoff records its `supersedes_handoff_id` so the lineage is reproducible.",
+  "@supersedeDialogExplanation": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "supersedeDialogCancel": "Cancel",
+  "@supersedeDialogCancel": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "supersedeDialogConfirm": "Supersede",
+  "@supersedeDialogConfirm": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteGoToPrefix": "Go to: {label}",
+  "@paletteGoToPrefix": {
+    "description": "From T165 i18n sweep (source: project_specs.json).",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Project + Specs · Projects"
+      }
+    }
+  },
+  "paletteSubViewLabelProjects": "Project + Specs · Projects",
+  "@paletteSubViewLabelProjects": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteSubViewLabelCurrentWork": "Project + Specs · Current Work",
+  "@paletteSubViewLabelCurrentWork": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteSubViewLabelSpecs": "Project + Specs · Specs",
+  "@paletteSubViewLabelSpecs": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteSubViewLabelChanges": "Project + Specs · Changes",
+  "@paletteSubViewLabelChanges": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteSubViewLabelDrift": "Project + Specs · Drift",
+  "@paletteSubViewLabelDrift": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteCategoryNavigate": "Navigate",
+  "@paletteCategoryNavigate": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteCategoryProject": "Project",
+  "@paletteCategoryProject": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteCategoryHandoff": "Handoff",
+  "@paletteCategoryHandoff": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteCategoryDrift": "Drift",
+  "@paletteCategoryDrift": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteAddProject": "Add project",
+  "@paletteAddProject": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteOpenHandoffFlow": "Open handoff flow (Current Work)",
+  "@paletteOpenHandoffFlow": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "paletteOpenDrift": "Open drift findings",
+  "@paletteOpenDrift": {
+    "description": "From T165 i18n sweep (source: project_specs.json)."
+  },
+  "commonRefresh": "Refresh",
+  "@commonRefresh": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "commonNone": "None.",
+  "@commonNone": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "markdownViewerOpenExternally": "Open externally",
+  "@markdownViewerOpenExternally": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "markdownViewerLinkRejected": "Link rejected — unsupported scheme: {target}",
+  "@markdownViewerLinkRejected": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationTitle": "Available Validation",
+  "@availableValidationTitle": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationEmptyState": "No validation entrypoints registered for this project.",
+  "@availableValidationEmptyState": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationScopeHeader": "Scope: {scope}",
+  "@availableValidationScopeHeader": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationCardMeta": "type: {type} · scope: {scope}{scopeIdSuffix} · enabled: {enabled}{durationSuffix}",
+  "@availableValidationCardMeta": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationRecommendedWhen": "Recommended when: {condition}",
+  "@availableValidationRecommendedWhen": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationBlockingRequired": "required",
+  "@availableValidationBlockingRequired": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationBlockingRecommended": "recommended",
+  "@availableValidationBlockingRecommended": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationBlockingInformational": "info",
+  "@availableValidationBlockingInformational": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationNoProjectSelected": "No project selected.\n\nPick a project from the Projects view to see its validation entrypoints.",
+  "@availableValidationNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "triggerRunEntrypointDisabledReason": "Entrypoint disabled by daemon.",
+  "@triggerRunEntrypointDisabledReason": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "triggerRunButtonTriggering": "Triggering…",
+  "@triggerRunButtonTriggering": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "triggerRunButtonRun": "Run",
+  "@triggerRunButtonRun": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "triggerRunSnackBarTriggered": "Triggered {entrypointLabel} — see Runs view.",
+  "@triggerRunSnackBarTriggered": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessTitle": "Demo Readiness — {branch}",
+  "@demoReadinessTitle": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessSectionSummary": "Summary",
+  "@demoReadinessSectionSummary": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessSectionBlockingFindings": "Blocking findings",
+  "@demoReadinessSectionBlockingFindings": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessSectionRecommendedNext": "Recommended next runs",
+  "@demoReadinessSectionRecommendedNext": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessSectionRecentRuns": "Recent runs",
+  "@demoReadinessSectionRecentRuns": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessFindingKind": "kind: {kind}",
+  "@demoReadinessFindingKind": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessUpdatedAt": "Updated: {timestamp}",
+  "@demoReadinessUpdatedAt": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessOverallReady": "Ready",
+  "@demoReadinessOverallReady": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessOverallAtRisk": "At risk",
+  "@demoReadinessOverallAtRisk": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessOverallNotReady": "Not ready",
+  "@demoReadinessOverallNotReady": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessOverallUnknown": "Unknown",
+  "@demoReadinessOverallUnknown": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessOverallLabel": "Overall: {label}",
+  "@demoReadinessOverallLabel": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessDowngradeReasonOne": "Daemon reported `ready` but 1 required entrypoint ({missingLabels}) have not run on `{branch}` (FR-050).",
+  "@demoReadinessDowngradeReasonOne": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessDowngradeReasonMany": "Daemon reported `ready` but {count} required entrypoints ({missingLabels}) have not run on `{branch}` (FR-050).",
+  "@demoReadinessDowngradeReasonMany": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "demoReadinessNoProjectSelected": "No project selected.\n\nPick a project from the Projects view to see its demo readiness.",
+  "@demoReadinessNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "cancelRunDisabledReason": "Cancel is only legal from `queued` or `running` per FR-048; current state is `{currentState}`.",
+  "@cancelRunDisabledReason": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "cancelRunButtonCancelling": "Cancelling…",
+  "@cancelRunButtonCancelling": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "cancelRunButtonCancel": "Cancel",
+  "@cancelRunButtonCancel": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "cancelRunSnackBarFailed": "Cancel failed: {error}",
+  "@cancelRunSnackBarFailed": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "runsViewTitle": "Runs",
+  "@runsViewTitle": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "runsViewFilterTooltip": "Filter state",
+  "@runsViewFilterTooltip": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "runsViewFilterAllStates": "All states",
+  "@runsViewFilterAllStates": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "runsViewEmptyState": "No validation runs for this project yet.",
+  "@runsViewEmptyState": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "runsViewRowSubtitle": "state: {state}{resultSuffix} · started: {startedAt} · by: {triggeredBy}",
+  "@runsViewRowSubtitle": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "runsViewNoProjectSelected": "No project selected.\n\nPick a project from the Projects view to see its validation runs.",
+  "@runsViewNoProjectSelected": {
+    "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
   }
 }

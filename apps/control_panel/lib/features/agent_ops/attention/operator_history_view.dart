@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import '../../../domain/models/operator_history_entry.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import 'providers.dart';
@@ -18,13 +19,14 @@ class OperatorHistoryView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final list = ref.watch(operatorHistoryListProvider(null));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Operator history'),
+        title: Text(l10n.operatorHistoryAppBarTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.operatorHistoryRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(operatorHistoryListProvider(null)),
           ),
@@ -33,18 +35,18 @@ class OperatorHistoryView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Operator history',
+          surfaceLabel: l10n.operatorHistorySurfaceLabel,
           onRetry: () => ref.invalidate(operatorHistoryListProvider(null)),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Operator history',
+          surfaceLabel: l10n.operatorHistorySurfaceLabel,
         ),
         child: list.when(
           data: (entries) {
             if (entries.isEmpty) {
-              return const HealthyEmptyStateView(
-                message: 'No operator history yet.',
+              return HealthyEmptyStateView(
+                message: l10n.operatorHistoryEmptyState,
                 icon: Icons.history,
               );
             }
@@ -57,9 +59,9 @@ class OperatorHistoryView extends ConsumerWidget {
                 final children = byParent[parent]!;
                 return ExpansionTile(
                   leading: const Icon(Icons.psychology),
-                  title: Text('Agent: $parent'),
-                  subtitle: Text('${children.length} entr'
-                      '${children.length == 1 ? "y" : "ies"}'),
+                  title: Text(l10n.operatorHistoryParentAgentTitle(parent)),
+                  subtitle:
+                      Text(l10n.operatorHistoryEntryCount(children.length)),
                   children: [
                     for (final e in children) _HistoryEntryTile(entry: e),
                   ],
@@ -70,7 +72,7 @@ class OperatorHistoryView extends ConsumerWidget {
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'operator history',
+            surfaceLabel: l10n.operatorHistorySurfaceLabelLowercase,
             onRetry: () => ref.invalidate(operatorHistoryListProvider(null)),
           ),
         ),
@@ -98,25 +100,34 @@ class _HistoryEntryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final occurredAt = entry.occurredAt.toLocal().toString();
+    final subAgentId = entry.subAgentId;
+    final subtitle = subAgentId == null
+        ? l10n.operatorHistoryEntrySubtitle(
+            entry.kind.wireValue,
+            occurredAt,
+          )
+        : l10n.operatorHistoryEntrySubtitleWithSubAgent(
+            entry.kind.wireValue,
+            occurredAt,
+            subAgentId,
+          );
     return Padding(
       padding: EdgeInsets.only(
-        left: entry.subAgentId == null ? 16 : 48,
+        left: subAgentId == null ? 16 : 48,
         right: 16,
       ),
       child: ListTile(
         dense: true,
         leading: Icon(
-          entry.subAgentId == null
+          subAgentId == null
               ? Icons.adjust
               : Icons.subdirectory_arrow_right,
           size: 16,
         ),
         title: Text(entry.summary),
-        subtitle: Text(
-          '${entry.kind.wireValue} · '
-          'occurred: ${entry.occurredAt.toLocal()}'
-          '${entry.subAgentId != null ? " · sub-agent: ${entry.subAgentId}" : ""}',
-        ),
+        subtitle: Text(subtitle),
       ),
     );
   }

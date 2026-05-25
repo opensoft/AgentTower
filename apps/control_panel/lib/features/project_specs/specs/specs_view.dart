@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/feature_change_status.dart';
 import '../../../ui/widgets/markdown_viewer.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
@@ -34,13 +35,14 @@ class _SpecsViewState extends ConsumerState<SpecsView> {
     if (selectedId == null) {
       return const _NoProjectSelected();
     }
+    final l10n = AppLocalizations.of(context);
     final featureChanges = ref.watch(featureChangeListProvider(selectedId));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Specs'),
+        title: Text(l10n.specsViewTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.specsRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () =>
                 ref.invalidate(featureChangeListProvider(selectedId)),
@@ -50,16 +52,15 @@ class _SpecsViewState extends ConsumerState<SpecsView> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Specs',
+          surfaceLabel: l10n.specsSurfaceLabel,
           onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Specs'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.specsSurfaceLabel),
         child: featureChanges.when(
         data: (fcs) => fcs.isEmpty
-            ? const HealthyEmptyStateView(
-                message:
-                    'No features or changes registered for this project yet.',
+            ? HealthyEmptyStateView(
+                message: l10n.specsEmptyMessage,
               )
             : Row(
                 children: [
@@ -83,7 +84,7 @@ class _SpecsViewState extends ConsumerState<SpecsView> {
         loading: () => const LoadingStateView(),
         error: (err, _) => ErrorStateView(
           error: err,
-          surfaceLabel: 'specs',
+          surfaceLabel: l10n.specsSurfaceLabelLower,
           onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
         ),
       ),
@@ -126,6 +127,7 @@ class _SpecPane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final detail = ref.watch(featureChangeDetailProvider(featureChangeId));
     return detail.when(
       data: (fc) {
@@ -134,14 +136,16 @@ class _SpecPane extends ConsumerWidget {
         // For MVP we render a placeholder body that names the resolved
         // spec path; clicking "Open externally" hands off to url_launcher.
         return MarkdownViewer(
-          markdownText:
-              '# ${fc.displayId}\n\n${fc.humanReadableLabel}\n\n'
-              '_Spec body rendering pending FEAT-011 v1.x doc-content method._',
-          sourceLabel: 'spec for ${fc.displayId}',
+          markdownText: l10n.specsPaneBodyPlaceholder(
+            fc.displayId,
+            fc.humanReadableLabel,
+          ),
+          sourceLabel: l10n.specsPaneSourceLabel(fc.displayId),
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, _) => Center(child: Text('Failed to load spec: $err')),
+      error: (err, _) =>
+          Center(child: Text(l10n.specsLoadFailed(err.toString()))),
     );
   }
 }
@@ -151,7 +155,7 @@ class _SelectAFeature extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('Select a feature/change to view its spec.'));
+    return Center(child: Text(AppLocalizations.of(context).specsSelectAFeature));
   }
 }
 
@@ -160,12 +164,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\n'
-          'Pick a project from the Projects view to see its specs.',
+          AppLocalizations.of(context).specsNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

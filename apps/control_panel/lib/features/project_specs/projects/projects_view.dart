@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/project.dart';
 import '../../../routing/route_paths.dart';
@@ -28,22 +29,23 @@ class ProjectsView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final list = ref.watch(projectListProvider);
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Projects'),
+        title: Text(l10n.projectsViewTitle),
         actions: [
           // FR-002 mutation gate (swarm-review CR-7): Add stays visible
           // but disables-with-tooltip on contract-incompatible / unreachable.
           ContractCheckedButton(
             onPressed: () => _onAdd(context, ref),
             builder: (ctx, onPressed, reason) => IconButton(
-              tooltip: reason ?? 'Add project',
+              tooltip: reason ?? l10n.projectsAddProjectTooltip,
               icon: const Icon(Icons.add),
               onPressed: onPressed,
             ),
           ),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.projectsRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(projectListProvider),
           ),
@@ -52,30 +54,28 @@ class ProjectsView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Projects',
+          surfaceLabel: l10n.projectsSurfaceLabel,
           onRetry: () => ref.invalidate(projectListProvider),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Projects',
+          surfaceLabel: l10n.projectsSurfaceLabel,
         ),
         onDegraded: (s) => DegradedStateView(
           state: s,
-          surfaceLabel: 'Projects',
+          surfaceLabel: l10n.projectsSurfaceLabel,
           onRetry: () => ref.invalidate(projectListProvider),
         ),
         child: list.when(
           data: (projects) => projects.isEmpty
-              ? const HealthyEmptyStateView(
-                  message: 'No projects registered yet.\n\n'
-                      'Use Add Project to register a repository, or adopt a '
-                      'pane whose project_path will auto-register the project.',
+              ? HealthyEmptyStateView(
+                  message: l10n.projectsEmptyMessage,
                 )
               : _ProjectsGrid(projects: projects),
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'projects',
+            surfaceLabel: l10n.projectsSurfaceLabelLower,
             onRetry: () => ref.invalidate(projectListProvider),
           ),
         ),

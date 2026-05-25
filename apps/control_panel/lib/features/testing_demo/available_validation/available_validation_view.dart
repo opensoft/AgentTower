@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -22,12 +23,13 @@ class AvailableValidationView extends ConsumerWidget {
     if (selectedId == null) return const _NoProjectSelected();
     final query = EntrypointListQuery(projectId: selectedId);
     final list = ref.watch(validationEntrypointListProvider(query));
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Available Validation'),
+        title: Text(l10n.availableValidationTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.commonRefresh,
             icon: const Icon(Icons.refresh),
             onPressed: () =>
                 ref.invalidate(validationEntrypointListProvider(query)),
@@ -37,20 +39,19 @@ class AvailableValidationView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Available Validation',
+          surfaceLabel: l10n.availableValidationTitle,
           onRetry: () =>
               ref.invalidate(validationEntrypointListProvider(query)),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Available Validation',
+          surfaceLabel: l10n.availableValidationTitle,
         ),
         child: list.when(
           data: (rows) {
             if (rows.isEmpty) {
-              return const HealthyEmptyStateView(
-                message:
-                    'No validation entrypoints registered for this project.',
+              return HealthyEmptyStateView(
+                message: l10n.availableValidationEmptyState,
                 icon: Icons.science_outlined,
               );
             }
@@ -105,7 +106,8 @@ class _GroupedList extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  'Scope: $scope',
+                  AppLocalizations.of(context)
+                      .availableValidationScopeHeader(scope),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -133,7 +135,12 @@ class _EntrypointCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final duration = entrypoint.estimatedDuration;
+    final scopeIdSuffix =
+        entrypoint.scope.id != null ? ':${entrypoint.scope.id}' : '';
+    final durationSuffix =
+        duration != null ? ' · ~${duration.inSeconds}s' : '';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -155,11 +162,13 @@ class _EntrypointCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'type: ${entrypoint.type.wireValue} · '
-                    'scope: ${entrypoint.scope.kind.wireValue}'
-                    '${entrypoint.scope.id != null ? ":${entrypoint.scope.id}" : ""} · '
-                    'enabled: ${entrypoint.enabled} '
-                    '${duration != null ? "· ~${duration.inSeconds}s" : ""}',
+                    l10n.availableValidationCardMeta(
+                      entrypoint.type.wireValue,
+                      entrypoint.scope.kind.wireValue,
+                      scopeIdSuffix,
+                      entrypoint.enabled.toString(),
+                      durationSuffix,
+                    ),
                     style: theme.textTheme.bodySmall,
                   ),
                   const SizedBox(height: 4),
@@ -167,7 +176,9 @@ class _EntrypointCard extends StatelessWidget {
                   if (entrypoint.recommendedWhen != null) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'Recommended when: ${entrypoint.recommendedWhen}',
+                      l10n.availableValidationRecommendedWhen(
+                        entrypoint.recommendedWhen!,
+                      ),
                       style: theme.textTheme.labelSmall,
                     ),
                   ],
@@ -198,10 +209,20 @@ class _BlockingChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final (color, label) = switch (level) {
-      BlockingLevel.required => (theme.colorScheme.error, 'required'),
-      BlockingLevel.recommended => (theme.colorScheme.tertiary, 'recommended'),
-      BlockingLevel.informational => (theme.colorScheme.secondary, 'info'),
+      BlockingLevel.required => (
+          theme.colorScheme.error,
+          l10n.availableValidationBlockingRequired,
+        ),
+      BlockingLevel.recommended => (
+          theme.colorScheme.tertiary,
+          l10n.availableValidationBlockingRecommended,
+        ),
+      BlockingLevel.informational => (
+          theme.colorScheme.secondary,
+          l10n.availableValidationBlockingInformational,
+        ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -222,13 +243,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\n'
-          'Pick a project from the Projects view to see its validation '
-          'entrypoints.',
+          AppLocalizations.of(context).availableValidationNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

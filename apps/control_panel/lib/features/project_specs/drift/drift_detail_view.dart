@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/master_qualification.dart';
 import '../../../domain/models/badges.dart';
 import '../../../domain/models/common_enums.dart';
@@ -28,13 +29,14 @@ class DriftDetailView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final detail = ref.watch(driftDetailProvider(findingId));
     return Scaffold(
       appBar: AppBar(
-        title: Text('Drift $findingId'),
+        title: Text(l10n.driftDetailTitle(findingId)),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.driftRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(driftDetailProvider(findingId)),
           ),
@@ -43,17 +45,17 @@ class DriftDetailView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Drift detail',
+          surfaceLabel: l10n.driftDetailSurfaceLabel,
           onRetry: () => ref.invalidate(driftDetailProvider(findingId)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Drift detail'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.driftDetailSurfaceLabel),
         child: detail.when(
           data: (d) => _Body(drift: d),
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'drift $findingId',
+            surfaceLabel: l10n.driftDetailSurfaceErrorLabel(findingId),
             onRetry: () => ref.invalidate(driftDetailProvider(findingId)),
           ),
         ),
@@ -69,6 +71,9 @@ class _Body extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
+    final scopeStr =
+        '${drift.scope.kind.wireValue}${drift.scope.id != null ? ":${drift.scope.id}" : ""}';
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -80,45 +85,45 @@ class _Body extends ConsumerWidget {
             spacing: 8,
             runSpacing: 6,
             children: [
-              _Chip(label: 'status: ${drift.status.wireValue}'),
-              _Chip(label: 'severity: ${drift.severity.wireValue}'),
-              _Chip(label: 'source: ${drift.source.wireValue}'),
-              _Chip(label: 'confidence: ${drift.confidence.wireValue}'),
+              _Chip(label: l10n.driftDetailChipStatus(drift.status.wireValue)),
+              _Chip(label: l10n.driftDetailChipSeverity(drift.severity.wireValue)),
+              _Chip(label: l10n.driftDetailChipSource(drift.source.wireValue)),
               _Chip(
-                label: 'scope: ${drift.scope.kind.wireValue}'
-                    '${drift.scope.id != null ? ":${drift.scope.id}" : ""}',
-              ),
+                  label: l10n.driftDetailChipConfidence(drift.confidence.wireValue)),
+              _Chip(label: l10n.driftDetailChipScope(scopeStr)),
             ],
           ),
           const SizedBox(height: 16),
           DriftTransitionAction(drift: drift),
           const SizedBox(height: 24),
-          _section(theme, 'Recommended action'),
+          _section(theme, l10n.driftDetailSectionRecommended),
           Text(drift.recommendedAction),
           const SizedBox(height: 24),
-          _section(theme, 'Linked refs'),
+          _section(theme, l10n.driftDetailSectionLinkedRefs),
           if (drift.linkedFeatureIds.isNotEmpty)
-            Text('Features: ${drift.linkedFeatureIds.join(", ")}'),
+            Text(l10n.driftDetailLinkedFeatures(
+                drift.linkedFeatureIds.join(", "))),
           if (drift.linkedChangeIds.isNotEmpty)
-            Text('Changes: ${drift.linkedChangeIds.join(", ")}'),
+            Text(l10n.driftDetailLinkedChanges(
+                drift.linkedChangeIds.join(", "))),
           if (drift.linkedBranch != null)
-            Text('Branch: ${drift.linkedBranch}'),
+            Text(l10n.driftDetailLinkedBranch(drift.linkedBranch!)),
           if (drift.linkedWorktree != null)
-            Text('Worktree: ${drift.linkedWorktree}'),
+            Text(l10n.driftDetailLinkedWorktree(drift.linkedWorktree!)),
           if (drift.linkedFeatureIds.isEmpty &&
               drift.linkedChangeIds.isEmpty &&
               drift.linkedBranch == null &&
               drift.linkedWorktree == null)
-            const Text('No linked refs'),
+            Text(l10n.driftDetailNoLinkedRefs),
           const SizedBox(height: 24),
-          _section(theme, 'Evidence'),
-          if (drift.evidence.isEmpty) const Text('No evidence supplied'),
+          _section(theme, l10n.driftDetailSectionEvidence),
+          if (drift.evidence.isEmpty) Text(l10n.driftDetailNoEvidence),
           for (final e in drift.evidence) _EvidenceItem(evidence: e),
           const SizedBox(height: 24),
           OutlinedButton.icon(
             onPressed: () => _onRepair(context, ref),
             icon: const Icon(Icons.build),
-            label: const Text('Repair this drift'),
+            label: Text(l10n.driftDetailRepairButton),
           ),
         ],
       ),
@@ -131,13 +136,12 @@ class _Body extends ConsumerWidget {
     // the previous SnackBar nudge. Looks up the project from
     // selectedProjectIdProvider; picks the currently-driving master
     // when present, otherwise the first available master.
+    final l10n = AppLocalizations.of(context);
     final selectedId = ref.read(project_providers.selectedProjectIdProvider);
     if (selectedId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No project selected — pick one from Projects view first.',
-          ),
+        SnackBar(
+          content: Text(l10n.driftDetailNoProjectSelectedSnack),
         ),
       );
       return;
@@ -145,15 +149,13 @@ class _Body extends ConsumerWidget {
     try {
       final project =
           await ref.read(project_providers.projectDetailProvider(selectedId).future);
-      final master = await _resolveMaster(ref, project);
+      final master = await _resolveMaster(context, ref, project);
       if (master == null) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                'No master qualified per FR-071 is available for this '
-                'project. Adopt or assign one, then retry.',
-              ),
+                  AppLocalizations.of(context).driftDetailNoMasterAvailableSnack),
             ),
           );
         }
@@ -169,13 +171,17 @@ class _Body extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open handoff flow: $e')),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)
+                .driftDetailHandoffFlowOpenFailedSnack(e.toString())),
+          ),
         );
       }
     }
   }
 
   Future<MasterSummary?> _resolveMaster(
+    BuildContext context,
     WidgetRef ref,
     Project project,
   ) async {
@@ -207,8 +213,8 @@ class _Body extends ConsumerWidget {
           assignedProjectId: project.projectId,
           activeBadge: const ActiveInactiveBadge(active: true),
           currentStatus: MasterStatus.active,
-          workflowPhase: const WorkflowPhase(
-            humanLabel: 'Drift repair (in progress)',
+          workflowPhase: WorkflowPhase(
+            humanLabel: AppLocalizations.of(context).driftRepairPlaceholderWorkflowPhase,
           ),
           subAgentRollup: const SubAgentRollup(),
           attentionSeverity: AttentionSeverity.warning,

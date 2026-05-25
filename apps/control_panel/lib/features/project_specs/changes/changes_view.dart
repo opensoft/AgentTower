@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../ui/widgets/markdown_viewer.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../providers.dart';
@@ -27,13 +28,14 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
   Widget build(BuildContext context) {
     final selectedId = ref.watch(selectedProjectIdProvider);
     if (selectedId == null) return const _NoProjectSelected();
+    final l10n = AppLocalizations.of(context);
     final list = ref.watch(featureChangeListProvider(selectedId));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Changes'),
+        title: Text(l10n.changesViewTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.changesRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () =>
                 ref.invalidate(featureChangeListProvider(selectedId)),
@@ -43,11 +45,11 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Changes',
+          surfaceLabel: l10n.changesSurfaceLabel,
           onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Changes'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.changesSurfaceLabel),
         child: list.when(
         data: (entries) {
           // Filter to OpenSpec changes — the daemon returns a mixed
@@ -59,8 +61,8 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
               .where((e) => !e.displayId.startsWith('FEAT-'))
               .toList(growable: false);
           if (changes.isEmpty) {
-            return const HealthyEmptyStateView(
-              message: 'No proposed OpenSpec changes for this project.',
+            return HealthyEmptyStateView(
+              message: l10n.changesEmptyMessage,
             );
           }
           return Row(
@@ -85,7 +87,7 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
               const VerticalDivider(width: 1),
               Expanded(
                 child: _selectedChangeId == null
-                    ? const Center(child: Text('Select a change'))
+                    ? Center(child: Text(l10n.changesSelectAChange))
                     : _ChangePane(changeId: _selectedChangeId!),
               ),
             ],
@@ -94,7 +96,7 @@ class _ChangesViewState extends ConsumerState<ChangesView> {
         loading: () => const LoadingStateView(),
         error: (err, _) => ErrorStateView(
           error: err,
-          surfaceLabel: 'changes',
+          surfaceLabel: l10n.changesSurfaceLabelLower,
           onRetry: () => ref.invalidate(featureChangeListProvider(selectedId)),
         ),
       ),
@@ -109,16 +111,19 @@ class _ChangePane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final detail = ref.watch(featureChangeDetailProvider(changeId));
     return detail.when(
       data: (c) => MarkdownViewer(
-        markdownText:
-            '# ${c.displayId}\n\n${c.humanReadableLabel}\n\n'
-            '_OpenSpec change body rendering pending FEAT-011 v1.x doc-content method._',
-        sourceLabel: 'change ${c.displayId}',
+        markdownText: l10n.changesPaneBodyPlaceholder(
+          c.displayId,
+          c.humanReadableLabel,
+        ),
+        sourceLabel: l10n.changesPaneSourceLabel(c.displayId),
       ),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, _) => Center(child: Text('Failed to load change: $err')),
+      error: (err, _) =>
+          Center(child: Text(l10n.changesLoadFailed(err.toString()))),
     );
   }
 }
@@ -128,12 +133,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\n'
-          'Pick a project to see its OpenSpec changes.',
+          AppLocalizations.of(context).changesNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/helper_policy/helper_policy.dart';
 import '../../../ui/widgets/contract_checked_button.dart';
@@ -74,9 +75,10 @@ class _HandoffPreviewViewState extends ConsumerState<HandoffPreviewView> {
       operatorNotes: widget.operatorNotes,
     );
     final body = skeleton.render();
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Handoff preview'),
+        title: Text(l10n.handoffPreviewTitle),
         actions: [
           // Swarm-review CR-7 + H-B7/H-B8: submission is gated on
           // both the in-flight state and the contract-version invariant.
@@ -94,7 +96,9 @@ class _HandoffPreviewViewState extends ConsumerState<HandoffPreviewView> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.send),
-              label: Text(_submitting ? 'Submitting…' : 'Submit'),
+              label: Text(_submitting
+                  ? l10n.handoffPreviewSubmitting
+                  : l10n.handoffPreviewSubmit),
             ),
           ),
           const SizedBox(width: 12),
@@ -169,8 +173,9 @@ class _HandoffPreviewViewState extends ConsumerState<HandoffPreviewView> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Submitted handoff '
-            '${handoff.handoffId ?? handoff.draftId ?? "?"}',
+            AppLocalizations.of(context).handoffPreviewSubmittedSnack(
+              handoff.handoffId ?? handoff.draftId ?? "?",
+            ),
           ),
         ),
       );

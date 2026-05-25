@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/handoff.dart';
 import '../../../domain/models/handoff_supporting.dart';
@@ -27,13 +28,14 @@ class HandoffDetailView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final detail = ref.watch(handoffDetailProvider(handoffId));
     return Scaffold(
       appBar: AppBar(
-        title: Text('Handoff $handoffId'),
+        title: Text(l10n.handoffDetailTitle(handoffId)),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.handoffDetailRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(handoffDetailProvider(handoffId)),
           ),
@@ -42,17 +44,17 @@ class HandoffDetailView extends ConsumerWidget {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Handoff detail',
+          surfaceLabel: l10n.handoffDetailSurfaceLabel,
           onRetry: () => ref.invalidate(handoffDetailProvider(handoffId)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Handoff detail'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.handoffDetailSurfaceLabel),
         child: detail.when(
           data: (h) => _Body(handoff: h),
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'handoff $handoffId',
+            surfaceLabel: l10n.handoffDetailSurfaceErrorLabel(handoffId),
             onRetry: () => ref.invalidate(handoffDetailProvider(handoffId)),
           ),
         ),
@@ -68,6 +70,7 @@ class _Body extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -75,52 +78,67 @@ class _Body extends ConsumerWidget {
         children: [
           _statusBar(context),
           const SizedBox(height: 16),
-          _section(theme, 'Target'),
-          Text('Master: ${handoff.targetMasterLabel} '
-              '(${handoff.targetMasterAgentId})'),
-          Text('Project: ${handoff.projectLabel} (${handoff.projectId})'),
-          Text('Mode: ${handoff.mode.wireValue}'),
+          _section(theme, l10n.handoffDetailSectionTarget),
+          Text(l10n.handoffDetailMasterLine(
+              handoff.targetMasterLabel, handoff.targetMasterAgentId)),
+          Text(l10n.handoffDetailProjectLine(
+              handoff.projectLabel, handoff.projectId)),
+          Text(l10n.handoffDetailModeLine(handoff.mode.wireValue)),
           if (handoff.priority != null)
-            Text('Priority: ${handoff.priority!.wireValue}'),
+            Text(l10n.handoffDetailPriorityLine(handoff.priority!.wireValue)),
           if (handoff.deadline != null)
-            Text('Deadline: ${handoff.deadline!.toLocal()}'),
+            Text(l10n.handoffDetailDeadlineLine(
+                handoff.deadline!.toLocal().toString())),
           const SizedBox(height: 16),
-          _section(theme, 'Resolved work items'),
+          _section(theme, l10n.handoffDetailSectionResolvedWorkItems),
           for (final item in handoff.resolvedWorkItems)
-            Text('• ${item.renderForPrompt()}'),
+            Text(l10n.handoffDetailResolvedItemBullet(item.renderForPrompt())),
           const SizedBox(height: 16),
-          _section(theme, 'Helper policy snapshot'),
-          Text('Policy: ${handoff.helperPolicyId} '
-              '(${handoff.helperPolicySnapshot.resolvedPolicy.policySource.wireValue})'),
-          Text('Default helper: '
-              '${handoff.helperPolicySnapshot.resolvedPolicy.defaultHelperCapability}'),
-          Text('Allowed: '
-              '${(handoff.helperPolicySnapshot.resolvedPolicy.allowedHelperCapabilities.toList()..sort()).join(", ")}'),
+          _section(theme, l10n.handoffDetailSectionHelperPolicy),
+          Text(l10n.handoffDetailPolicyLine(
+            handoff.helperPolicyId,
+            handoff.helperPolicySnapshot.resolvedPolicy.policySource.wireValue,
+          )),
+          Text(l10n.handoffDetailDefaultHelperLine(
+              handoff.helperPolicySnapshot.resolvedPolicy
+                  .defaultHelperCapability)),
+          Text(l10n.handoffDetailAllowedLine(
+            (handoff.helperPolicySnapshot.resolvedPolicy
+                    .allowedHelperCapabilities
+                    .toList()
+                  ..sort())
+                .join(", "),
+          )),
           if (handoff.helperPolicySnapshot.repoOverridePath != null)
-            Text('Repo override: '
-                '${handoff.helperPolicySnapshot.repoOverridePath}'),
+            Text(l10n.handoffDetailRepoOverrideLine(
+                handoff.helperPolicySnapshot.repoOverridePath!)),
           const SizedBox(height: 16),
-          _section(theme, 'Supersede chain'),
+          _section(theme, l10n.handoffDetailSectionSupersedeChain),
           if (handoff.supersedesHandoffId != null)
-            Text('Supersedes: ${handoff.supersedesHandoffId}'),
+            Text(l10n.handoffDetailSupersedesLine(handoff.supersedesHandoffId!)),
           if (handoff.supersededByHandoffId != null)
-            Text('Superseded by: ${handoff.supersededByHandoffId}'),
+            Text(l10n.handoffDetailSupersededByLine(
+                handoff.supersededByHandoffId!)),
           if (handoff.supersedesHandoffId == null &&
               handoff.supersededByHandoffId == null)
-            const Text('No supersede relationships.'),
+            Text(l10n.handoffDetailNoSupersede),
           const SizedBox(height: 16),
-          _section(theme, 'Lifecycle'),
-          Text('Created: ${handoff.createdAt.toLocal()}'),
+          _section(theme, l10n.handoffDetailSectionLifecycle),
+          Text(l10n.handoffDetailCreatedLine(handoff.createdAt.toLocal().toString())),
           if (handoff.submittedAt != null)
-            Text('Submitted: ${handoff.submittedAt!.toLocal()}'),
+            Text(l10n.handoffDetailSubmittedLine(
+                handoff.submittedAt!.toLocal().toString())),
           if (handoff.acceptedAt != null)
-            Text('Accepted: ${handoff.acceptedAt!.toLocal()}'),
+            Text(l10n.handoffDetailAcceptedLine(
+                handoff.acceptedAt!.toLocal().toString())),
           if (handoff.completedAt != null)
-            Text('Completed: ${handoff.completedAt!.toLocal()}'),
+            Text(l10n.handoffDetailCompletedLine(
+                handoff.completedAt!.toLocal().toString())),
           if (handoff.cancelledAt != null)
-            Text('Cancelled: ${handoff.cancelledAt!.toLocal()}'),
+            Text(l10n.handoffDetailCancelledLine(
+                handoff.cancelledAt!.toLocal().toString())),
           const SizedBox(height: 16),
-          _section(theme, 'Generated prompt'),
+          _section(theme, l10n.handoffDetailSectionGeneratedPrompt),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -139,6 +157,7 @@ class _Body extends ConsumerWidget {
 
   Widget _statusBar(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final delivery = handoff.deliveryStatus;
     final failure = handoff.failureContext;
     final children = <Widget>[
@@ -148,7 +167,7 @@ class _Body extends ConsumerWidget {
           color: theme.colorScheme.primaryContainer,
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Text('State: ${handoff.assignmentState.wireValue}'),
+        child: Text(l10n.handoffDetailStateChip(handoff.assignmentState.wireValue)),
       ),
     ];
     if (failure != null) {
@@ -168,13 +187,17 @@ class _Body extends ConsumerWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        'Submission failure: ${failure.errorCode} — ${failure.errorMessage}',
+        AppLocalizations.of(context).handoffDetailFailureChip(
+          failure.errorCode,
+          failure.errorMessage,
+        ),
       ),
     );
   }
 
   Widget _deliveryChip(BuildContext context, HandoffDeliveryStatus delivery) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final color = switch (delivery.kind) {
       HandoffDeliveryStatusKind.delivered => theme.colorScheme.primaryContainer,
       HandoffDeliveryStatusKind.failed => theme.colorScheme.errorContainer,
@@ -187,7 +210,7 @@ class _Body extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Delivery: ${delivery.kind.wireValue}'),
+          Text(l10n.handoffDetailDeliveryChip(delivery.kind.wireValue)),
           if (delivery.kind == HandoffDeliveryStatusKind.failed) ...[
             const SizedBox(width: 8),
             Consumer(
@@ -195,7 +218,7 @@ class _Body extends ConsumerWidget {
                 onPressed: () => _retryDelivery(ctx, ref),
                 builder: (c, onPressed, reason) => TextButton(
                   onPressed: onPressed,
-                  child: const Text('Retry delivery'),
+                  child: Text(AppLocalizations.of(c).handoffDetailRetryDeliveryButton),
                 ),
               ),
             ),
@@ -214,7 +237,10 @@ class _Body extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Retry failed: $e')),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)
+                .handoffDetailRetryFailedSnack(e.toString())),
+          ),
         );
       }
     }

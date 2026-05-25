@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/helper_policy/helper_policy.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/feature_change_status.dart';
@@ -100,6 +101,7 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final stepWidgets = <Widget>[
       _step1MasterPicked(),
       _step2ProjectPicked(),
@@ -109,13 +111,13 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
     ];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Handoff'),
+        title: Text(l10n.handoffFlowTitle),
         actions: [
           if (_step >= 3)
             TextButton.icon(
               onPressed: _resolved.isEmpty ? null : _openPreview,
               icon: const Icon(Icons.visibility),
-              label: const Text('Preview'),
+              label: Text(l10n.handoffFlowPreviewAction),
             ),
         ],
       ),
@@ -131,7 +133,7 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
           steps: [
             for (var i = 0; i < stepWidgets.length; i++)
               Step(
-                title: Text(_titleFor(i)),
+                title: Text(_titleFor(context, i)),
                 content: stepWidgets[i],
                 isActive: _step >= i,
                 state: _step > i ? StepState.complete : StepState.indexed,
@@ -142,22 +144,28 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
     );
   }
 
-  String _titleFor(int i) => switch (i) {
-        0 => 'Target master',
-        1 => 'Project',
-        2 => 'Work item(s)',
-        3 => 'Mode',
-        4 => 'Optional inputs',
-        _ => 'Step $i',
-      };
+  String _titleFor(BuildContext context, int i) {
+    final l10n = AppLocalizations.of(context);
+    return switch (i) {
+      0 => l10n.handoffFlowStepTargetMaster,
+      1 => l10n.handoffFlowStepProject,
+      2 => l10n.handoffFlowStepWorkItem,
+      3 => l10n.handoffFlowStepMode,
+      4 => l10n.handoffFlowStepOptionalInputs,
+      _ => l10n.handoffFlowStepFallback(i),
+    };
+  }
 
   Widget _step1MasterPicked() {
+    final l10n = AppLocalizations.of(context);
     return ListTile(
       leading: const Icon(Icons.psychology),
       title: Text(widget.master.label),
       subtitle: Text(
-        'Capability: ${widget.master.capability}  ·  '
-        'Status: ${widget.master.currentStatus.wireValue}',
+        l10n.handoffFlowMasterSubtitle(
+          widget.master.capability,
+          widget.master.currentStatus.wireValue,
+        ),
       ),
     );
   }
@@ -171,14 +179,15 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
   }
 
   Widget _step3WorkItem() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
           controller: _workItemController,
-          decoration: const InputDecoration(
-            labelText: 'Work item or range (e.g. FEAT-12 or FEAT-8..FEAT-12)',
-            helperText: 'Canonical syntax FEAT-N..FEAT-M (FR-039).',
+          decoration: InputDecoration(
+            labelText: l10n.handoffFlowWorkItemLabel,
+            helperText: l10n.handoffFlowWorkItemHelper,
           ),
           onChanged: (v) {
             _workItemExpr = v;
@@ -193,12 +202,12 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Resolved ${_resolved.length} item(s):',
+                  l10n.handoffFlowResolvedCountLine(_resolved.length),
                   style: Theme.of(context).textTheme.labelMedium,
                 ),
                 const SizedBox(height: 6),
                 for (final item in _resolved)
-                  Text('• ${item.renderForPrompt()}'),
+                  Text(l10n.handoffFlowResolvedItemBullet(item.renderForPrompt())),
               ],
             ),
           ),
@@ -221,14 +230,21 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
   }
 
   Widget _step5Optional() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         DropdownButtonFormField<HandoffPriority?>(
-          initialValue: _priority,
-          decoration: const InputDecoration(labelText: 'Priority (optional)'),
+          // 3.27.0 compatibility: the parameter is `value:`, not the
+          // newer `initialValue:` (added in a later Flutter version).
+          // The swarm-review-2026-05-24 claim that `initialValue` was
+          // valid under 3.27 was verified against the T002 3.44 bench
+          // deviation, not the pinned 3.27.0 toolchain. T160a re-pin
+          // re-exposed this; T165 i18n batch surfaced the error.
+          value: _priority,
+          decoration: InputDecoration(labelText: l10n.handoffFlowPriorityLabel),
           items: [
-            const DropdownMenuItem(value: null, child: Text('—')),
+            DropdownMenuItem(value: null, child: Text(l10n.handoffFlowPriorityNone)),
             for (final p in HandoffPriority.values)
               DropdownMenuItem(value: p, child: Text(p.wireValue)),
           ],
@@ -237,9 +253,9 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
         const SizedBox(height: 12),
         TextField(
           controller: _notesController,
-          decoration: const InputDecoration(
-            labelText: 'Operator notes (optional)',
-            helperText: 'Preserved through mode changes per FR-040.',
+          decoration: InputDecoration(
+            labelText: l10n.handoffFlowNotesLabel,
+            helperText: l10n.handoffFlowNotesHelper,
           ),
           minLines: 3,
           maxLines: 8,

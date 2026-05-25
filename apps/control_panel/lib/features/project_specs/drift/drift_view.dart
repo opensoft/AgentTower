@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/drift_signal.dart';
 import '../../../domain/models/drift_supporting.dart';
@@ -31,6 +32,7 @@ class _DriftViewState extends ConsumerState<DriftView> {
   Widget build(BuildContext context) {
     final selectedId = ref.watch(project_providers.selectedProjectIdProvider);
     if (selectedId == null) return const _NoProjectSelected();
+    final l10n = AppLocalizations.of(context);
     final query = DriftListQuery(
       projectId: selectedId,
       status: _statusFilter?.wireValue,
@@ -39,30 +41,30 @@ class _DriftViewState extends ConsumerState<DriftView> {
     final list = ref.watch(driftListProvider(query));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Drift'),
+        title: Text(l10n.driftViewTitle),
         actions: [
           PopupMenuButton<DriftStatus?>(
-            tooltip: 'Filter status',
+            tooltip: l10n.driftFilterStatusTooltip,
             icon: const Icon(Icons.filter_alt),
             onSelected: (v) => setState(() => _statusFilter = v),
             itemBuilder: (_) => [
-              const PopupMenuItem(value: null, child: Text('All statuses')),
+              PopupMenuItem(value: null, child: Text(l10n.driftFilterAllStatuses)),
               for (final s in DriftStatus.values)
                 PopupMenuItem(value: s, child: Text(s.wireValue)),
             ],
           ),
           PopupMenuButton<DriftSeverity?>(
-            tooltip: 'Filter severity',
+            tooltip: l10n.driftFilterSeverityTooltip,
             icon: const Icon(Icons.priority_high),
             onSelected: (v) => setState(() => _severityFilter = v),
             itemBuilder: (_) => [
-              const PopupMenuItem(value: null, child: Text('All severities')),
+              PopupMenuItem(value: null, child: Text(l10n.driftFilterAllSeverities)),
               for (final s in DriftSeverity.values)
                 PopupMenuItem(value: s, child: Text(s.wireValue)),
             ],
           ),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.driftRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(driftListProvider(query)),
           ),
@@ -71,20 +73,20 @@ class _DriftViewState extends ConsumerState<DriftView> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Drift',
+          surfaceLabel: l10n.driftSurfaceLabel,
           onRetry: () => ref.invalidate(driftListProvider(query)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Drift'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.driftSurfaceLabel),
         onDegraded: (s) => DegradedStateView(
           state: s,
-          surfaceLabel: 'Drift',
+          surfaceLabel: l10n.driftSurfaceLabel,
           onRetry: () => ref.invalidate(driftListProvider(query)),
         ),
         child: list.when(
           data: (rows) => rows.isEmpty
-              ? const HealthyEmptyStateView(
-                  message: 'No drift findings for this project.',
+              ? HealthyEmptyStateView(
+                  message: l10n.driftEmptyMessage,
                   icon: Icons.check_circle_outline,
                 )
               : ListView.builder(
@@ -94,7 +96,7 @@ class _DriftViewState extends ConsumerState<DriftView> {
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'drift',
+            surfaceLabel: l10n.driftSurfaceLabelLower,
             onRetry: () => ref.invalidate(driftListProvider(query)),
           ),
         ),
@@ -110,13 +112,16 @@ class _DriftRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final age = DateTime.now().difference(drift.ageStartedAt);
     // Swarm-review CR-8 + H-C3: R-15 palette + R-22 color/icon/label
     // triad. Severity label is now visible in the row subtitle so
     // colorblind operators get the same information.
     final sev = SeverityVisuals.forDrift(drift.severity, theme.brightness);
+    final scopeStr =
+        '${drift.scope.kind.wireValue}${drift.scope.id != null ? ":${drift.scope.id}" : ""}';
     return Semantics(
-      label: '${sev.semanticDescription} drift: ${drift.summary}',
+      label: l10n.driftRowSemantic(sev.semanticDescription, drift.summary),
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: sev.color,
@@ -124,11 +129,14 @@ class _DriftRow extends StatelessWidget {
         ),
         title: Text(drift.summary),
         subtitle: Text(
-          '${sev.label} · ${drift.status.wireValue} · '
-          '${drift.source.wireValue} · confidence ${drift.confidence.wireValue} · '
-          'scope ${drift.scope.kind.wireValue}'
-          '${drift.scope.id != null ? ":${drift.scope.id}" : ""} · '
-          '${_humanAge(age)}',
+          l10n.driftRowSubtitle(
+            sev.label,
+            drift.status.wireValue,
+            drift.source.wireValue,
+            drift.confidence.wireValue,
+            scopeStr,
+            _humanAge(context, age),
+          ),
         ),
         trailing: Text(
           drift.findingId,
@@ -143,11 +151,12 @@ class _DriftRow extends StatelessWidget {
     );
   }
 
-  static String _humanAge(Duration d) {
-    if (d.inDays > 0) return '${d.inDays}d ago';
-    if (d.inHours > 0) return '${d.inHours}h ago';
-    if (d.inMinutes > 0) return '${d.inMinutes}m ago';
-    return 'just now';
+  static String _humanAge(BuildContext context, Duration d) {
+    final l10n = AppLocalizations.of(context);
+    if (d.inDays > 0) return l10n.driftAgeDays(d.inDays);
+    if (d.inHours > 0) return l10n.driftAgeHours(d.inHours);
+    if (d.inMinutes > 0) return l10n.driftAgeMinutes(d.inMinutes);
+    return l10n.driftAgeJustNow;
   }
 }
 
@@ -156,12 +165,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\n'
-          'Pick a project from the Projects view to see its drift findings.',
+          AppLocalizations.of(context).driftNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

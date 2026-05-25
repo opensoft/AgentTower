@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import '../../../domain/models/attention_item.dart';
+import '../../../domain/models/common_enums.dart';
 import '../../../domain/severity.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../../project_specs/providers.dart' as project_providers;
@@ -61,12 +63,13 @@ class _AttentionQueueViewState extends ConsumerState<AttentionQueueView> {
       _stability.acceptIncoming(sorted);
     });
 
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Attention queue'),
+        title: Text(l10n.attentionQueueAppBarTitle),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.attentionQueueRefreshTooltip,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(attentionListProvider(query)),
           ),
@@ -75,12 +78,12 @@ class _AttentionQueueViewState extends ConsumerState<AttentionQueueView> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Attention queue',
+          surfaceLabel: l10n.attentionQueueSurfaceLabel,
           onRetry: () => ref.invalidate(attentionListProvider(query)),
         ),
         onIncompatible: (s) => ContractIncompatStateView(
           state: s,
-          surfaceLabel: 'Attention queue',
+          surfaceLabel: l10n.attentionQueueSurfaceLabel,
         ),
         child: list.when(
           data: (_) => _StableListView(
@@ -90,7 +93,7 @@ class _AttentionQueueViewState extends ConsumerState<AttentionQueueView> {
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
-            surfaceLabel: 'attention queue',
+            surfaceLabel: l10n.attentionQueueSurfaceLabelLowercase,
             onRetry: () => ref.invalidate(attentionListProvider(query)),
           ),
         ),
@@ -102,7 +105,7 @@ class _AttentionQueueViewState extends ConsumerState<AttentionQueueView> {
     AttentionResolutionDispatcher.open(context, ref, item);
   }
 
-  static int _severityRank(severity) => switch (severity.wireValue) {
+  static int _severityRank(AttentionSeverity severity) => switch (severity.wireValue) {
         'critical' => 4,
         'high' => 3,
         'warning' => 2,
@@ -123,8 +126,9 @@ class _StableListView extends StatelessWidget {
       builder: (context, _) {
         final items = stability.stableList;
         if (items.isEmpty) {
-          return const HealthyEmptyStateView(
-            message: 'No actionable attention items.',
+          return HealthyEmptyStateView(
+            message:
+                AppLocalizations.of(context).attentionQueueNoActionableItems,
             icon: Icons.check_circle_outline,
           );
         }
@@ -155,13 +159,17 @@ class _AttentionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final sev = SeverityVisuals.forAttention(item.severity, theme.brightness);
     final age = DateTime.now().difference(item.ageStartedAt);
     return MouseRegion(
       onEnter: (_) => stability.noteInteraction(),
       onHover: (_) => stability.noteInteraction(),
       child: Semantics(
-        label: '${sev.semanticDescription} attention: ${item.oneLineSummary}',
+        label: l10n.attentionQueueRowSemanticLabel(
+          sev.semanticDescription,
+          item.oneLineSummary,
+        ),
         child: ListTile(
           leading: CircleAvatar(
             backgroundColor: sev.color,
@@ -169,8 +177,11 @@ class _AttentionRow extends StatelessWidget {
           ),
           title: Text(item.oneLineSummary),
           subtitle: Text(
-            '${sev.label} · ${item.attentionClass.wireValue} · '
-            '${_humanAge(age)}',
+            l10n.attentionQueueRowSubtitle(
+              sev.label,
+              item.attentionClass.wireValue,
+              _humanAge(l10n, age),
+            ),
           ),
           onTap: () {
             stability.noteInteraction();
@@ -181,7 +192,7 @@ class _AttentionRow extends StatelessWidget {
     );
   }
 
-  static IconData _classIcon(attentionClass) => switch (attentionClass.wireValue) {
+  static IconData _classIcon(AttentionClass attentionClass) => switch (attentionClass.wireValue) {
         'blocked_queue_row' => Icons.block,
         'route_skip' => Icons.skip_next,
         'degraded_subsystem' => Icons.health_and_safety,
@@ -190,10 +201,10 @@ class _AttentionRow extends StatelessWidget {
         _ => Icons.notifications_active,
       };
 
-  static String _humanAge(Duration d) {
-    if (d.inDays > 0) return '${d.inDays}d ago';
-    if (d.inHours > 0) return '${d.inHours}h ago';
-    if (d.inMinutes > 0) return '${d.inMinutes}m ago';
-    return 'just now';
+  static String _humanAge(AppLocalizations l10n, Duration d) {
+    if (d.inDays > 0) return l10n.attentionItemAgeDays(d.inDays);
+    if (d.inHours > 0) return l10n.attentionItemAgeHours(d.inHours);
+    if (d.inMinutes > 0) return l10n.attentionItemAgeMinutes(d.inMinutes);
+    return l10n.attentionItemAgeJustNow;
   }
 }

@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -31,22 +32,23 @@ class _RunsViewState extends ConsumerState<RunsView> {
       state: _stateFilter?.wireValue,
     );
     final list = ref.watch(validationRunListProvider(query));
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Runs'),
+        title: Text(l10n.runsViewTitle),
         actions: [
           PopupMenuButton<RunState?>(
-            tooltip: 'Filter state',
+            tooltip: l10n.runsViewFilterTooltip,
             icon: const Icon(Icons.filter_alt),
             onSelected: (v) => setState(() => _stateFilter = v),
             itemBuilder: (_) => [
-              const PopupMenuItem(value: null, child: Text('All states')),
+              PopupMenuItem(value: null, child: Text(l10n.runsViewFilterAllStates)),
               for (final s in RunState.values)
                 PopupMenuItem(value: s, child: Text(s.wireValue)),
             ],
           ),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: l10n.commonRefresh,
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(validationRunListProvider(query)),
           ),
@@ -55,15 +57,15 @@ class _RunsViewState extends ConsumerState<RunsView> {
       body: RuntimeStateGate(
         onUnreachable: (s) => OutageStateView(
           state: s,
-          surfaceLabel: 'Runs',
+          surfaceLabel: l10n.runsViewTitle,
           onRetry: () => ref.invalidate(validationRunListProvider(query)),
         ),
         onIncompatible: (s) =>
-            ContractIncompatStateView(state: s, surfaceLabel: 'Runs'),
+            ContractIncompatStateView(state: s, surfaceLabel: l10n.runsViewTitle),
         child: list.when(
           data: (rows) => rows.isEmpty
-              ? const HealthyEmptyStateView(
-                  message: 'No validation runs for this project yet.',
+              ? HealthyEmptyStateView(
+                  message: l10n.runsViewEmptyState,
                   icon: Icons.history,
                 )
               : ListView.builder(
@@ -89,7 +91,11 @@ class _RunRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final result = run.result;
+    final resultSuffix =
+        result != null ? ' · result: ${result.wireValue}' : '';
+    final startedAt = run.startedAt?.toLocal().toString() ?? '—';
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: _stateColor(theme, run.state),
@@ -101,10 +107,12 @@ class _RunRow extends StatelessWidget {
       ),
       title: Text('${run.entrypointId} → ${run.target.id}'),
       subtitle: Text(
-        'state: ${run.state.wireValue}'
-        '${result != null ? " · result: ${result.wireValue}" : ""} · '
-        'started: ${run.startedAt?.toLocal() ?? "—"} · '
-        'by: ${run.triggeredBy}',
+        l10n.runsViewRowSubtitle(
+          run.state.wireValue,
+          resultSuffix,
+          startedAt,
+          run.triggeredBy,
+        ),
       ),
       trailing: SizedBox(
         width: 140,
@@ -135,12 +143,11 @@ class _NoProjectSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No project selected.\n\nPick a project from the Projects view '
-          'to see its validation runs.',
+          AppLocalizations.of(context).runsViewNoProjectSelected,
           textAlign: TextAlign.center,
         ),
       ),

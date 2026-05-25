@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -37,6 +38,7 @@ class _TriggerRunButtonState extends ConsumerState<TriggerRunButton> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -45,7 +47,7 @@ class _TriggerRunButtonState extends ConsumerState<TriggerRunButton> {
           additionalGate: widget.entrypoint.enabled && !_triggering,
           disabledReason: widget.entrypoint.enabled
               ? null
-              : 'Entrypoint disabled by daemon.',
+              : l10n.triggerRunEntrypointDisabledReason,
           onPressed: _trigger,
           builder: (ctx, onPressed, reason) => FilledButton.icon(
             onPressed: onPressed,
@@ -56,7 +58,11 @@ class _TriggerRunButtonState extends ConsumerState<TriggerRunButton> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.play_arrow, size: 18),
-            label: Text(_triggering ? 'Triggering…' : 'Run'),
+            label: Text(
+              _triggering
+                  ? l10n.triggerRunButtonTriggering
+                  : l10n.triggerRunButtonRun,
+            ),
           ),
         ),
         if (_error != null)
@@ -95,7 +101,8 @@ class _TriggerRunButtonState extends ConsumerState<TriggerRunButton> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Triggered ${widget.entrypoint.label} — see Runs view.',
+              AppLocalizations.of(context)
+                  .triggerRunSnackBarTriggered(widget.entrypoint.label),
             ),
           ),
         );
