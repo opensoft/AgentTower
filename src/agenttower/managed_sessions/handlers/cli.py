@@ -237,6 +237,7 @@ def _managed_layout_create(
             tmux_session_name=tmux_session_name,
             launch_command_overrides=launch_command_overrides if launch_command_overrides else None,
             idempotency_key=idempotency_key,
+            tx_lock=getattr(ctx, "state_tx_lock", None),
         )
     except ValidationFailedError as exc:
         return _err(exc.code, str(exc), details=exc.details)
@@ -665,6 +666,7 @@ def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             tmux_kill_fn=tmux_kill_fn,
             route_cleanup_fn=route_cleanup_fn,
             log_detach_fn=log_detach_fn,
+            tx_lock=getattr(ctx, "state_tx_lock", None),
         )
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)
@@ -712,8 +714,12 @@ def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
         )
 
     # R12 peer scoping — for known managed predecessors, refuse cross-
-    # container recreate from a bench-container peer.
-    predecessor = select_pane(conn, predecessor_pane_id)
+    # container recreate from a bench-container peer. Read under
+    # tx_lock (C1) so the lookup serializes with FEAT-009 worker
+    # writes on the shared connection.
+    from .._tx import tx_guard as _tx_guard
+    with _tx_guard(getattr(ctx, "state_tx_lock", None)):
+        predecessor = select_pane(conn, predecessor_pane_id)
     if predecessor is not None:
         peer_container = _peer_container_id(ctx, peer_uid)
         if peer_container is not None and predecessor.container_id != peer_container:
@@ -732,6 +738,7 @@ def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             predecessor_pane_id=predecessor_pane_id,
             launch_command_override=launch_command_override,
             idempotency_key=idempotency_key,
+            tx_lock=getattr(ctx, "state_tx_lock", None),
         )
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)

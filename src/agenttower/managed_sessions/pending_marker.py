@@ -34,9 +34,12 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Final, Optional
+
+from ._tx import tx_guard
 
 # Marker TTL — research §R5, codified in FR-022.
 MARKER_TTL_SECONDS: Final[int] = 5 * 60
@@ -118,6 +121,7 @@ def sweep(
     conn: sqlite3.Connection,
     *,
     clock: Optional[Callable[[], _dt.datetime]] = None,
+    tx_lock: Optional[threading.Lock] = None,
 ) -> SweepOutcome:
     """FR-022 / R5 — sweep stale pending-managed markers.
 
@@ -156,38 +160,59 @@ def sweep(
     cutoff_str = cutoff.isoformat(timespec="microseconds").replace("+00:00", "Z")
     now_str = now.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
-    cur = conn.execute(
-        "SELECT id, agent_id "
-        "FROM managed_pane "
-        "WHERE state = 'creating' "
-        "  AND pending_marker_token IS NOT NULL "
-        "  AND created_at < ?",
-        (cutoff_str,),
-    )
-    stale_rows = cur.fetchall()
+    # C2 fix: the UPDATE includes a re-check on state + marker so a
+    # spawn task that flipped the row to 'ready' AFTER our SELECT but
+    # BEFORE our UPDATE doesn't get clobbered back to 'failed'. SQLite
+    # guarantees single-statement atomicity, so the re-check makes the
+    # SELECT-then-UPDATE racy pair safe without holding a long
+    # transaction across both. ``UPDATE ... RETURNING`` would also work,
+    # but the per-row count tracking below needs the agent_id snapshot
+    # from the SELECT, which RETURNING doesn't help with.
+    with tx_guard(tx_lock):
+        cur = conn.execute(
+            "SELECT id, agent_id "
+            "FROM managed_pane "
+            "WHERE state = 'creating' "
+            "  AND pending_marker_token IS NOT NULL "
+            "  AND created_at < ?",
+            (cutoff_str,),
+        )
+        stale_rows = cur.fetchall()
 
     pane_create_failures = 0
     registration_failures = 0
+    panes_actually_swept = 0
     for pane_id, agent_id in stale_rows:
         if agent_id is None:
             failed_stage = "pane_create"
-            pane_create_failures += 1
         else:
             failed_stage = "registration"
-            registration_failures += 1
-        conn.execute(
-            "UPDATE managed_pane SET "
-            "state = 'failed', "
-            "failed_stage = ?, "
-            "pending_marker_token = NULL, "
-            "updated_at = ? "
-            "WHERE id = ?",
-            (failed_stage, now_str, pane_id),
-        )
+        with tx_guard(tx_lock):
+            cur = conn.execute(
+                "UPDATE managed_pane SET "
+                "state = 'failed', "
+                "failed_stage = ?, "
+                "pending_marker_token = NULL, "
+                "updated_at = ? "
+                "WHERE id = ? "
+                # C2: re-check the row state under single-statement
+                # atomicity. If the spawn task flipped the row to
+                # 'ready'/'degraded'/'failed' between our SELECT and
+                # this UPDATE, rowcount will be 0 and we skip the count.
+                "  AND state = 'creating' "
+                "  AND pending_marker_token IS NOT NULL",
+                (failed_stage, now_str, pane_id),
+            )
+        if cur.rowcount and cur.rowcount > 0:
+            panes_actually_swept += 1
+            if agent_id is None:
+                pane_create_failures += 1
+            else:
+                registration_failures += 1
 
     return SweepOutcome(
         panes_examined=len(stale_rows),
-        panes_swept=len(stale_rows),
+        panes_swept=panes_actually_swept,
         pane_create_failures=pane_create_failures,
         registration_failures=registration_failures,
     )

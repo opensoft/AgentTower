@@ -311,6 +311,7 @@ def _build_feat009_services(
     object,  # DeliveryWorker
     object,  # MessageQueueDao
     object,  # DaemonStateDao
+    object,  # worker_tx_lock (FEAT-013 C1 fix)
 ]:
     """Construct FEAT-009 queue / routing / delivery services (T048).
 
@@ -370,6 +371,11 @@ def _build_feat009_services(
     audit_writer = QueueAuditWriter(
         worker_conn, paths.events_file, tx_lock=worker_tx_lock,
     )
+
+    # Expose the tx_lock alongside worker_conn so FEAT-013 service
+    # entry points (C1 fix) can acquire the same lock around their DB
+    # statements. The lock is returned via ``_build_feat009_services``
+    # below and threaded into DaemonContext.state_tx_lock.
 
     # Read-only adapters share a connection factory; each method opens
     # its own short-lived connection so reads don't block the worker
@@ -433,6 +439,7 @@ def _build_feat009_services(
         delivery_worker,
         message_queue_dao,
         daemon_state_dao,
+        worker_tx_lock,
     )
 
 
@@ -570,6 +577,7 @@ def _build_context(
     follow_session_registry: object | None = None,
     events_config: object | None = None,
     state_conn: sqlite3.Connection | None = None,
+    state_tx_lock: object | None = None,
     queue_service: object | None = None,
     routing_flag_service: object | None = None,
     delivery_worker: object | None = None,
@@ -599,6 +607,7 @@ def _build_context(
         follow_session_registry=follow_session_registry,
         events_config=events_config,
         state_conn=state_conn,
+        state_tx_lock=state_tx_lock,
         queue_service=queue_service,
         routing_flag_service=routing_flag_service,
         delivery_worker=delivery_worker,
@@ -890,6 +899,7 @@ def _run(args: argparse.Namespace) -> int:
                 delivery_worker,
                 message_queue_dao,
                 daemon_state_dao,
+                worker_tx_lock,
             ) = _build_feat009_services(
                 paths=paths,
                 discovery_service=discovery_service,
@@ -925,6 +935,7 @@ def _run(args: argparse.Namespace) -> int:
                 follow_session_registry=follow_registry,
                 events_config=events_config,
                 state_conn=worker_conn,
+                state_tx_lock=worker_tx_lock,
                 queue_service=queue_service,
                 routing_flag_service=routing_flag,
                 delivery_worker=delivery_worker,

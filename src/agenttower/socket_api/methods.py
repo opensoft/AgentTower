@@ -66,6 +66,13 @@ class DaemonContext:
     # operator-pane liveness check (Group-A walk Q8) uses to look up
     # caller agents via :func:`agents.select_agent_by_id`.
     state_conn: Any = None
+    # FEAT-013 C1 fix: shared ``worker_tx_lock`` so FEAT-013 service
+    # entry points serialize their DB statements through the same lock
+    # FEAT-009/010 use. Without this, a FEAT-013 ``BEGIN IMMEDIATE``
+    # collides with FEAT-009's worker transaction. Daemon-boot wires
+    # this to the same ``threading.Lock`` instance shared by the
+    # MessageQueueDao / DaemonStateDao / QueueAuditWriter.
+    state_tx_lock: Any = None
     queue_service: Any = None
     routing_flag_service: Any = None
     delivery_worker: Any = None

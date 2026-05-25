@@ -58,9 +58,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from ._tx import tx_guard
 from .dao import (
     ManagedPaneRow,
     select_non_terminal_layouts,
@@ -111,6 +113,7 @@ def reconcile(
     tmux_list_panes_fn: TmuxListPanesFn,
     event_emitter: Optional[EventEmitter] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
+    tx_lock: Optional[threading.Lock] = None,
 ) -> ReconcileOutcome:
     """Boot-time recovery reconcile (T046).
 
@@ -122,7 +125,8 @@ def reconcile(
     non-terminal rows are already either reattached or transitioned to
     failed).
     """
-    layouts = select_non_terminal_layouts(conn)
+    with tx_guard(tx_lock):
+        layouts = select_non_terminal_layouts(conn)
     layouts_by_container: dict[str, set[str]] = {}
     for layout in layouts:
         layouts_by_container.setdefault(layout.container_id, set()).add(layout.id)
@@ -142,11 +146,14 @@ def reconcile(
     for container_id, _layout_ids in layouts_by_container.items():
         lock = serializer.for_container(container_id)
         with lock:
-            panes = select_non_terminal_panes_for_container(conn, container_id)
+            with tx_guard(tx_lock):
+                panes = select_non_terminal_panes_for_container(conn, container_id)
             if not panes:
                 continue
 
-            # Build the live-tmux set for the container.
+            # Build the live-tmux set for the container. The list-panes
+            # RPC happens OUTSIDE tx_lock so its docker-exec latency
+            # doesn't block FEAT-009 worker writes.
             live = tmux_list_panes_fn(container_id)
             live_keys: set[tuple[str, int]] = set()
             for entry in live:
@@ -155,41 +162,57 @@ def reconcile(
                 if session and pane_index >= 0:
                     live_keys.add((session, pane_index))
 
-            for pane in panes:
-                panes_seen += 1
-                pane_key = (pane.tmux_session_name, pane.tmux_pane_index)
-                disposition = _classify(pane, pane_key in live_keys, clock=clock)
-                if disposition is _RECOVERY_RESUME_CREATING:
-                    # Marker is still fresh; let the original or a retry
-                    # spawn task continue. No state mutation, no events.
-                    panes_resumed += 1
-                    continue
-                if disposition is _RECOVERY_REATTACHED:
-                    # State preserved; the row is alive in tmux. Emit a
-                    # layout-scoped LAYOUT_RECOVERY_REATTACHED at the end
-                    # carrying the pane id list.
-                    reattached_pane_ids_by_layout.setdefault(
-                        pane.layout_id, []
-                    ).append(pane.id)
-                    panes_reattached += 1
-                    layouts_with_any_change.add(pane.layout_id)
-                    continue
-                # _RECOVERY_FAILED: transition to failed (recovery_reattach).
-                _transition_to_failed_reattach(
-                    conn=conn,
-                    pane=pane,
-                    event_emitter=event_emitter,
-                    clock=clock,
-                )
-                failed_pane_ids_by_layout.setdefault(
-                    pane.layout_id, []
-                ).append(pane.id)
-                panes_failed += 1
-                layouts_with_any_change.add(pane.layout_id)
+            # M2 fix: wrap per-container pane-state mutations in
+            # BEGIN IMMEDIATE so a crash mid-container can't leave the
+            # layout partially reconciled. The aggregate-state write
+            # below runs in its own short transaction once all pane-
+            # state changes for the container are committed.
+            with tx_guard(tx_lock):
+                # Close any caller-side implicit tx (e.g. test fixture
+                # INSERTs that didn't commit) so our explicit
+                # BEGIN IMMEDIATE is the only open transaction.
+                if conn.in_transaction:
+                    conn.commit()
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for pane in panes:
+                        panes_seen += 1
+                        pane_key = (pane.tmux_session_name, pane.tmux_pane_index)
+                        disposition = _classify(pane, pane_key in live_keys, clock=clock)
+                        if disposition is _RECOVERY_RESUME_CREATING:
+                            panes_resumed += 1
+                            continue
+                        if disposition is _RECOVERY_REATTACHED:
+                            reattached_pane_ids_by_layout.setdefault(
+                                pane.layout_id, []
+                            ).append(pane.id)
+                            panes_reattached += 1
+                            layouts_with_any_change.add(pane.layout_id)
+                            continue
+                        # _RECOVERY_FAILED: transition to failed (recovery_reattach).
+                        _transition_to_failed_reattach(
+                            conn=conn,
+                            pane=pane,
+                            event_emitter=event_emitter,
+                            clock=clock,
+                        )
+                        failed_pane_ids_by_layout.setdefault(
+                            pane.layout_id, []
+                        ).append(pane.id)
+                        panes_failed += 1
+                        layouts_with_any_change.add(pane.layout_id)
+                    conn.execute("COMMIT")
+                except Exception:
+                    try:
+                        conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                    raise
 
     # Per-layout aggregation + events.
     for layout_id in layouts_with_any_change:
-        refreshed = select_panes_for_layout(conn, layout_id)
+        with tx_guard(tx_lock):
+            refreshed = select_panes_for_layout(conn, layout_id)
         if not refreshed:
             continue
         new_state = aggregate_layout_state([p.state for p in refreshed])
@@ -198,12 +221,13 @@ def reconcile(
         layout_failed_stage: Optional[FailedStage] = None
         if new_state == ManagedState.FAILED:
             layout_failed_stage = FailedStage.RECOVERY_REATTACH
-        update_layout_state(
-            conn, layout_id,
-            state=new_state,
-            failed_stage=layout_failed_stage,
-            now=now,
-        )
+        with tx_guard(tx_lock):
+            update_layout_state(
+                conn, layout_id,
+                state=new_state,
+                failed_stage=layout_failed_stage,
+                now=now,
+            )
         if event_emitter is not None:
             if reattached_pane_ids_by_layout.get(layout_id):
                 event_emitter(

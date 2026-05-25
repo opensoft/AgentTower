@@ -189,6 +189,7 @@ def app_managed_layout_create(
             tmux_session_name=tmux_session_name,
             launch_command_overrides=launch_command_overrides if launch_command_overrides else None,
             idempotency_key=idempotency_key,
+            tx_lock=getattr(ctx, "state_tx_lock", None),
         )
     except ValidationFailedError as exc:
         return _envelope.failure(VALIDATION_FAILED, str(exc), details=exc.details)
@@ -532,6 +533,7 @@ def app_managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             tmux_kill_fn=tmux_kill_fn,
             route_cleanup_fn=route_cleanup_fn,
             log_detach_fn=log_detach_fn,
+            tx_lock=getattr(ctx, "state_tx_lock", None),
         )
     except ManagedSessionsError as exc:
         return _build_managed_error_envelope(exc.code, str(exc), details=exc.details)
@@ -589,6 +591,7 @@ def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             predecessor_pane_id=predecessor_pane_id,
             launch_command_override=launch_command_override,
             idempotency_key=idempotency_key,
+            tx_lock=getattr(ctx, "state_tx_lock", None),
         )
     except ManagedSessionsError as exc:
         return _build_managed_error_envelope(exc.code, str(exc), details=exc.details)

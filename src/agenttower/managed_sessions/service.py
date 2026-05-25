@@ -44,11 +44,14 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import sqlite3
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Final, Optional
 
+from ._tx import tx_guard
 from .dao import (
     ManagedLayoutRow,
     ManagedPaneRow,
@@ -234,6 +237,7 @@ def create_layout(
     clock: Optional[Callable[[], _dt.datetime]] = None,
     event_emitter: Optional[EventEmitter] = None,
     actor: str = "operator",
+    tx_lock: Optional[threading.Lock] = None,
 ) -> CreateLayoutResult:
     """Create a managed layout — synchronous orchestration entry point.
 
@@ -290,16 +294,21 @@ def create_layout(
     #    inside the lock.
     lock = serializer.for_container(container_id)
     with lock:
-        # 4. R10 replay — return the existing layout untouched.
+        # 4. R10 replay — return the existing layout untouched. (Read
+        #    under tx_lock per C1: shared worker_conn requires every
+        #    statement to serialize through worker_tx_lock.)
         if idempotency_key is not None:
-            existing = select_layout_by_idempotency_key(
-                conn, container_id, idempotency_key
-            )
+            with tx_guard(tx_lock):
+                existing = select_layout_by_idempotency_key(
+                    conn, container_id, idempotency_key
+                )
             if existing is not None:
-                return _summarize_layout(conn, existing, replay=True)
+                with tx_guard(tx_lock):
+                    return _summarize_layout(conn, existing, replay=True)
 
         # 5. FR-025 capacity check.
-        active = count_active_layouts(conn)
+        with tx_guard(tx_lock):
+            active = count_active_layouts(conn)
         if active >= CAPACITY_LIMIT:
             raise ManagedSessionsError(
                 MANAGED_LAYOUT_CAPACITY_EXCEEDED,
@@ -310,7 +319,9 @@ def create_layout(
             )
 
         # 6. Insert layout + panes under a single SQLite immediate
-        #    transaction so partial inserts can't leak.
+        #    transaction so partial inserts can't leak. tx_lock guards
+        #    the connection against concurrent FEAT-009/010 transactions
+        #    (C1 — shared worker_conn must serialize through worker_tx_lock).
         now = _utc_now_rfc3339(clock)
         layout_id = str(uuid.uuid4())
         layout_row = ManagedLayoutRow(
@@ -375,59 +386,65 @@ def create_layout(
                 )
             )
 
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            insert_layout(conn, layout_row)
-            for row in pane_rows:
-                # Per-container label uniqueness enforced by the partial
-                # unique index. A duplicate label among non-terminal panes
-                # in the same container raises sqlite3.IntegrityError ->
-                # we surface it as managed_session_name_conflict if it's
-                # actually a tmux-session-name conflict, else propagate.
-                try:
-                    insert_pane(conn, row)
-                except sqlite3.IntegrityError as exc:
-                    conn.execute("ROLLBACK")
-                    # SQLite IntegrityError text includes the colliding
-                    # column names ("UNIQUE constraint failed: ...");
-                    # the index name itself does NOT appear in the
-                    # default message, so we detect by column patterns.
-                    err_text = str(exc)
-                    # (tmux_session_name, tmux_pane_index) → operator
-                    # reused a session name attached to another non-
-                    # terminal layout (FR-016).
-                    if (
-                        "tmux_session_name" in err_text
-                        and "tmux_pane_index" in err_text
-                    ):
-                        raise ManagedSessionsError(
-                            MANAGED_SESSION_NAME_CONFLICT,
-                            details={
-                                "container_id": container_id,
-                                "tmux_session_name": tmux_session_name,
-                            },
-                        ) from exc
-                    # (container_id, label) → two non-terminal panes
-                    # in the same bench container collide on label
-                    # (FR-003 partial unique index).
-                    if "container_id" in err_text and "label" in err_text:
-                        raise ManagedSessionsError(
-                            MANAGED_PANE_LABEL_CONFLICT,
-                            details={
-                                "container_id": container_id,
-                                "label": row.label,
-                            },
-                        ) from exc
-                    raise
-            conn.execute("COMMIT")
-        except Exception:
-            # We may have already rolled back above; rollback again is a
-            # no-op on closed transactions.
+        with tx_guard(tx_lock):
+            # Close any open implicit tx from the caller (tests that
+            # didn't commit setup INSERTs). Production
+            # ``isolation_level=None`` makes this a no-op.
+            if conn.in_transaction:
+                conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
             try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
-            raise
+                insert_layout(conn, layout_row)
+                for row in pane_rows:
+                    # Per-container label uniqueness enforced by the partial
+                    # unique index. A duplicate label among non-terminal panes
+                    # in the same container raises sqlite3.IntegrityError ->
+                    # we surface it as managed_session_name_conflict if it's
+                    # actually a tmux-session-name conflict, else propagate.
+                    try:
+                        insert_pane(conn, row)
+                    except sqlite3.IntegrityError as exc:
+                        conn.execute("ROLLBACK")
+                        # SQLite IntegrityError text includes the colliding
+                        # column names ("UNIQUE constraint failed: ...");
+                        # the index name itself does NOT appear in the
+                        # default message, so we detect by column patterns.
+                        err_text = str(exc)
+                        # (tmux_session_name, tmux_pane_index) → operator
+                        # reused a session name attached to another non-
+                        # terminal layout (FR-016).
+                        if (
+                            "tmux_session_name" in err_text
+                            and "tmux_pane_index" in err_text
+                        ):
+                            raise ManagedSessionsError(
+                                MANAGED_SESSION_NAME_CONFLICT,
+                                details={
+                                    "container_id": container_id,
+                                    "tmux_session_name": tmux_session_name,
+                                },
+                            ) from exc
+                        # (container_id, label) → two non-terminal panes
+                        # in the same bench container collide on label
+                        # (FR-003 partial unique index).
+                        if "container_id" in err_text and "label" in err_text:
+                            raise ManagedSessionsError(
+                                MANAGED_PANE_LABEL_CONFLICT,
+                                details={
+                                    "container_id": container_id,
+                                    "label": row.label,
+                                },
+                            ) from exc
+                        raise
+                conn.execute("COMMIT")
+            except Exception:
+                # We may have already rolled back above; rollback again is a
+                # no-op on closed transactions.
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
 
         # 7. Emit FR-015-ordered synchronous lifecycle events. Per-layout
         #    sequence starts at 0; per-pane sequences start at 0 per pane.
@@ -582,6 +599,7 @@ def spawn_layout_in_background(
     log_attach_fn: LogAttachFn,
     event_emitter: Optional[EventEmitter] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
+    tx_lock: Optional[threading.Lock] = None,
 ) -> SpawnLayoutOutcome:
     """Run the FEAT-013 spawn pipeline for a previously-inserted layout.
 
@@ -593,7 +611,8 @@ def spawn_layout_in_background(
     handler layer. Tests call it synchronously to avoid threading
     nondeterminism.
     """
-    layout = select_layout(conn, layout_id)
+    with tx_guard(tx_lock):
+        layout = select_layout(conn, layout_id)
     if layout is None:
         return SpawnLayoutOutcome(
             layout_id=layout_id,
@@ -611,7 +630,8 @@ def spawn_layout_in_background(
         # chain-traversal: a recreated pane lands in creating and
         # subsequent spawn_layout_in_background calls pick it up without
         # disturbing already-settled siblings).
-        all_panes = select_panes_for_layout(conn, layout_id)
+        with tx_guard(tx_lock):
+            all_panes = select_panes_for_layout(conn, layout_id)
         panes = [p for p in all_panes if p.state == ManagedState.CREATING]
         for pane in panes:
             final_state = _spawn_single_pane(
@@ -622,13 +642,15 @@ def spawn_layout_in_background(
                 log_attach_fn=log_attach_fn,
                 event_emitter=event_emitter,
                 clock=clock,
+                tx_lock=tx_lock,
             )
             pane_states[pane.id] = final_state
 
         # Aggregate layout state from the now-mutated pane rows. We
         # re-select so the aggregation runs on the persisted truth, not
         # the in-memory mapping.
-        refreshed = select_panes_for_layout(conn, layout_id)
+        with tx_guard(tx_lock):
+            refreshed = select_panes_for_layout(conn, layout_id)
         new_layout_state = aggregate_layout_state([p.state for p in refreshed])
         if new_layout_state != layout.state:
             now = _utc_now_rfc3339(clock)
@@ -644,19 +666,26 @@ def spawn_layout_in_background(
                     if p.state == ManagedState.FAILED and p.failed_stage is not None:
                         layout_failed_stage = p.failed_stage
                         break
-            update_layout_state(
-                conn, layout_id,
-                state=new_layout_state,
-                failed_stage=layout_failed_stage,
-                now=now,
-            )
+            with tx_guard(tx_lock):
+                update_layout_state(
+                    conn, layout_id,
+                    state=new_layout_state,
+                    failed_stage=layout_failed_stage,
+                    now=now,
+                )
             if event_emitter is not None:
                 event_emitter(
                     build_event(
                         LAYOUT_STATE_CHANGED,
                         actor="daemon",
                         layout_id=layout_id,
-                        sequence=1,  # follows LAYOUT_CREATED (sequence=0)
+                        # H2 fix: monotonic-time sequence prevents collision
+                        # across multiple spawn_layout_in_background calls
+                        # (recreate iterations re-enter this code path and
+                        # would otherwise re-emit at sequence=1).
+                        # FR-015 requires per-layout FIFO; monotonic_ns
+                        # gives that AND uniqueness.
+                        sequence=_layout_sequence_now(),
                         payload={
                             "prev_state": layout.state.value,
                             "new_state": new_layout_state.value,
@@ -671,6 +700,34 @@ def spawn_layout_in_background(
     )
 
 
+# ─── H2 fix: monotonic-time layout-scoped sequence generator ────────────
+
+
+# Snapshot at module import — every subsequent call returns a strictly-
+# increasing integer relative to this baseline, even across recreate
+# iterations within the same daemon process.
+_LAYOUT_SEQUENCE_EPOCH_NS: int = time.monotonic_ns()
+_LAYOUT_SEQUENCE_OFFSET: int = 1_000  # leaves room for the create_layout
+# sync-side LAYOUT_CREATED (sequence=0) and the documented LAYOUT_STATE_CHANGED
+# numbering convention (1_000 for remove, 10_000 for recovery). All
+# dynamic emissions are strictly above that range.
+
+
+def _layout_sequence_now() -> int:
+    """Return a strictly-increasing layout-scoped sequence integer.
+
+    Uses ``time.monotonic_ns()`` so subsequent calls within the same
+    process are strictly increasing — required for FR-015 per-layout
+    FIFO when ``spawn_layout_in_background`` runs multiple times for the
+    same layout (chain-traversal across recreates). The
+    ``_LAYOUT_SEQUENCE_OFFSET`` floor keeps dynamic sequences well above
+    the legacy fixed sequences (0/1, 1_000/1_001, 10_000/10_001) so the
+    relative ordering between sync-side, remove-side, recovery-side, and
+    spawn-pipeline emissions is preserved.
+    """
+    return _LAYOUT_SEQUENCE_OFFSET + (time.monotonic_ns() - _LAYOUT_SEQUENCE_EPOCH_NS)
+
+
 def _spawn_single_pane(
     *,
     conn: sqlite3.Connection,
@@ -680,6 +737,7 @@ def _spawn_single_pane(
     log_attach_fn: LogAttachFn,
     event_emitter: Optional[EventEmitter],
     clock: Optional[Callable[[], _dt.datetime]],
+    tx_lock: Optional[threading.Lock] = None,
 ) -> ManagedState:
     """Drive one pane through tmux → register → log attach. Returns the
     final ``ManagedState`` after persistence.
@@ -747,13 +805,14 @@ def _spawn_single_pane(
     spawn_result = tmux_spawn_fn(pane)
     if not spawn_result.get("ok"):
         now = _utc_now_rfc3339(clock)
-        update_pane_state(
-            conn, pane.id,
-            state=ManagedState.FAILED,
-            failed_stage=FailedStage.PANE_CREATE,
-            clear_marker=True,
-            now=now,
-        )
+        with tx_guard(tx_lock):
+            update_pane_state(
+                conn, pane.id,
+                state=ManagedState.FAILED,
+                failed_stage=FailedStage.PANE_CREATE,
+                clear_marker=True,
+                now=now,
+            )
         _emit_marker_cleared()
         _emit_state_change(ManagedState.CREATING, ManagedState.FAILED, FailedStage.PANE_CREATE)
         return ManagedState.FAILED
@@ -778,13 +837,14 @@ def _spawn_single_pane(
     register_result = register_fn(pane, tmux_pane_id)
     if not register_result.get("ok"):
         now = _utc_now_rfc3339(clock)
-        update_pane_state(
-            conn, pane.id,
-            state=ManagedState.FAILED,
-            failed_stage=FailedStage.REGISTRATION,
-            clear_marker=True,
-            now=now,
-        )
+        with tx_guard(tx_lock):
+            update_pane_state(
+                conn, pane.id,
+                state=ManagedState.FAILED,
+                failed_stage=FailedStage.REGISTRATION,
+                clear_marker=True,
+                now=now,
+            )
         _emit_marker_cleared()
         _emit_state_change(ManagedState.CREATING, ManagedState.FAILED, FailedStage.REGISTRATION)
         return ManagedState.FAILED
@@ -799,14 +859,15 @@ def _spawn_single_pane(
     if not launch_alive:
         # Launch immediate-exit → degraded(launch_command). Log attach
         # outcome doesn't move us out of degraded.
-        update_pane_state(
-            conn, pane.id,
-            state=ManagedState.DEGRADED,
-            failed_stage=FailedStage.LAUNCH_COMMAND,
-            agent_id=agent_id,
-            clear_marker=True,
-            now=now,
-        )
+        with tx_guard(tx_lock):
+            update_pane_state(
+                conn, pane.id,
+                state=ManagedState.DEGRADED,
+                failed_stage=FailedStage.LAUNCH_COMMAND,
+                agent_id=agent_id,
+                clear_marker=True,
+                now=now,
+            )
         _emit_marker_cleared()
         _emit_state_change(ManagedState.CREATING, ManagedState.DEGRADED, FailedStage.LAUNCH_COMMAND)
         return ManagedState.DEGRADED
@@ -822,26 +883,28 @@ def _spawn_single_pane(
                 ),
             },
         )
-        update_pane_state(
-            conn, pane.id,
-            state=ManagedState.DEGRADED,
-            failed_stage=FailedStage.LOG_ATTACH,
-            agent_id=agent_id,
-            clear_marker=True,
-            now=now,
-        )
+        with tx_guard(tx_lock):
+            update_pane_state(
+                conn, pane.id,
+                state=ManagedState.DEGRADED,
+                failed_stage=FailedStage.LOG_ATTACH,
+                agent_id=agent_id,
+                clear_marker=True,
+                now=now,
+            )
         _emit_marker_cleared()
         _emit_state_change(ManagedState.CREATING, ManagedState.DEGRADED, FailedStage.LOG_ATTACH)
         return ManagedState.DEGRADED
 
     # All stages green → ready.
-    update_pane_state(
-        conn, pane.id,
-        state=ManagedState.READY,
-        agent_id=agent_id,
-        clear_marker=True,
-        now=now,
-    )
+    with tx_guard(tx_lock):
+        update_pane_state(
+            conn, pane.id,
+            state=ManagedState.READY,
+            agent_id=agent_id,
+            clear_marker=True,
+            now=now,
+        )
     _emit_marker_cleared()
     _emit_state_change(ManagedState.CREATING, ManagedState.READY, None)
     return ManagedState.READY
@@ -922,6 +985,7 @@ def remove_pane(
     event_emitter: Optional[EventEmitter] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
     actor: str = "operator",
+    tx_lock: Optional[threading.Lock] = None,
 ) -> RemovePaneResult:
     """Remove a managed pane (M6 contract).
 
@@ -946,12 +1010,15 @@ def remove_pane(
     5. Transition state to ``removed``; emit
        ``managed_pane_removed`` lifecycle event.
     """
-    pane = select_pane(conn, pane_id)
+    with tx_guard(tx_lock):
+        pane = select_pane(conn, pane_id)
     if pane is None:
         # M6 error split per contracts/error-codes.md (Pass 26 N38 fix):
         # adopted (in agents, not in managed_pane) → protected_adopted;
         # truly unknown (not in either) → not_found.
-        if _pane_id_in_agents_table(conn, pane_id):
+        with tx_guard(tx_lock):
+            adopted = _pane_id_in_agents_table(conn, pane_id)
+        if adopted:
             raise ManagedSessionsError(
                 MANAGED_PANE_PROTECTED_ADOPTED,
                 details={"agent_id": pane_id, "is_adopted": True},
@@ -1001,20 +1068,58 @@ def remove_pane(
             except Exception:  # noqa: BLE001 — defensive
                 pass
 
-        # 5. State transition + event.
+        # 5. State transition + event. M1 fix: wrap the multi-row write
+        #    (pane state + layout state aggregation) in a single
+        #    BEGIN IMMEDIATE so a crash between them can't leave the
+        #    layout-row stale. The per-container lock already serializes
+        #    concurrent operators; the transaction adds crash atomicity.
         now = _utc_now_rfc3339(clock)
         prior_state = pane.state
-        update_pane_state(
-            conn, pane.id,
-            state=ManagedState.REMOVED,
-            clear_marker=True,  # any leftover marker is cleared on removal
-            now=now,
-        )
+        new_layout_state: Optional[ManagedState] = None
+        layout_prior_state: Optional[ManagedState] = None
+        with tx_guard(tx_lock):
+            # Close any open implicit transaction from the caller (test
+            # fixtures that didn't commit, etc). In production with
+            # ``isolation_level=None`` this is a no-op; in tests it
+            # commits the setup INSERTs so our BEGIN IMMEDIATE is the
+            # only open transaction.
+            if conn.in_transaction:
+                conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                update_pane_state(
+                    conn, pane.id,
+                    state=ManagedState.REMOVED,
+                    clear_marker=True,  # any leftover marker is cleared on removal
+                    now=now,
+                )
+                # Aggregate layout state — if all panes are now removed,
+                # the layout transitions to removed too.
+                layout = select_layout(conn, pane.layout_id)
+                if layout is not None and layout.state != ManagedState.REMOVED:
+                    refreshed = select_panes_for_layout(conn, pane.layout_id)
+                    candidate_state = aggregate_layout_state(
+                        [p.state for p in refreshed]
+                    )
+                    if candidate_state != layout.state:
+                        update_layout_state(
+                            conn, pane.layout_id,
+                            state=candidate_state,
+                            now=now,
+                        )
+                        new_layout_state = candidate_state
+                        layout_prior_state = layout.state
+                conn.execute("COMMIT")
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+
+        # Events emit AFTER the write commits so a partial-commit can't
+        # surface a state-change event for state that never landed.
         if event_emitter is not None:
-            # Per-pane sequence resumes from a high integer to stay
-            # beyond any spawn-pipeline events; the absolute value
-            # doesn't matter — only that it's higher than any prior
-            # emission for this pane.
             event_emitter(
                 build_event(
                     PANE_REMOVED,
@@ -1038,33 +1143,22 @@ def remove_pane(
                     },
                 )
             )
-
-        # Aggregate layout state — if all panes are now removed, the
-        # layout transitions to removed too (data-model.md ManagedLayout
-        # lifecycle: "all panes removed → layout removed").
-        layout = select_layout(conn, pane.layout_id)
-        if layout is not None and layout.state != ManagedState.REMOVED:
-            refreshed = select_panes_for_layout(conn, pane.layout_id)
-            new_layout_state = aggregate_layout_state([p.state for p in refreshed])
-            if new_layout_state != layout.state:
-                update_layout_state(
-                    conn, pane.layout_id,
-                    state=new_layout_state,
-                    now=now,
-                )
-                if event_emitter is not None:
-                    event_emitter(
-                        build_event(
-                            LAYOUT_STATE_CHANGED,
-                            actor=actor,
-                            layout_id=pane.layout_id,
-                            sequence=1_000,
-                            payload={
-                                "prev_state": layout.state.value,
-                                "new_state": new_layout_state.value,
-                            },
-                        )
+            if new_layout_state is not None and layout_prior_state is not None:
+                event_emitter(
+                    build_event(
+                        LAYOUT_STATE_CHANGED,
+                        actor=actor,
+                        layout_id=pane.layout_id,
+                        # H2 fix: monotonic sequence avoids collision
+                        # with the spawn pipeline's emission for the
+                        # same layout.
+                        sequence=_layout_sequence_now(),
+                        payload={
+                            "prev_state": layout_prior_state.value,
+                            "new_state": new_layout_state.value,
+                        },
                     )
+                )
 
     return RemovePaneResult(pane_id=pane.id, state=ManagedState.REMOVED)
 
@@ -1101,6 +1195,7 @@ def recreate_pane(
     event_emitter: Optional[EventEmitter] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
     actor: str = "operator",
+    tx_lock: Optional[threading.Lock] = None,
 ) -> RecreatePaneResult:
     """Recreate a managed pane from a predecessor (M7 contract).
 
@@ -1132,12 +1227,15 @@ def recreate_pane(
        marker already provide the right semantics; the bg pipeline
        picks up any pane row in ``creating`` state.)
     """
-    predecessor = select_pane(conn, predecessor_pane_id)
+    with tx_guard(tx_lock):
+        predecessor = select_pane(conn, predecessor_pane_id)
     if predecessor is None:
         # Same M7 error split as remove_pane (Pass 26 N38 fix):
         # adopted (in agents, not in managed_pane) → protected_adopted;
         # truly unknown (not in either) → not_found.
-        if _pane_id_in_agents_table(conn, predecessor_pane_id):
+        with tx_guard(tx_lock):
+            adopted = _pane_id_in_agents_table(conn, predecessor_pane_id)
+        if adopted:
             raise ManagedSessionsError(
                 MANAGED_PANE_PROTECTED_ADOPTED,
                 details={"agent_id": predecessor_pane_id, "is_adopted": True},
@@ -1180,11 +1278,12 @@ def recreate_pane(
     lock = serializer.for_container(predecessor.container_id)
     with lock:
         # 4. FR-027: detect an in-flight successor.
-        in_flight = conn.execute(
-            "SELECT id FROM managed_pane "
-            "WHERE predecessor_id = ? AND state = 'creating'",
-            (predecessor.id,),
-        ).fetchone()
+        with tx_guard(tx_lock):
+            in_flight = conn.execute(
+                "SELECT id FROM managed_pane "
+                "WHERE predecessor_id = ? AND state = 'creating'",
+                (predecessor.id,),
+            ).fetchone()
         if in_flight is not None:
             raise ManagedSessionsError(
                 MANAGED_PANE_CONCURRENT_RECREATE,
@@ -1232,8 +1331,11 @@ def recreate_pane(
         # Single-row insert — no explicit transaction needed (atomicity
         # is intrinsic to one statement). The per-container lock above
         # already serializes against other recreate / remove / create
-        # against the same container.
-        insert_pane(conn, new_row)
+        # against the same container. tx_lock guards the connection
+        # against concurrent FEAT-009 worker mutations on the shared
+        # ``worker_conn``.
+        with tx_guard(tx_lock):
+            insert_pane(conn, new_row)
 
         # 6. Emit managed_pane_recreated.
         if event_emitter is not None:
