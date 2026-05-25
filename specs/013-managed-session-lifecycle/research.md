@@ -221,6 +221,14 @@ No separate file. **No retention pruning in MVP** — pruning is a later feature
 - New `managed_events` SQLite table — second event source diverges from the FEAT-008 single-observability principle; operator tooling has to merge two streams.
 - Dedicated `managed-events.jsonl` file — adds a second JSONL file alongside FEAT-008's audit file; operators have to know which file to tail.
 
+**Payload schema reconciliation with FR-021** (added 2026-05-25, post-Phase-4b):
+
+FR-021 specifies an env-var redaction policy ("Lifecycle event payloads MUST redact env-var values whose key matches `*TOKEN*` / `*SECRET*` / `*KEY*` / `*PASSWORD*`; argv and `working_dir` are NOT redacted"). The 12-entry catalog above does NOT currently include env / argv / working_dir in any event's payload — the failure events (`managed_pane_launch_command_exited`, `managed_pane_log_attach_failed`) carry only `exit_code`/`elapsed_ms` and `reason` respectively.
+
+Implication: FR-021's redaction rule is **forward-looking guard-rail** for events that may add env / argv / working_dir in a later feature. Phase 4b's `service.spawn_layout_in_background` honors the policy trivially by not emitting these fields at all. The operator's diagnostic story for argv / env / working_dir today is the `M5 managed.pane.detail` surface reading `managed_pane.launch_command_ref` and resolving it against the operator's on-disk `LaunchCommandProfile` YAML (R9) — that resolution path is operator-private (file is on the operator's disk), so no redaction is needed there.
+
+T028's FR-021 redaction assertion (Phase 4c) consequently takes the stricter form: "no env-keyed value appears in ANY event payload" — which holds today and continues to hold until a later feature adds diagnostic env fields. When that later feature lands, T028's assertion tightens to "env-keyed values matching the closed substring set appear redacted; non-matching keys appear unredacted; argv and working_dir appear unredacted".
+
 ---
 
 ## R12. Operator authorization (MVP)
