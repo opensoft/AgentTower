@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS managed_pane (
     id                    TEXT PRIMARY KEY,             -- uuid4
     layout_id             TEXT NOT NULL REFERENCES managed_layout(id),
     container_id          TEXT NOT NULL,                 -- denormalized from managed_layout.container_id at insert (FR-003 / Q4 label-uniqueness scope; SQLite does not allow subqueries in index expressions, so this column must be stored directly)
-    agent_id              TEXT REFERENCES agent(id),    -- FEAT-006 agent registry; null until registered
+    agent_id              TEXT REFERENCES agents(agent_id),  -- FEAT-006 agent registry; null until registered
     role                  TEXT NOT NULL,                -- e.g., master / slave
     capability            TEXT NOT NULL,
     label                 TEXT NOT NULL,
@@ -144,7 +144,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_pane_tmux_target
 | `id` | uuid4 string | PK |
 | `layout_id` | uuid4 string | FK → `managed_layout.id` |
 | `container_id` | string | NOT NULL; denormalized from `managed_layout.container_id` at insert; participates in the per-container label-uniqueness index (FR-003) |
-| `agent_id` | string NULL | FK → FEAT-006 `agent.id`; null until registration completes |
+| `agent_id` | string NULL | FK → FEAT-006 `agents.agent_id`; null until registration completes |
 | `role` | string | Template-declared (e.g., `master`, `slave`) |
 | `capability` | string | Template-declared (e.g., `orchestrator`, `worker`) |
 | `label` | string | Resolved from `label_pattern` + ordinal; unique per container across non-terminal panes |

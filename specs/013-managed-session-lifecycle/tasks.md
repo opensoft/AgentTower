@@ -17,7 +17,7 @@ description: "Task list for FEAT-013 Managed Session Creation and Lifecycle"
 
 ## Path Conventions
 
-Single Python package: `src/agenttower/managed_sessions/`. Tests under `tests/contract/`, `tests/integration/`, `tests/fixtures/`. SQLite migration under `migrations/`. Operator-overridable YAML under `~/.config/opensoft/agenttower/managed_templates/` and `…/launch_commands/`.
+Single Python package: `src/agenttower/managed_sessions/`. Tests under `tests/contract/`, `tests/integration/`, `tests/fixtures/`. SQLite migration registered in FEAT-001 `src/agenttower/state/schema.py` as `_apply_migration_v9` (no separate `migrations/` directory; FEAT-001 uses an in-Python migration registry). Operator-overridable YAML under `~/.config/opensoft/agenttower/managed_templates/` and `…/launch_commands/`.
 
 ---
 
