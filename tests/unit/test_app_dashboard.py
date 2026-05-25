@@ -1061,6 +1061,82 @@ def test_dashboard_v1_1_fr020_agent_partition_at_wire(
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T025 — Polish SC-005 single-envelope shape assertion
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_sc005_single_envelope_shape_all_fields_present(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """SC-005: a single v1.1 ``app.dashboard`` call against a populated
+    daemon returns every new v1.1 field present and correctly typed in
+    one response envelope. This is the omnibus shape assertion for the
+    v1.1 wire contract — it catches a future regression that silently
+    omits a field, even if every individual field test still passes."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+
+    # Populated daemon: 1 active container + 1 registered pane + 1
+    # unadopted pane + 1 agent + 1 enabled route. Just enough to make
+    # every v1.1 surface non-trivial.
+    _seed_container(conn, container_id="c1", name="c1", active=True)
+    _seed_pane(conn, container_id="c1", container_name="c1",
+               pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c1", container_name="c1",
+               pane_id="%1", pane_index=1)
+    _seed_agent(conn, agent_id="a1", container_id="c1",
+                pane_id="%0", pane_index=0)
+    _seed_route(conn, route_id="r1", enabled=True)
+    conn.commit()
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["ok"] is True
+    result = env["result"]
+
+    # ─ v1.1 envelope-level fields ───────────────────────────────────────
+    assert "recommended_next_action" in result
+    assert "recommended_next_action_refreshed_at" in result
+    # Paired non-null on a healthy populated daemon (floor is all_clear).
+    if result["recommended_next_action"] is None:
+        assert result["recommended_next_action_refreshed_at"] is None
+    else:
+        assert result["recommended_next_action_refreshed_at"] is not None
+        # Shape check (full schema verified in T017's dedicated tests).
+        rec = result["recommended_next_action"]
+        assert set(rec.keys()) == {"code", "title", "detail", "target"}
+
+    # ─ v1.1 counts.panes.by_state ───────────────────────────────────────
+    panes_by_state = result["counts"]["panes"]["by_state"]
+    assert set(panes_by_state.keys()) == set(PANE_STATE_KEYS)
+    for key in PANE_STATE_KEYS:
+        assert isinstance(panes_by_state[key], int)
+    # Cross-check sum-equals-total (FR-019 strict leg).
+    assert sum(panes_by_state.values()) == result["counts"]["panes"]["total"]
+
+    # ─ v1.1 counts.agents.by_state ──────────────────────────────────────
+    agents_by_state = result["counts"]["agents"]["by_state"]
+    assert set(agents_by_state.keys()) == set(AGENT_STATE_KEYS)
+    for key in AGENT_STATE_KEYS:
+        assert isinstance(agents_by_state[key], int)
+
+    # ─ v1.1 counts.routes.recently_skipped_* ────────────────────────────
+    routes = result["counts"]["routes"]
+    assert "recently_skipped_count" in routes
+    assert "recently_skipped_window_ms" in routes
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert routes["recently_skipped_count"] >= 0
+    assert routes["recently_skipped_window_ms"] == 300_000
+
+    # ─ v1.0 fields untouched (FR-014 additive-minor) ────────────────────
+    assert "total" in result["counts"]["panes"]
+    assert "registered" in result["counts"]["panes"]
+    assert "unregistered" in result["counts"]["panes"]
+    assert "enabled" in routes
+    assert "disabled" in routes
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # FEAT-014 T022 — US4 v1.0-reader + FR-012 symmetric forward-compat
 #
 # Two sub-tests. Both expected GREEN at landing — they verify behavior

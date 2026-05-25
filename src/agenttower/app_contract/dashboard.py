@@ -22,12 +22,14 @@ slight inter-surface inconsistency is acceptable.
 
 from __future__ import annotations
 
+import logging
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from agenttower.routing import skip_counter
 
-from . import envelope, view_models
+from . import envelope, recommendations, view_models
 from .errors import VALIDATION_FAILED
 from .readiness import (
     Hint,
@@ -40,6 +42,8 @@ from .readiness import (
     probe_tmux_discovery,
 )
 from .versioning import AGENT_ROLES, QUEUE_STATES
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..socket_api.methods import DaemonContext
@@ -250,6 +254,69 @@ def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
     except Exception:  # noqa: BLE001
         return {"enabled": 0, "disabled": 0}
     return {"enabled": enabled, "disabled": disabled}
+
+
+# ─── v1.1 "first id" deterministic lookups (FEAT-014 T020) ───────────────
+#
+# T020 / Research §CC determinism: target.id values for the recommendation
+# engine come from these deterministic-first-by-PK queries. Each helper
+# follows FR-025's fail-soft pattern — broad except returns None so the
+# recommendation engine sees the corresponding state field as null and
+# routes around it (e.g., no_panes_discovered emits target=None).
+
+
+def _first_active_container_id(ctx: "DaemonContext") -> str | None:
+    """Deterministic first active container by primary-key order."""
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT container_id FROM containers "
+            "WHERE active = 1 ORDER BY container_id LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — FR-025 fallback
+        return None
+    return row[0] if row else None
+
+
+def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
+    """Deterministic first unadopted pane by primary-key order. A pane is
+    unadopted iff no agent row exists for it (per the same agent→pane
+    matching the v1.0 ``_pane_counts.registered`` query uses)."""
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT p.tmux_pane_id FROM panes p "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM agents a "
+            "  WHERE a.container_id = p.container_id "
+            "    AND a.tmux_pane_id = p.tmux_pane_id "
+            "    AND a.active = 1"
+            ") "
+            "ORDER BY p.container_id, p.tmux_pane_id LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — FR-025 fallback
+        return None
+    return row[0] if row else None
+
+
+def _oldest_blocked_message_id(ctx: "DaemonContext") -> str | None:
+    """Deterministic oldest blocked queue message by created_at."""
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT message_id FROM message_queue "
+            "WHERE state = 'blocked' "
+            "ORDER BY created_at ASC, message_id ASC LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — FR-025 fallback
+        return None
+    return row[0] if row else None
 
 
 # ─── v1.1 PaneState / AgentState aggregators (FEAT-014) ───────────────────
@@ -560,6 +627,56 @@ def app_dashboard(
         log_attachment_count=log_attachment_counts["active"],
     )
 
+    # FEAT-014 T020 — v1.1 recommendation engine wiring. Two sub-steps:
+    # (1) Build a RecommendationState from the same row sources the
+    #     count helpers + readiness probes already consumed.
+    # (2) Call recommendations.compute_recommendation inside a try/except
+    #     boundary per FR-021 / Research §FE — on success populate both
+    #     wire fields; on exception set BOTH to None (paired-null) and
+    #     emit a WARN log with the stable event name. The rest of the
+    #     v1.1 payload is unaffected either way.
+    rec_state = recommendations.RecommendationState(
+        degraded_subsystems=tuple(
+            row.name for row in subsystem_rows if row.status != "ok"
+        ),
+        container_count=(
+            container_counts["active"]
+            + container_counts["inactive"]
+            + container_counts["degraded_scan"]
+        ),
+        first_active_container_id=_first_active_container_id(ctx),
+        pane_count=pane_counts["total"],
+        first_unadopted_pane_id=_first_unadopted_pane_id(ctx),
+        unadopted_pane_count=pane_counts["unregistered"],
+        oldest_blocked_message_id=_oldest_blocked_message_id(ctx),
+        blocked_queue_count=queue_counts.get("blocked", 0),
+        route_count=route_counts["enabled"] + route_counts["disabled"],
+    )
+    rec_action: dict | None
+    rec_refreshed_at: str | None
+    try:
+        rec = recommendations.compute_recommendation(rec_state)
+        rec_action = {
+            "code": rec.code,
+            "title": rec.title,
+            "detail": rec.detail,
+            "target": rec.target,
+        }
+        # Wall-clock ISO-8601 UTC ms per Research §TS (NOT the monotonic
+        # clock T013's skip counter uses for window arithmetic).
+        rec_refreshed_at = (
+            datetime.now(timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%S.")
+            + f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+        )
+    except Exception:  # noqa: BLE001 — FR-021 / Research §FE compute-failure isolation
+        _log.warning(
+            "app_dashboard_recommendation_compute_failed",
+            exc_info=True,
+        )
+        rec_action = None
+        rec_refreshed_at = None
+
     # Recents.
     recents = {
         "events": _recent_events(ctx, recent_limit),
@@ -568,6 +685,8 @@ def app_dashboard(
     }
 
     return envelope.success({
+        "recommended_next_action": rec_action,
+        "recommended_next_action_refreshed_at": rec_refreshed_at,
         "counts": {
             "containers": container_counts,
             # FEAT-014 v1.1 — panes and agents gain a `by_state` sub-dict
