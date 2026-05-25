@@ -235,6 +235,100 @@ def test_container_label_uniqueness_partial_index(conn: sqlite3.Connection) -> N
         )
 
 
+def test_tmux_target_uniqueness_partial_index(conn: sqlite3.Connection) -> None:
+    """M9 hardening: ``ux_managed_pane_tmux_target`` enforces
+    ``(tmux_session_name, tmux_pane_index)`` uniqueness across the
+    SAME container for non-terminal panes. The service layer's
+    list-sessions pre-check (deferred to FEAT-004 wiring) is the
+    operator-visible path, but the DB unique index is the
+    defense-in-depth backstop — this test exercises that backstop
+    directly so a regression that removed the index would surface.
+    """
+    _apply_migration_v9(conn)
+    conn.execute(
+        """
+        INSERT INTO managed_layout
+            (id, container_id, template_name, intended_pane_count, state,
+             created_at, updated_at)
+        VALUES
+            ('L1', 'C1', '1m+2s', 3, 'creating',
+             '2026-05-25T00:00:00Z', '2026-05-25T00:00:00Z')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO managed_pane
+            (id, layout_id, container_id, role, capability, label,
+             tmux_session_name, tmux_pane_index, state, chain_depth,
+             created_at, updated_at)
+        VALUES
+            ('P1', 'L1', 'C1', 'master', 'orchestrator', 'm1',
+             'session-x', 0, 'ready', 0,
+             '2026-05-25T00:00:00Z', '2026-05-25T00:00:00Z')
+        """
+    )
+
+    # Different label, different role, but same (session_name, pane_index)
+    # → unique index fires.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO managed_pane
+                (id, layout_id, container_id, role, capability, label,
+                 tmux_session_name, tmux_pane_index, state, chain_depth,
+                 created_at, updated_at)
+            VALUES
+                ('P2', 'L1', 'C1', 'slave', 'worker', 'different-label',
+                 'session-x', 0, 'ready', 0,
+                 '2026-05-25T00:00:00Z', '2026-05-25T00:00:00Z')
+            """
+        )
+
+
+def test_tmux_target_terminal_panes_carve_out(conn: sqlite3.Connection) -> None:
+    """The tmux-target index is partial — terminal panes (removed /
+    failed) are excluded, so a recreated pane may take the same
+    ``(tmux_session_name, tmux_pane_index)`` as its terminal
+    predecessor."""
+    _apply_migration_v9(conn)
+    conn.execute(
+        """
+        INSERT INTO managed_layout
+            (id, container_id, template_name, intended_pane_count, state,
+             created_at, updated_at)
+        VALUES
+            ('L1', 'C1', '1m+2s', 3, 'creating',
+             '2026-05-25T00:00:00Z', '2026-05-25T00:00:00Z')
+        """
+    )
+    # Predecessor in ``removed`` — outside the partial index.
+    conn.execute(
+        """
+        INSERT INTO managed_pane
+            (id, layout_id, container_id, role, capability, label,
+             tmux_session_name, tmux_pane_index, state, chain_depth,
+             created_at, updated_at)
+        VALUES
+            ('P1', 'L1', 'C1', 'master', 'orchestrator', 'm1',
+             'session-x', 0, 'removed', 0,
+             '2026-05-25T00:00:00Z', '2026-05-25T00:00:00Z')
+        """
+    )
+    # Successor takes the same tmux target — should succeed.
+    conn.execute(
+        """
+        INSERT INTO managed_pane
+            (id, layout_id, container_id, role, capability, label,
+             tmux_session_name, tmux_pane_index, predecessor_id, state,
+             chain_depth, created_at, updated_at)
+        VALUES
+            ('P2', 'L1', 'C1', 'master', 'orchestrator', 'm1',
+             'session-x', 0, 'P1', 'creating', 1,
+             '2026-05-25T00:00:00Z', '2026-05-25T00:00:00Z')
+        """
+    )
+
+
 def test_terminal_panes_can_reuse_labels(conn: sqlite3.Connection) -> None:
     """A ``removed`` pane does not block a new pane with the same label."""
     _apply_migration_v9(conn)

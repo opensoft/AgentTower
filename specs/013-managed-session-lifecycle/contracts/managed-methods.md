@@ -65,16 +65,19 @@ Create a managed layout in a bench container.
         {"pane_id": "01HZ-p1", "role": "master", "label": "m1", "state": "creating"},
         {"pane_id": "01HZ-p2", "role": "slave",  "label": "s1", "state": "creating"},
         {"pane_id": "01HZ-p3", "role": "slave",  "label": "s2", "state": "creating"}
-    ]
+    ],
+    "replay": false
   }
 }
 ```
+
+The `replay` field is a boolean — `true` only when the request was deduplicated against a prior `(container_id, idempotency_key)` and the response is echoing the existing layout's current state; `false` for fresh inserts. Clients use it to distinguish "operation accepted, work started" from "operation already in flight, here's the current state".
 
 **Behavior**:
 
 - Acquires per-container serializer (FR-019). FIFO ordering; no timeout.
 - Returns **after** the layout row + all pane rows are inserted in SQLite and the pending-managed markers are set. The actual tmux spawn + registration runs in a background task; the operator polls via `managed.layout.detail` or subscribes to lifecycle events.
-- Idempotency replay: a repeated request with the same `(container_id, idempotency_key)` returns the current row state without restarting the pipeline.
+- Idempotency replay: a repeated request with the same `(container_id, idempotency_key)` returns the current row state with `replay: true` without restarting the pipeline.
 
 **Errors**:
 - `managed_template_not_found`
@@ -155,7 +158,7 @@ Full layout view including all (non-terminal + terminal) panes.
 
 ### M4. `managed.pane.list` / `app.managed_pane_list`
 
-Same shape as M2, scoped to panes. Filters: `container_id?`, `layout_id?`, `state?` (single-value or array). Ordering: `(layout_id, tmux_pane_index)`.
+Same shape as M2, scoped to panes. Filters: `container_id?`, `layout_id?`, `state?` (single-value or array). Ordering: `(state_priority ASC, layout_id, tmux_pane_index)` — the same operational-state-first convention M2 uses, then the per-layout pane index for stable pagination within a state group.
 
 ### M5. `managed.pane.detail` / `app.managed_pane_detail`
 

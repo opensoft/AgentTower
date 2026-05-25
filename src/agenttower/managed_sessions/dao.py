@@ -377,6 +377,35 @@ def count_ready_panes_for_layout(
     return int(n)
 
 
+def count_ready_panes_for_layouts(
+    conn: sqlite3.Connection, layout_ids: list[str]
+) -> dict[str, int]:
+    """M8 fix: aggregate ready-pane counts for many layouts in one query.
+
+    Replaces the per-layout :func:`count_ready_panes_for_layout` N+1
+    pattern in M2 list handlers (which iterate the list of up to 200
+    layouts and previously issued one COUNT per row). The single
+    grouped query uses the ``ix_managed_pane_layout_state`` index for
+    the same per-layout / state filter.
+
+    Returns a dict keyed by layout_id — layouts with zero ready panes
+    map to ``0`` (explicitly, so callers don't need a default).
+    """
+    if not layout_ids:
+        return {}
+    placeholders = ",".join("?" for _ in layout_ids)
+    cur = conn.execute(
+        f"SELECT layout_id, COUNT(*) FROM managed_pane "
+        f"WHERE state = 'ready' AND layout_id IN ({placeholders}) "
+        f"GROUP BY layout_id",
+        layout_ids,
+    )
+    counts: dict[str, int] = {lid: 0 for lid in layout_ids}
+    for layout_id, count in cur.fetchall():
+        counts[str(layout_id)] = int(count)
+    return counts
+
+
 # ─── Background spawn pipeline mutation helpers (T029 / T030) ───────────
 
 
@@ -467,23 +496,6 @@ def select_non_terminal_panes_for_container(
         (container_id,),
     )
     return [_row_to_pane(r) for r in cur.fetchall()]
-
-
-def clear_pending_marker_token(
-    conn: sqlite3.Connection, pane_id: str, *, now: str
-) -> None:
-    """Set ``managed_pane.pending_marker_token = NULL`` for a single row.
-
-    Used by the recovery reconcile (T046) to drop stale markers for
-    rows that the reconcile transitions to a non-``creating`` state.
-    Does not touch state — caller has already done that via
-    ``update_pane_state(clear_marker=True, ...)`` or equivalent.
-    """
-    conn.execute(
-        "UPDATE managed_pane SET pending_marker_token = NULL, updated_at = ? "
-        "WHERE id = ?",
-        (now, pane_id),
-    )
 
 
 def update_layout_state(

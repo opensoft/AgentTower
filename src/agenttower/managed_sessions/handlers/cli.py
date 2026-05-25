@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..dao import (
     count_ready_panes_for_layout,
+    count_ready_panes_for_layouts,
     list_layouts,
     list_panes,
     select_layout,
@@ -107,21 +108,28 @@ def _peer_container_id(ctx: "DaemonContext", peer_uid: int) -> str | None:
 
     pid = _request_peer_pid()
     if pid <= 0:
-        return None  # no peer credentials → treat as host
+        # H1 fix: no peer credentials → fail closed via the unresolved
+        # sentinel. Pre-fix this returned ``None`` which treats the
+        # caller as host and bypasses R12 cross-container scoping.
+        from ...agents.peer_detection import UNRESOLVED_PEER
+        return UNRESOLVED_PEER
     if _peer_is_host_process(pid):
-        return None
-    # Bench-container peer. FEAT-009 records the peer's container_id in
-    # the agents row keyed by tmux_pane_id; we look it up via the
-    # peer_pid → /proc/<pid>/cgroup → docker container id chain that
-    # FEAT-009 already implements.
-    try:
-        from ...agents.peer_detection import resolve_peer_container_id  # type: ignore[import-not-found]
-    except ImportError:
-        return None
+        return None  # verified host — allow cross-container access
+    # Bench-container peer. The peer_detection module returns:
+    #   - None for verified host (handled above)
+    #   - container_id string for verified bench peer
+    #   - UNRESOLVED_PEER sentinel when we can't determine the peer's
+    #     container id (fail closed)
+    from ...agents.peer_detection import (
+        UNRESOLVED_PEER,
+        resolve_peer_container_id,
+    )
     try:
         return resolve_peer_container_id(pid)
     except Exception:  # noqa: BLE001 — defensive: peer detection is best-effort
-        return None
+        # Any unexpected error → fail closed, NOT host. Pre-fix this
+        # returned ``None`` which silently elevated the caller to host.
+        return UNRESOLVED_PEER
 
 
 def _state_conn(ctx: "DaemonContext") -> sqlite3.Connection | None:
@@ -243,11 +251,14 @@ def _managed_layout_create(
         return _err(exc.code, str(exc), details=exc.details)
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)
-    except Exception as exc:  # noqa: BLE001 — envelope-shape safety net
-        return _err(
-            "internal_error",
-            f"managed.layout.create failed: {type(exc).__name__}",
-        )
+    except Exception:  # noqa: BLE001 — envelope-shape safety net
+        # M7 fix: do NOT leak the exception class name on the wire.
+        # FEAT-011 §FR-021 requires internal_error envelopes to carry
+        # operator-facing prose only — the underlying type / paths /
+        # SQL / argv stay in the daemon log (a future improvement is
+        # to write the traceback there; current behavior is "swallow
+        # silently" which matches the legacy CLI safety net).
+        return _err("internal_error", "managed.layout.create failed")
 
     return _ok(_layout_result_payload(result))
 
@@ -444,10 +455,16 @@ def _managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
         after=after,
     )
 
+    # M8 fix: single aggregate query instead of one COUNT per layout
+    # (the old loop was a textbook N+1; for the 200-row hard cap that
+    # was up to 201 round-trips per M2 call).
+    ready_counts = count_ready_panes_for_layouts(conn, [r.id for r in rows])
     items: list[dict[str, Any]] = []
     for layout_row in rows:
-        ready = count_ready_panes_for_layout(conn, layout_row.id)
-        items.append(_layout_view_to_list_payload(_layout_row_to_view(layout_row), ready))
+        items.append(_layout_view_to_list_payload(
+            _layout_row_to_view(layout_row),
+            ready_counts.get(layout_row.id, 0),
+        ))
 
     return _ok({"items": items, "next": next_cursor})
 
@@ -670,11 +687,9 @@ def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
         )
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)
-    except Exception as exc:  # noqa: BLE001
-        return _err(
-            "internal_error",
-            f"managed.pane.remove failed: {type(exc).__name__}",
-        )
+    except Exception:  # noqa: BLE001
+        # M7 fix: no exception-class leakage on the wire.
+        return _err("internal_error", "managed.pane.remove failed")
 
     return _ok({"pane_id": result.pane_id, "state": result.state.value})
 
@@ -742,11 +757,9 @@ def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
         )
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)
-    except Exception as exc:  # noqa: BLE001
-        return _err(
-            "internal_error",
-            f"managed.pane.recreate failed: {type(exc).__name__}",
-        )
+    except Exception:  # noqa: BLE001
+        # M7 fix: no exception-class leakage on the wire.
+        return _err("internal_error", "managed.pane.recreate failed")
 
     return _ok({
         "pane_id": result.pane_id,

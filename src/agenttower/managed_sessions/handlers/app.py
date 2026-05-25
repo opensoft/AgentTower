@@ -30,6 +30,7 @@ from ...app_contract.errors import (
 # (preflight.py, hello.py, sessions.py) use the same lazy pattern.
 from ..dao import (
     count_ready_panes_for_layout,
+    count_ready_panes_for_layouts,
     list_layouts,
     list_panes,
     select_layout,
@@ -342,8 +343,10 @@ def app_managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
         limit=int(limit) if isinstance(limit, int) else 50,
         after=after,
     )
+    # M8 fix: single aggregate query instead of one COUNT per layout.
+    ready_counts = count_ready_panes_for_layouts(conn, [r.id for r in rows])
     items = [
-        _layout_view_payload_list(r, count_ready_panes_for_layout(conn, r.id))
+        _layout_view_payload_list(r, ready_counts.get(r.id, 0))
         for r in rows
     ]
     return _envelope.success({"items": items, "next": next_cursor})

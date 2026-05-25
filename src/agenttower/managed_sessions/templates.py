@@ -14,7 +14,6 @@ See ``specs/013-managed-session-lifecycle/research.md`` §R8.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final

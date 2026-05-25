@@ -60,11 +60,11 @@ from .dao import (
     insert_pane,
     select_layout,
     select_layout_by_idempotency_key,
+    select_pane,
     select_panes_for_layout,
     update_layout_state,
     update_pane_state,
 )
-from .dao import select_pane
 from .errors import (
     MANAGED_LAYOUT_CAPACITY_EXCEEDED,
     MANAGED_LAUNCH_COMMAND_NOT_FOUND,
@@ -270,6 +270,12 @@ def create_layout(
     if not container_id:
         raise _validation_failed(field="container_id", reason="missing or empty")
     _validate_identifier(tmux_session_name, field_name="tmux_session_name")
+    # M3 fix: idempotency_key flows into the tmux pane title token
+    # (``@MANAGED:<token>:<label>``) AND into the durable layout row.
+    # The FR-016 charset gate keeps the title parseable and FEAT-004's
+    # scan output clean even when the operator supplies a hostile value.
+    if idempotency_key is not None:
+        _validate_identifier(idempotency_key, field_name="idempotency_key")
     for key in launch_overrides:
         # Map keys are "<role>:<label>" — split and validate each side.
         # We accept ':' in the map key but not in the components.
@@ -1227,6 +1233,12 @@ def recreate_pane(
        marker already provide the right semantics; the bg pipeline
        picks up any pane row in ``creating`` state.)
     """
+    # M3 fix: idempotency_key flows into the tmux pane title token
+    # (``@MANAGED:<token>:<label>``); validate it against the FR-016
+    # charset / length / control-char rules before any DB write or
+    # tmux RPC.
+    if idempotency_key is not None:
+        _validate_identifier(idempotency_key, field_name="idempotency_key")
     with tx_guard(tx_lock):
         predecessor = select_pane(conn, predecessor_pane_id)
     if predecessor is None:

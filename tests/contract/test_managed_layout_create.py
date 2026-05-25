@@ -476,6 +476,82 @@ def test_create_layout_rejects_existing_session_name() -> None:
     site lands in Phase 4c alongside the FEAT-004 scan update."""
 
 
+def test_create_layout_db_unique_index_rejects_session_name_collision(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """H7 hardening: independent of the FEAT-004 list-sessions pre-check
+    (which is deferred), the database's ``ux_managed_pane_tmux_target``
+    partial unique index already enforces FR-016's session-name
+    uniqueness for non-terminal panes within the same container.
+
+    This test exercises that DB-side enforcement directly by pre-
+    inserting a non-terminal pane with the conflicting
+    ``(tmux_session_name, tmux_pane_index)`` and verifying
+    ``create_layout`` surfaces ``managed_session_name_conflict``
+    rather than a raw ``sqlite3.IntegrityError``. The unique-index
+    branch is the production safety net even when the pre-check
+    eventually lands — defense in depth — so leaving it un-tested
+    until FEAT-004 wires up is an avoidable coverage gap.
+    """
+    from agenttower.managed_sessions.dao import insert_pane, ManagedPaneRow
+
+    # Seed a pre-existing layout + non-terminal pane that owns
+    # (tmux_session_name='session-collide', tmux_pane_index=0).
+    insert_layout(
+        conn,
+        ManagedLayoutRow(
+            id="pre-layout",
+            container_id="bench-alpha",
+            template_name="1m+2s",
+            intended_pane_count=3,
+            state=ManagedState.READY,
+            failed_stage=None,
+            idempotency_key=None,
+            created_at="2026-05-25T00:00:00.000000Z",
+            updated_at="2026-05-25T00:00:00.000000Z",
+        ),
+    )
+    insert_pane(
+        conn,
+        ManagedPaneRow(
+            id="pre-pane-0",
+            layout_id="pre-layout",
+            container_id="bench-alpha",
+            agent_id=None,
+            role="master",
+            capability="orchestrator",
+            label="pre-m1",
+            launch_command_ref=None,
+            tmux_session_name="session-collide",
+            tmux_pane_index=0,
+            pending_marker_token=None,
+            state=ManagedState.READY,
+            failed_stage=None,
+            predecessor_id=None,
+            chain_depth=0,
+            created_at="2026-05-25T00:00:00.000000Z",
+            updated_at="2026-05-25T00:00:00.000000Z",
+        ),
+    )
+    conn.commit()
+
+    # A second create_layout for the SAME container that targets the
+    # same session name → the partial unique index fires when the
+    # second insert_pane runs against tmux_pane_index=0, and the
+    # service translates the IntegrityError to MANAGED_SESSION_NAME_CONFLICT.
+    with pytest.raises(ManagedSessionsError) as exc_info:
+        create_layout(
+            conn=conn,
+            serializer=serializer,
+            container_id="bench-alpha",
+            template_name="1m+2s",
+            tmux_session_name="session-collide",
+        )
+    assert exc_info.value.code == MANAGED_SESSION_NAME_CONFLICT
+    assert exc_info.value.details["container_id"] == "bench-alpha"
+    assert exc_info.value.details["tmux_session_name"] == "session-collide"
+
+
 def test_one_pane_failure_does_not_cascade_kill_siblings(
     conn: sqlite3.Connection, serializer: ContainerSerializer
 ) -> None:

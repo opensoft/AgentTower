@@ -70,7 +70,28 @@ ORIGIN: Final[str] = "managed"
 # Substring (not whole-word) match against the env key; case-insensitive.
 # Per spec §Clarifications "Session 2026-05-24 (pre-implement walk)" Q3.
 
-_REDACT_KEY_PATTERNS: Final[tuple[str, ...]] = ("TOKEN", "SECRET", "KEY", "PASSWORD")
+_REDACT_KEY_PATTERNS: Final[tuple[str, ...]] = (
+    "TOKEN",
+    "SECRET",
+    "KEY",
+    "PASSWORD",
+    # L5 hardening: extend the substring set to cover the common
+    # credential-naming conventions that the original 4-entry list
+    # missed. All matched as case-insensitive substrings.
+    "PASSWD",
+    "PWD",  # matches "DB_PWD" etc.
+    "AUTH",
+    "BEARER",
+    "CREDENTIAL",  # matches CREDENTIAL + CREDENTIALS
+    "COOKIE",
+    "SESSION",
+    "PRIVATE",  # matches PRIVATE_KEY (caught) + PRIVATE_TOKEN etc.
+    "API",  # matches API_KEY (caught) + API_SECRET (caught) but also
+            # plain "API_HOST" — over-redacts. Trade-off accepted:
+            # FR-021 amendment treats the env redaction as best-
+            # effort defense in depth (no payload currently carries
+            # env at all).
+)
 
 REDACTED_PLACEHOLDER: Final[str] = "<redacted>"
 
@@ -84,9 +105,10 @@ def redact_env(env: dict[str, str]) -> dict[str, str]:
     """Return a copy of ``env`` with sensitive values replaced by ``<redacted>``.
 
     Sensitive keys are matched case-insensitively against the substring
-    set ``{TOKEN, SECRET, KEY, PASSWORD}``. Argv and ``working_dir`` are
-    NOT redacted (operator-visible diagnostics rely on them — FR-021
-    amendment).
+    set in :data:`_REDACT_KEY_PATTERNS` (TOKEN/SECRET/KEY/PASSWORD plus
+    the L5-extended set: PASSWD/PWD/AUTH/BEARER/CREDENTIAL/COOKIE/
+    SESSION/PRIVATE/API). Argv and ``working_dir`` are NOT redacted
+    (operator-visible diagnostics rely on them — FR-021 amendment).
     """
     return {
         k: (REDACTED_PLACEHOLDER if _key_is_sensitive(k) else v) for k, v in env.items()
