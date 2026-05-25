@@ -22,7 +22,9 @@ slight inter-surface inconsistency is acceptable.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -44,6 +46,51 @@ from .readiness import (
 from .versioning import AGENT_ROLES, QUEUE_STATES
 
 _log = logging.getLogger(__name__)
+
+# FR-027 / SC-006 latency budget. Crossing this triggers a WARN log but
+# the dashboard response is returned best-effort (FR-027 — no error
+# envelope, no missing fields).
+_LATENCY_BUDGET_MS: int = 500
+
+
+def _test_only_injection_ms() -> int:
+    """Test-only latency-injection hook (FEAT-014 T024 SC-006 / FR-027).
+
+    Returns the millisecond sleep amount when the env var
+    ``AGENTTOWER_TEST_INJECT_LATENCY_MS`` is set to a positive integer;
+    ``0`` (no injection) otherwise.
+
+    Production builds never set this env var — the env-var-gated sleep
+    path is dead code in release. Integration tests use this to force
+    ``app.dashboard`` past the SC-006 budget to exercise the FR-027
+    WARN-log path without needing a real slow daemon.
+    """
+    val = os.environ.get("AGENTTOWER_TEST_INJECT_LATENCY_MS", "")
+    if not val:
+        return 0
+    try:
+        return max(0, int(val))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _test_only_forced_degraded_subsystems() -> set[str]:
+    """Test-only readiness-probe override (FEAT-014 T024 SC-006 degraded
+    waiver).
+
+    Returns the set of subsystem names that should be forced to status
+    ``degraded`` regardless of their actual probe result, parsed from
+    ``AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS`` (comma-separated). Empty
+    set when the env var is unset.
+
+    Production builds never set this env var. Integration tests use this
+    to seed a ``subsystem_degraded`` recommendation without needing a
+    real Docker/tmux failure.
+    """
+    val = os.environ.get("AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS", "")
+    if not val:
+        return set()
+    return {name.strip() for name in val.split(",") if name.strip()}
 
 if TYPE_CHECKING:
     from ..socket_api.methods import DaemonContext
@@ -338,6 +385,17 @@ AGENT_STATE_KEYS: tuple[str, ...] = (
 )
 
 
+def _maybe_test_only_inject_latency() -> None:
+    """Sleep for ``_test_only_injection_ms()`` ms if the env var is set.
+
+    No-op in production (env var unset). Integration tests use this to
+    push ``app.dashboard`` past the SC-006 budget for FR-027 testing.
+    """
+    inject_ms = _test_only_injection_ms()
+    if inject_ms > 0:
+        time.sleep(inject_ms / 1000.0)
+
+
 def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
     """v1.1 — PaneState buckets per data-model.md §PaneState (FEAT-014 FR-001..FR-002).
 
@@ -573,9 +631,22 @@ def app_dashboard(
     params: dict[str, Any],
     peer_uid: int = _NO_PEER_UID,
 ) -> dict[str, Any]:
-    """Handler for ``app.dashboard`` (FR-007, FR-015..FR-018, FR-042, FR-045)."""
+    """Handler for ``app.dashboard`` (FR-007, FR-015..FR-018, FR-042, FR-045).
+
+    FEAT-014 FR-027 / SC-006: end-to-end latency is measured around the
+    full handler body. Exceeding ``_LATENCY_BUDGET_MS`` (500 ms) triggers
+    a WARN log with the event name ``app_dashboard_latency_exceeded``
+    and the actual measured latency in milliseconds; the response is
+    still returned best-effort (no error envelope, no missing fields).
+    """
     # FR-042 + FR-007: combined host-only + session-token gate.
     from .sessions import gate_session_required  # lazy (circular avoidance)
+
+    # FR-027 / SC-006 latency measurement spans the full handler body
+    # (after the host-only + session-token gate so we don't measure
+    # rejected-call paths). Wall-clock-equivalent monotonic ms; see
+    # Research §TS / §CW for the clock-source convention.
+    _t0 = time.monotonic_ns()
 
     gate = gate_session_required(params, peer_uid)
     if isinstance(gate, dict):
@@ -583,6 +654,27 @@ def app_dashboard(
     # gate is an AppSession; app.dashboard is side-effect-free (FR-045)
     # so we don't bind it for audit attribution.
 
+    try:
+        return _app_dashboard_body(ctx, params)
+    finally:
+        # FR-027 budget-miss best-effort: emit a single WARN line when the
+        # SC-006 latency budget is exceeded. The response is already on its
+        # way to the caller; this log is purely operator-visible telemetry.
+        _latency_ms = (time.monotonic_ns() - _t0) // 1_000_000
+        if _latency_ms > _LATENCY_BUDGET_MS:
+            _log.warning(
+                "app_dashboard_latency_exceeded latency_ms=%d budget_ms=%d",
+                _latency_ms,
+                _LATENCY_BUDGET_MS,
+            )
+
+
+def _app_dashboard_body(
+    ctx: "DaemonContext", params: dict[str, Any]
+) -> dict[str, Any]:
+    """Inner body of :func:`app_dashboard`, extracted so the latency
+    measurement in the outer function can use a clean try/finally
+    pattern around the entire response-assembly path."""
     if not isinstance(params, dict):
         params = {}
 
@@ -602,6 +694,10 @@ def app_dashboard(
     event_total = _event_count(ctx)
     # FEAT-014 v1.1 — additive PaneState / AgentState buckets (FR-001, FR-004).
     # by_state lives alongside the v1.0 counts dicts, not replacing them.
+    # FEAT-014 T024 / FR-027 test-only latency injection: integration tests
+    # set the env var to force the dashboard past the SC-006 budget. No-op
+    # in production (env var is never set in release builds).
+    _maybe_test_only_inject_latency()
     pane_state_buckets = _compute_pane_state_buckets(ctx)
     agent_state_buckets = _compute_agent_state_buckets(ctx)
 
@@ -616,6 +712,18 @@ def app_dashboard(
         probe_routing_worker(ctx),
         probe_log_attachment_workers(ctx),
     ]
+    # FEAT-014 T024 SC-006 degraded waiver — test-only hook for forcing
+    # probes into the degraded state via env var. No-op in production.
+    _forced_degraded = _test_only_forced_degraded_subsystems()
+    if _forced_degraded:
+        subsystem_rows = [
+            dataclasses.replace(
+                row, status="degraded", reason="test-only forced degraded"
+            )
+            if row.name in _forced_degraded
+            else row
+            for row in subsystem_rows
+        ]
     hints = emit_hints(
         ctx,
         subsystem_rows,

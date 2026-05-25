@@ -693,3 +693,163 @@ def test_t018_us3_acceptance_recommendation_precedence_over_socket(
         assert isinstance(rec["title"], str) and 0 < len(rec["title"]) <= 128
         if rec["detail"] is not None:
             assert len(rec["detail"]) <= 512
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T024 — SC-006 p95 latency + degraded waiver + FR-027 budget-miss
+#
+# Three sub-tests against a real `agenttowerd` process. Each uses the
+# test-only env-var hooks added to dashboard.py + readiness.py:
+#   • AGENTTOWER_TEST_INJECT_LATENCY_MS — sleeps that many ms inside
+#     one v1.1 aggregator, pushing the dashboard call past the 500ms
+#     SC-006 budget without needing a real slow daemon.
+#   • AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS — forces named subsystems
+#     into `degraded` status post-probe so the recommendation engine
+#     resolves to subsystem_degraded.
+# Both env vars are no-ops in production builds.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+def _p95_ms(samples: list[float]) -> float:
+    """95th percentile, nearest-rank method (ceil)."""
+    if len(samples) < 100:
+        raise AssertionError(
+            f"SC-006: need >=100 samples, got {len(samples)}"
+        )
+    s = sorted(samples)
+    # Nearest-rank: index ⌈0.95 * N⌉ - 1 (0-indexed).
+    idx = max(0, min(len(s) - 1, int(round(0.95 * len(s))) - 1))
+    return s[idx]
+
+
+def _measure_dashboard_latency_ms(socket_path: Path, token: str) -> tuple[dict, float]:
+    """Single ``app.dashboard`` call, return (envelope, latency_ms)."""
+    t0 = time.monotonic()
+    envelope = _one_shot_call(socket_path, "app.dashboard", {"app_session_token": token})
+    return envelope, (time.monotonic() - t0) * 1000.0
+
+
+def test_t024_sc006_p95_latency_under_steady_state_load_over_socket(
+    socket_path: Path,
+) -> None:
+    """T024 SC-006 p95 latency assertion: 100 consecutive ``app.dashboard``
+    calls under steady-state load (no daemon restart between samples,
+    real Unix socket). Sort latencies, take the 95th percentile, assert
+    ``p95 <= 500 ms``. Rejects the test if fewer than 100 samples were
+    collected (per task body)."""
+    hello = _one_shot_call(socket_path, "app.hello")
+    token = hello["result"]["app_session_token"]
+
+    latencies: list[float] = []
+    for _ in range(100):
+        envelope, latency_ms = _measure_dashboard_latency_ms(socket_path, token)
+        assert envelope["ok"] is True, envelope
+        latencies.append(latency_ms)
+
+    assert len(latencies) >= 100, "SC-006 needs >=100 samples"
+    p95 = _p95_ms(latencies)
+    assert p95 <= 500.0, (
+        f"SC-006 regression: p95 dashboard latency {p95:.1f} ms "
+        f"exceeds 500 ms budget. Samples (min/max/p95): "
+        f"{min(latencies):.1f}/{max(latencies):.1f}/{p95:.1f}"
+    )
+
+
+def test_t024_sc006_degraded_state_waiver_over_socket(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    """T024 SC-006 degraded-state waiver: with a forced-degraded subsystem
+    (via test-only env var), 100 ``app.dashboard`` calls all return
+    successfully with ``recommended_next_action.code == "subsystem_
+    degraded"`` and the v1.1 envelope intact. Latency p95 is RECORDED
+    for telemetry but NOT asserted against 500 ms (Clarifications R1
+    Q11 — the budget is explicitly waived during degradation)."""
+    # Force the docker probe into degraded status before the daemon
+    # starts. The dashboard.py override applies post-probe, so any
+    # daemon invocation reading this env will return docker as degraded.
+    env_with_force = dict(env)
+    env_with_force["AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS"] = "docker"
+
+    run_config_init(env_with_force)
+    proc = ensure_daemon(env_with_force, json_mode=True)
+    assert proc.returncode == 0, proc.stderr
+    paths = resolved_paths(Path(env_with_force["HOME"]))
+    sp = paths["socket"]
+
+    hello = _one_shot_call(sp, "app.hello")
+    token = hello["result"]["app_session_token"]
+
+    latencies: list[float] = []
+    degraded_count = 0
+    for _ in range(100):
+        envelope, latency_ms = _measure_dashboard_latency_ms(sp, token)
+        assert envelope["ok"] is True, envelope
+        result = envelope["result"]
+        # v1.1 envelope intact during degradation.
+        assert "by_state" in result["counts"]["panes"]
+        assert "by_state" in result["counts"]["agents"]
+        if result.get("recommended_next_action") and \
+           result["recommended_next_action"]["code"] == "subsystem_degraded":
+            degraded_count += 1
+        latencies.append(latency_ms)
+
+    assert len(latencies) >= 100, "SC-006 needs >=100 samples"
+    # Degraded recommendation expected on (almost) every call. Strict ==
+    # 100 would be brittle; allow a small jitter floor in case of probe
+    # timing variance.
+    assert degraded_count >= 95, (
+        f"degraded waiver: only {degraded_count}/100 calls returned "
+        "subsystem_degraded; expected ≥95"
+    )
+    # Latency p95 RECORDED but not asserted (Clarifications R1 Q11).
+    p95 = _p95_ms(latencies)
+    print(f"[T024 degraded waiver] p95 latency = {p95:.1f} ms (not asserted)")
+
+
+def test_t024_fr027_budget_miss_warns_and_returns_best_effort_over_socket(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    """T024 FR-027 budget-miss best-effort: with a ~600 ms injected slow
+    aggregator (test-only env-var hook), ``app.dashboard`` exceeds the
+    SC-006 budget. Assert (a) the response still returns with all v1.1
+    fields present and well-typed (NO ``latency_budget_exceeded`` error
+    envelope), (b) a WARN log line appears in the daemon log containing
+    ``app_dashboard_latency_exceeded`` + the actual measured latency."""
+    env_with_inject = dict(env)
+    env_with_inject["AGENTTOWER_TEST_INJECT_LATENCY_MS"] = "600"
+
+    run_config_init(env_with_inject)
+    proc = ensure_daemon(env_with_inject, json_mode=True)
+    assert proc.returncode == 0, proc.stderr
+    paths = resolved_paths(Path(env_with_inject["HOME"]))
+    sp = paths["socket"]
+
+    hello = _one_shot_call(sp, "app.hello")
+    token = hello["result"]["app_session_token"]
+    envelope = _one_shot_call(sp, "app.dashboard", {"app_session_token": token})
+
+    # FR-027 (a): response still returns successfully with v1.1 fields.
+    assert envelope["ok"] is True, envelope
+    result = envelope["result"]
+    assert "by_state" in result["counts"]["panes"]
+    assert "by_state" in result["counts"]["agents"]
+    assert "recently_skipped_count" in result["counts"]["routes"]
+    # No latency_budget_exceeded error code.
+    assert envelope.get("error") is None
+
+    # Allow the daemon to flush its log handler.
+    time.sleep(0.2)
+
+    # FR-027 (b): grep the daemon log for the stable event name.
+    log_path = paths["log_file"]
+    assert log_path.exists(), f"daemon log file missing: {log_path}"
+    log_contents = log_path.read_text(encoding="utf-8", errors="replace")
+    assert "app_dashboard_latency_exceeded" in log_contents, (
+        "FR-027 violation: no WARN log line found despite injected "
+        f"~600ms latency. Log file: {log_path}\n"
+        f"Contents (last 1000 chars):\n{log_contents[-1000:]!r}"
+    )
+    # The log line includes the actual measured latency in ms.
+    assert "latency_ms=" in log_contents, (
+        "FR-027 WARN log MUST include the actual measured latency"
+    )

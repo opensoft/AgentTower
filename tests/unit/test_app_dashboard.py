@@ -1061,6 +1061,51 @@ def test_dashboard_v1_1_fr020_agent_partition_at_wire(
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T024 — FR-027 latency-WARN unit test (caplog-based)
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr027_warn_when_latency_exceeds_budget(
+    daemon_ctx_with_db, host_session, monkeypatch, caplog
+) -> None:
+    """FR-027 + SC-006: when ``app.dashboard`` end-to-end latency exceeds
+    the 500 ms budget, the handler emits a single WARN log line with the
+    stable event name ``app_dashboard_latency_exceeded`` AND the response
+    is returned best-effort (no error envelope, all v1.1 fields present).
+    Uses the test-only env-var hook to inject ~600 ms of latency into
+    one of the v1.1 aggregators."""
+    import logging
+
+    monkeypatch.setenv("AGENTTOWER_TEST_INJECT_LATENCY_MS", "600")
+    caplog.set_level(logging.WARNING, logger="agenttower.app_contract.dashboard")
+
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+
+    # FR-027 best-effort: response still returns successfully with v1.1
+    # fields intact (no latency_budget_exceeded error envelope).
+    assert env["ok"] is True
+    result = env["result"]
+    assert "by_state" in result["counts"]["panes"]
+    assert "by_state" in result["counts"]["agents"]
+    assert "recently_skipped_count" in result["counts"]["routes"]
+
+    # WARN log line emitted with the stable event name + latency_ms field.
+    warn_records = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "app_dashboard_latency_exceeded" in r.getMessage()
+    ]
+    assert warn_records, (
+        "FR-027 violation: no WARN log emitted despite ~600ms injected "
+        f"latency. Captured records: {[r.getMessage() for r in caplog.records]!r}"
+    )
+    # The message includes the actual measured latency in ms.
+    assert "latency_ms=" in warn_records[0].getMessage()
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # FEAT-014 T025 — Polish SC-005 single-envelope shape assertion
 # ═════════════════════════════════════════════════════════════════════════
 
