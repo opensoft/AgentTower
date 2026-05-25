@@ -19,6 +19,7 @@ from agenttower.managed_sessions.dao import (
 )
 from agenttower.managed_sessions.errors import (
     MANAGED_PANE_ILLEGAL_TRANSITION,
+    MANAGED_PANE_NOT_FOUND,
     MANAGED_PANE_PROTECTED_ADOPTED,
     ManagedSessionsError,
 )
@@ -88,23 +89,45 @@ def _build_ready_pane(conn, serializer):  # noqa: ANN001
     return result
 
 
-# ─── T044 adopted-pane protection ───────────────────────────────────────
+# ─── T044 + N38: M6 contract error split ────────────────────────────────
 
 
-def test_remove_unknown_pane_returns_protected_adopted(
+def test_remove_truly_unknown_pane_id_returns_not_found(
     conn: sqlite3.Connection, serializer: ContainerSerializer
 ) -> None:
-    """T044: a pane_id without a managed_pane row is treated as adopted
-    (or non-existent — same operator-actionable answer); ``remove_pane``
-    raises ``managed_pane_protected_adopted`` per FR-012."""
+    """N38 (Pass 26 fix): pane_id unknown to BOTH `managed_pane` AND
+    `agents` → `managed_pane_not_found`. Distinguished from the
+    adopted case (id in `agents` only) per contracts/error-codes.md.
+    """
     with pytest.raises(ManagedSessionsError) as exc_info:
         remove_pane(
             conn=conn, serializer=serializer,
             pane_id="01HZ-NEVER-EXISTED",
         )
     exc = exc_info.value
+    assert exc.code == MANAGED_PANE_NOT_FOUND
+    assert exc.details == {"pane_id": "01HZ-NEVER-EXISTED"}
+
+
+def test_remove_adopted_pane_id_returns_protected_adopted(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """N38 (Pass 26 fix): pane_id IS in `agents` (adopted) but NOT in
+    `managed_pane` → `managed_pane_protected_adopted` per FR-012.
+    """
+    conn.execute(
+        "INSERT INTO agents (agent_id) VALUES (?)",
+        ("01HZ-ADOPTED-ONLY",),
+    )
+    conn.commit()
+    with pytest.raises(ManagedSessionsError) as exc_info:
+        remove_pane(
+            conn=conn, serializer=serializer,
+            pane_id="01HZ-ADOPTED-ONLY",
+        )
+    exc = exc_info.value
     assert exc.code == MANAGED_PANE_PROTECTED_ADOPTED
-    assert exc.details == {"agent_id": "01HZ-NEVER-EXISTED", "is_adopted": True}
+    assert exc.details == {"agent_id": "01HZ-ADOPTED-ONLY", "is_adopted": True}
 
 
 # ─── FR-018 illegal-transition (creating state cannot be removed) ───────

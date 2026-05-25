@@ -27,8 +27,10 @@ from agenttower.managed_sessions.dao import (
     select_panes_for_layout,
 )
 from agenttower.managed_sessions.errors import (
+    MANAGED_LAUNCH_COMMAND_NOT_FOUND,
     MANAGED_PANE_CONCURRENT_RECREATE,
     MANAGED_PANE_ILLEGAL_RECREATE_SOURCE,
+    MANAGED_PANE_NOT_FOUND,
     MANAGED_PANE_PROTECTED_ADOPTED,
     MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP,
     ManagedSessionsError,
@@ -105,20 +107,42 @@ def _layout_with_removed_pane(conn, serializer):  # noqa: ANN001
     return result.layout_id, master.id
 
 
-# ─── T044 adopted-pane protection ───────────────────────────────────────
+# ─── T044 + N38: M7 contract error split ────────────────────────────────
 
 
-def test_recreate_unknown_predecessor_returns_protected_adopted(
+def test_recreate_truly_unknown_predecessor_returns_not_found(
     conn: sqlite3.Connection, serializer: ContainerSerializer
 ) -> None:
+    """N38 (Pass 26 fix): predecessor_pane_id unknown to BOTH
+    `managed_pane` AND `agents` → `managed_pane_not_found`."""
     with pytest.raises(ManagedSessionsError) as exc_info:
         recreate_pane(
             conn=conn, serializer=serializer,
-            predecessor_pane_id="01HZ-NOT-MANAGED",
+            predecessor_pane_id="01HZ-NEVER-EXISTED",
+        )
+    exc = exc_info.value
+    assert exc.code == MANAGED_PANE_NOT_FOUND
+    assert exc.details == {"pane_id": "01HZ-NEVER-EXISTED"}
+
+
+def test_recreate_adopted_predecessor_returns_protected_adopted(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """N38 (Pass 26 fix): predecessor_pane_id IS in `agents` (adopted)
+    but NOT in `managed_pane` → `managed_pane_protected_adopted`."""
+    conn.execute(
+        "INSERT INTO agents (agent_id) VALUES (?)",
+        ("01HZ-ADOPTED-PREDECESSOR",),
+    )
+    conn.commit()
+    with pytest.raises(ManagedSessionsError) as exc_info:
+        recreate_pane(
+            conn=conn, serializer=serializer,
+            predecessor_pane_id="01HZ-ADOPTED-PREDECESSOR",
         )
     exc = exc_info.value
     assert exc.code == MANAGED_PANE_PROTECTED_ADOPTED
-    assert exc.details == {"agent_id": "01HZ-NOT-MANAGED", "is_adopted": True}
+    assert exc.details == {"agent_id": "01HZ-ADOPTED-PREDECESSOR", "is_adopted": True}
 
 
 # ─── illegal_recreate_source: predecessor must be removed/failed ────────
@@ -214,18 +238,59 @@ def test_recreate_from_removed_predecessor_inserts_linked_row(
 
 
 def test_recreate_with_launch_command_override_threads_through(
-    conn: sqlite3.Connection, serializer: ContainerSerializer
+    conn: sqlite3.Connection, serializer: ContainerSerializer, tmp_path
 ) -> None:
     """When the caller supplies `launch_command_override`, the new pane's
-    `launch_command_ref` is the override (not the predecessor's value)."""
+    `launch_command_ref` is the override (not the predecessor's value).
+
+    Post-N39 (Pass 26): the override is resolved synchronously, so the
+    profile must exist on disk. We seed a temp profile dir for the
+    test so the resolver succeeds.
+    """
+    profile = tmp_path / "claude-worker-v2.yaml"
+    profile.write_text('name: claude-worker-v2\ncommand: ["bash", "-lc", "echo v2"]\n')
+
     layout_id, removed_id = _layout_with_removed_pane(conn, serializer)
     out = recreate_pane(
         conn=conn, serializer=serializer,
         predecessor_pane_id=removed_id,
         launch_command_override="claude-worker-v2",
+        profile_override_dir=tmp_path,
     )
     new_row = select_pane(conn, out.pane_id)
     assert new_row.launch_command_ref == "claude-worker-v2"
+
+
+def test_recreate_with_bogus_override_returns_launch_command_not_found(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """N39 (Pass 26 fix): a non-resolvable ``launch_command_override``
+    surfaces ``managed_launch_command_not_found`` SYNCHRONOUSLY (before
+    the new managed_pane row is inserted), so the operator gets a
+    clean rejection instead of a delayed background-spawn failure.
+    Mirrors create_layout's upfront profile-resolution behavior.
+    """
+    layout_id, removed_id = _layout_with_removed_pane(conn, serializer)
+
+    # No profile_override_dir → only built-in profiles (none in MVP);
+    # "claude-worker-bogus" can't resolve.
+    with pytest.raises(ManagedSessionsError) as exc_info:
+        recreate_pane(
+            conn=conn, serializer=serializer,
+            predecessor_pane_id=removed_id,
+            launch_command_override="claude-worker-bogus",
+        )
+    exc = exc_info.value
+    assert exc.code == MANAGED_LAUNCH_COMMAND_NOT_FOUND
+    assert exc.details["profile_name"] == "claude-worker-bogus"
+
+    # Critical: no new managed_pane row was inserted (the rejection
+    # happens BEFORE the insert per the synchronous-error contract).
+    successor_count = conn.execute(
+        "SELECT COUNT(*) FROM managed_pane WHERE predecessor_id = ?",
+        (removed_id,),
+    ).fetchone()[0]
+    assert successor_count == 0
 
 
 # ─── FR-027: concurrent recreate of same predecessor ────────────────────

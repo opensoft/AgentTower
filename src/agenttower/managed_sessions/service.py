@@ -878,6 +878,31 @@ class RemovePaneResult:
     state: ManagedState  # always ManagedState.REMOVED on success
 
 
+def _pane_id_in_agents_table(conn: sqlite3.Connection, pane_id: str) -> bool:
+    """Return True iff a FEAT-006 ``agents`` row exists with this id.
+
+    Used by ``remove_pane`` / ``recreate_pane`` to distinguish between
+    two distinct missing-row outcomes per contracts/error-codes.md:
+    - ``managed_pane_protected_adopted`` — id IS in ``agents`` (adopted),
+      but NOT in ``managed_pane`` (so we refuse to manage it).
+    - ``managed_pane_not_found`` — id is unknown to both tables.
+
+    Failure-tolerant: returns False if the ``agents`` table doesn't
+    exist (FEAT-006 not wired in this fixture) so the legacy collapse
+    behavior (everything → protected_adopted) is preserved as a fallback
+    when no FK-target table is reachable. Tests that want the strict
+    not_found path must seed the ``agents`` table explicitly.
+    """
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM agents WHERE agent_id = ?",
+            (pane_id,),
+        ).fetchone()
+        return row is not None
+    except sqlite3.OperationalError:
+        return False
+
+
 def remove_pane(
     *,
     conn: sqlite3.Connection,
@@ -892,10 +917,13 @@ def remove_pane(
 ) -> RemovePaneResult:
     """Remove a managed pane (M6 contract).
 
-    1. T044 adopted-pane protection: if ``pane_id`` is not in
-       ``managed_pane`` → ``managed_pane_protected_adopted`` (the pane
-       is registered with FEAT-006 but not managed by us, so we refuse
-       to act on it).
+    1. Missing-row probe (T044 + M6 contract error split):
+       - id IS in ``agents`` but NOT in ``managed_pane`` →
+         ``managed_pane_protected_adopted`` (adopted-but-not-managed).
+       - id is unknown to both tables →
+         ``managed_pane_not_found``.
+       The split matches contracts/error-codes.md's distinct ``When``
+       clauses for the two codes (Pass 26 N38 fix).
     2. ``managed_pane_illegal_transition`` if the pane is in
        ``creating`` (FR-018: cancellation of in-flight create is out
        of scope; operator must wait or use recreate after failure).
@@ -912,14 +940,17 @@ def remove_pane(
     """
     pane = select_pane(conn, pane_id)
     if pane is None:
-        # T044 — adopted-pane protection. Per the M6 contract, a missing
-        # managed_pane row means the pane is either truly adopted (lives
-        # in FEAT-006's agents table but not in our managed_pane table)
-        # or never existed. We surface the protected-adopted error
-        # because that's the operator-actionable answer either way.
+        # M6 error split per contracts/error-codes.md (Pass 26 N38 fix):
+        # adopted (in agents, not in managed_pane) → protected_adopted;
+        # truly unknown (not in either) → not_found.
+        if _pane_id_in_agents_table(conn, pane_id):
+            raise ManagedSessionsError(
+                MANAGED_PANE_PROTECTED_ADOPTED,
+                details={"agent_id": pane_id, "is_adopted": True},
+            )
         raise ManagedSessionsError(
-            MANAGED_PANE_PROTECTED_ADOPTED,
-            details={"agent_id": pane_id, "is_adopted": True},
+            MANAGED_PANE_NOT_FOUND,
+            details={"pane_id": pane_id},
         )
 
     if pane.state == ManagedState.CREATING:
@@ -1058,6 +1089,7 @@ def recreate_pane(
     predecessor_pane_id: str,
     launch_command_override: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    profile_override_dir: Optional[Path] = None,
     event_emitter: Optional[EventEmitter] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
     actor: str = "operator",
@@ -1094,9 +1126,17 @@ def recreate_pane(
     """
     predecessor = select_pane(conn, predecessor_pane_id)
     if predecessor is None:
+        # Same M7 error split as remove_pane (Pass 26 N38 fix):
+        # adopted (in agents, not in managed_pane) → protected_adopted;
+        # truly unknown (not in either) → not_found.
+        if _pane_id_in_agents_table(conn, predecessor_pane_id):
+            raise ManagedSessionsError(
+                MANAGED_PANE_PROTECTED_ADOPTED,
+                details={"agent_id": predecessor_pane_id, "is_adopted": True},
+            )
         raise ManagedSessionsError(
-            MANAGED_PANE_PROTECTED_ADOPTED,
-            details={"agent_id": predecessor_pane_id, "is_adopted": True},
+            MANAGED_PANE_NOT_FOUND,
+            details={"pane_id": predecessor_pane_id},
         )
 
     if predecessor.state not in (ManagedState.REMOVED, ManagedState.FAILED):
@@ -1117,6 +1157,17 @@ def recreate_pane(
                 "limit": _CHAIN_DEPTH_LIMIT,
             },
         )
+
+    # N39 (Pass 26 fix): synchronously resolve the launch_command_override
+    # so a bogus profile name surfaces as ``managed_launch_command_not_found``
+    # BEFORE inserting the new managed_pane row. Mirrors create_layout's
+    # upfront resolve_profile pattern — keeps the M7 contract honest
+    # (a synchronous error response, not a delayed background failure).
+    # The override is only resolved (not stored as a profile object) so
+    # the spawn pipeline can re-read the YAML at spawn time (allowing
+    # operators to edit the profile between recreate calls).
+    if launch_command_override is not None:
+        resolve_profile(launch_command_override, override_dir=profile_override_dir)
 
     lock = serializer.for_container(predecessor.container_id)
     with lock:
