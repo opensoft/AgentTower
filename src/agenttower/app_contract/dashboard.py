@@ -297,7 +297,7 @@ def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
     registered pane on an inactive container goes to ``inactive-or-stale``
     by the priority rule, which lowers ``dar`` below v1.0 ``registered``.
     The US1 acceptance fixture (only active containers) is consistent.
-    Tracked for a future spec clarification round.
+    Tracked in https://github.com/opensoft/AgentTower/issues/28.
     """
     zeros = {k: 0 for k in PANE_STATE_KEYS}
     conn = getattr(ctx, "state_conn", None)
