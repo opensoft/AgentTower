@@ -125,10 +125,10 @@ The two cross-checks were loosened from strict equality to one-sided invariants 
 - Eviction: drop-oldest on insert when `maxlen` reached; expired entries (older than `window_ms`) are filtered out at read time (no background sweeper).
 - Reset: cleared implicitly on daemon process exit; no explicit reset path (FR-008, Clarifications Q7).
 
-**Constants**:
+**Constants** (Python module-level, CONSTANT_CASE per language convention; corrected per analyze M-CONST-CASE):
 
-- `window_ms = 300_000` (5 minutes; Clarifications Q6 — fixed daemon-side, not client-tunable in v1.1).
-- `maxlen = 10_000` (Research §RB — bounded memory, ~80 KB worst case).
+- `WINDOW_MS: Final[int] = 300_000` (5 minutes; Clarifications Q6 — fixed daemon-side, not client-tunable in v1.1). The wire field stays lowercase `recently_skipped_window_ms` per FR-007; only the Python module identifier is CONSTANT_CASE.
+- `MAXLEN: Final[int] = 10_000` (Research §RB — bounded memory, ~80 KB worst case). Sourced into `collections.deque(maxlen=MAXLEN)` at construction.
 
 **Invariants** (FR-008):
 
