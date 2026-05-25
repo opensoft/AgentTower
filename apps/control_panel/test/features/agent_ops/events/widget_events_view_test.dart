@@ -1,0 +1,120 @@
+import 'package:agenttower_control_panel/core/daemon/app_client.dart';
+import 'package:agenttower_control_panel/core/daemon/session.dart';
+import 'package:agenttower_control_panel/core/daemon/socket_client.dart';
+import 'package:agenttower_control_panel/core/providers.dart';
+import 'package:agenttower_control_panel/features/agent_ops/events/events_view.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+/// Widget tests for [EventsView] (FR-019). T164 — Phase 3 US1.
+///
+/// FR-019 / Round-3 R-32: events stream in observed-at descending
+/// order. The view exposes a "Jump to most recent" affordance — a
+/// FloatingActionButton.small with `Icons.vertical_align_top` and a
+/// matching tooltip.
+///
+/// Fixtures.event() generates the FEAT-011 wire shape (event_class /
+/// emitted_at). The Event freezed model uses event_type / observed_at —
+/// we build the model JSON locally rather than editing the fixture
+/// helper (test/helpers is read-only).
+void main() {
+  Map<String, dynamic> eventJson({
+    required String eventId,
+    String eventType = 'route_skipped',
+    String agentId = 'agent-1',
+    String excerpt = 'sample event excerpt',
+    DateTime? observedAt,
+  }) {
+    final now = (observedAt ?? DateTime.now().toUtc()).toIso8601String();
+    return {
+      'event_id': eventId,
+      'event_type': eventType,
+      'agent_id': agentId,
+      'excerpt': excerpt,
+      'observed_at': now,
+      'as_of': now,
+    };
+  }
+
+  group('EventsView', () {
+    testWidgets('empty list renders empty-state copy', (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appClientProvider.overrideWithValue(_FakeAppClient(rows: const [])),
+          ],
+          child: const MaterialApp(home: Scaffold(body: EventsView())),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('No events yet.'), findsOneWidget);
+      // FAB should not render when there are no rows.
+      expect(find.byType(FloatingActionButton), findsNothing);
+    });
+
+    testWidgets('populated list renders Jump-to-most-recent affordance',
+        (tester) async {
+      final rows = [
+        eventJson(eventId: 'e1'),
+        eventJson(eventId: 'e2'),
+        eventJson(eventId: 'e3'),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appClientProvider.overrideWithValue(_FakeAppClient(rows: rows)),
+          ],
+          child: const MaterialApp(home: Scaffold(body: EventsView())),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      // Three rows.
+      expect(find.byType(ListTile), findsNWidgets(3));
+      // Jump-to-most-recent affordance present.
+      expect(find.byIcon(Icons.vertical_align_top), findsOneWidget);
+      expect(find.byTooltip('Jump to most recent'), findsOneWidget);
+    });
+
+    testWidgets('tapping Jump-to-most-recent does not throw', (tester) async {
+      final rows = [eventJson(eventId: 'e1')];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appClientProvider.overrideWithValue(_FakeAppClient(rows: rows)),
+          ],
+          child: const MaterialApp(home: Scaffold(body: EventsView())),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byTooltip('Jump to most recent'));
+      await tester.pump();
+      await tester.pump();
+      // No exception — provider re-invalidated and refetched.
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+class _FakeAppClient extends AppClient {
+  _FakeAppClient({this.rows = const []})
+      : super(
+          session: DaemonSession(
+            client: SocketClient('/nonexistent/never-bound.sock'),
+          ),
+        );
+
+  final List<Map<String, dynamic>> rows;
+
+  @override
+  Future<PagedResult> eventList({
+    String? cursorNext,
+    int? limit,
+    String? agentId,
+  }) async {
+    return PagedResult(items: rows, cursorNext: null, total: rows.length);
+  }
+}

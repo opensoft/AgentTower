@@ -20,8 +20,12 @@ dependencies:
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
 
-  # i18n (research R-08 + R-23)
-  intl: ^0.20.2
+  # i18n (research R-08 + R-23). Pinned to ^0.19.0 because the
+  # Flutter 3.27 baseline (per flutter-testing-plan.md:154 and
+  # plan.md:14) ships flutter_localizations against intl 0.19.0.
+  # The ^0.20.2 pin from the 3.44 detour was reverted during the
+  # T160a bench re-pin.
+  intl: ^0.19.0
 
   # In-app markdown rendering (research R-09 + R-32)
   flutter_markdown: ^0.7.4
