@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../helpers/fixture_builders.dart';
+
 /// Widget tests for [EventsView] (FR-019). T164 — Phase 3 US1.
 ///
 /// FR-019 / Round-3 R-32: events stream in observed-at descending
@@ -14,27 +16,25 @@ import 'package:flutter_test/flutter_test.dart';
 /// FloatingActionButton.small with `Icons.vertical_align_top` and a
 /// matching tooltip.
 ///
-/// Fixtures.event() generates the FEAT-011 wire shape (event_class /
-/// emitted_at). The Event freezed model uses event_type / observed_at —
-/// we build the model JSON locally rather than editing the fixture
-/// helper (test/helpers is read-only).
+/// T176: the Event freezed model now accepts the FEAT-011 wire shape
+/// directly (`event_class` / `emitted_at` / `summary`) via
+/// `@JsonKey(name: ...)`, so the test consumes `Fixtures.event()`
+/// without needing to splice JSON inline.
 void main() {
   Map<String, dynamic> eventJson({
     required String eventId,
-    String eventType = 'route_skipped',
+    String eventClass = 'route_skipped',
     String agentId = 'agent-1',
-    String excerpt = 'sample event excerpt',
+    String summary = 'sample event excerpt',
     DateTime? observedAt,
   }) {
-    final now = (observedAt ?? DateTime.now().toUtc()).toIso8601String();
-    return {
-      'event_id': eventId,
-      'event_type': eventType,
-      'agent_id': agentId,
-      'excerpt': excerpt,
-      'observed_at': now,
-      'as_of': now,
-    };
+    return Fixtures.event(
+      eventId: eventId,
+      eventClass: eventClass,
+      agentId: agentId,
+      summary: summary,
+      emittedAt: (observedAt ?? DateTime.now().toUtc()).toIso8601String(),
+    );
   }
 
   group('EventsView', () {

@@ -1956,5 +1956,411 @@
   "runsViewNoProjectSelected": "No project selected.\n\nPick a project from the Projects view to see its validation runs.",
   "@runsViewNoProjectSelected": {
     "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "outageStateViewMessage": "runtime-unreachable — daemon not responding",
+  "@outageStateViewMessage": {
+    "description": "OutageStateView body copy when no surface label is provided (T177 FR-067 sweep)."
+  },
+  "outageStateViewMessageLabeled": "{surfaceLabel}: runtime-unreachable — daemon not responding",
+  "@outageStateViewMessageLabeled": {
+    "description": "OutageStateView body copy when a surface label is provided (T177 FR-067 sweep).",
+    "placeholders": {
+      "surfaceLabel": {
+        "type": "String",
+        "example": "Attention queue"
+      }
+    }
+  },
+  "outageStateViewRetryButton": "Retry connection",
+  "@outageStateViewRetryButton": {
+    "description": "OutageStateView retry button label (T177 FR-067 sweep)."
+  },
+  "contractIncompatStateViewMessage": "contract-version-incompatible",
+  "@contractIncompatStateViewMessage": {
+    "description": "ContractIncompatStateView body copy when no surface label is provided (T177 FR-067 sweep)."
+  },
+  "contractIncompatStateViewMessageLabeled": "{surfaceLabel}: contract-version-incompatible",
+  "@contractIncompatStateViewMessageLabeled": {
+    "description": "ContractIncompatStateView body copy when a surface label is provided (T177 FR-067 sweep).",
+    "placeholders": {
+      "surfaceLabel": {
+        "type": "String",
+        "example": "Attention queue"
+      }
+    }
+  },
+  "contractIncompatStateViewDetail": "Daemon advertises {daemonVersion}; app requires ≥ {appMinimum}. Mutation actions are disabled until the daemon is upgraded.",
+  "@contractIncompatStateViewDetail": {
+    "description": "ContractIncompatStateView body detail explaining the contract-version mismatch (T177 FR-067 sweep).",
+    "placeholders": {
+      "daemonVersion": {
+        "type": "String",
+        "example": "1.0"
+      },
+      "appMinimum": {
+        "type": "String",
+        "example": "1.1"
+      }
+    }
+  },
+  "degradedStateViewMessage": "runtime-degraded — some subsystems are unhealthy",
+  "@degradedStateViewMessage": {
+    "description": "DegradedStateView body copy when no surface label is provided (T177 FR-067 sweep)."
+  },
+  "degradedStateViewMessageLabeled": "{surfaceLabel}: runtime-degraded — some subsystems are unhealthy",
+  "@degradedStateViewMessageLabeled": {
+    "description": "DegradedStateView body copy when a surface label is provided (T177 FR-067 sweep).",
+    "placeholders": {
+      "surfaceLabel": {
+        "type": "String",
+        "example": "Attention queue"
+      }
+    }
+  },
+  "degradedStateViewRetryButton": "Retry connection",
+  "@degradedStateViewRetryButton": {
+    "description": "DegradedStateView retry button label (T177 FR-067 sweep)."
+  },
+  "errorStateViewMessage": "Failed to load:\n{error}",
+  "@errorStateViewMessage": {
+    "description": "ErrorStateView body copy when no surface label is provided (T177 FR-067 sweep).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "SocketException"
+      }
+    }
+  },
+  "errorStateViewMessageLabeled": "Failed to load {surfaceLabel}:\n{error}",
+  "@errorStateViewMessageLabeled": {
+    "description": "ErrorStateView body copy when a surface label is provided (T177 FR-067 sweep).",
+    "placeholders": {
+      "surfaceLabel": {
+        "type": "String",
+        "example": "Attention queue"
+      },
+      "error": {
+        "type": "String",
+        "example": "SocketException"
+      }
+    }
+  },
+  "errorStateViewRetryButton": "Retry connection",
+  "@errorStateViewRetryButton": {
+    "description": "ErrorStateView retry button label (T177 FR-067 sweep)."
+  },
+  "dashboardSectionDaemon": "Daemon",
+  "@dashboardSectionDaemon": {
+    "description": "DashboardView section title for the daemon stats card (T177 FR-067 sweep)."
+  },
+  "dashboardStatState": "State",
+  "@dashboardStatState": {
+    "description": "DashboardView label for the runtime-state stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatDaemonVersion": "Daemon version",
+  "@dashboardStatDaemonVersion": {
+    "description": "DashboardView label for the daemon-version stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatContractVersion": "Contract version",
+  "@dashboardStatContractVersion": {
+    "description": "DashboardView label for the contract-version stat (T177 FR-067 sweep)."
+  },
+  "dashboardSectionContainers": "Containers",
+  "@dashboardSectionContainers": {
+    "description": "DashboardView section title for the containers stats card (T177 FR-067 sweep)."
+  },
+  "dashboardStatActive": "Active",
+  "@dashboardStatActive": {
+    "description": "DashboardView label for the active-count stat (containers + log attachments) (T177 FR-067 sweep)."
+  },
+  "dashboardStatInactive": "Inactive",
+  "@dashboardStatInactive": {
+    "description": "DashboardView label for the inactive-count stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatDegradedScan": "Degraded scan",
+  "@dashboardStatDegradedScan": {
+    "description": "DashboardView label for the degraded-scan-count stat (T177 FR-067 sweep)."
+  },
+  "dashboardSectionPanes": "Panes",
+  "@dashboardSectionPanes": {
+    "description": "DashboardView section title for the panes stats card (T177 FR-067 sweep)."
+  },
+  "dashboardStatTotal": "Total",
+  "@dashboardStatTotal": {
+    "description": "DashboardView generic Total-count stat label reused across multiple sections (T177 FR-067 sweep)."
+  },
+  "dashboardStatRegistered": "Registered",
+  "@dashboardStatRegistered": {
+    "description": "DashboardView label for the registered-panes stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatUnregistered": "Unregistered",
+  "@dashboardStatUnregistered": {
+    "description": "DashboardView label for the unregistered-panes stat (T177 FR-067 sweep)."
+  },
+  "dashboardSectionAgents": "Agents",
+  "@dashboardSectionAgents": {
+    "description": "DashboardView section title for the agents stats card (T177 FR-067 sweep)."
+  },
+  "dashboardStatAgentByRole": "By role · {role}",
+  "@dashboardStatAgentByRole": {
+    "description": "DashboardView label for a per-role agent count stat (T177 FR-067 sweep).",
+    "placeholders": {
+      "role": {
+        "type": "String",
+        "example": "validator"
+      }
+    }
+  },
+  "dashboardSectionLogAttachments": "Log attachments",
+  "@dashboardSectionLogAttachments": {
+    "description": "DashboardView section title for the log-attachments stats card (T177 FR-067 sweep)."
+  },
+  "dashboardStatDegraded": "Degraded",
+  "@dashboardStatDegraded": {
+    "description": "DashboardView label for the degraded-count stat (log attachments) (T177 FR-067 sweep)."
+  },
+  "dashboardStatNone": "None",
+  "@dashboardStatNone": {
+    "description": "DashboardView label for the none-count stat (log attachments) (T177 FR-067 sweep)."
+  },
+  "dashboardSectionEventsQueueRoutes": "Events + Queue + Routes",
+  "@dashboardSectionEventsQueueRoutes": {
+    "description": "DashboardView section title combining events, queue and routes (T177 FR-067 sweep)."
+  },
+  "dashboardStatEventsTotal": "Events total",
+  "@dashboardStatEventsTotal": {
+    "description": "DashboardView label for the events-total stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatQueueQueued": "Queue queued",
+  "@dashboardStatQueueQueued": {
+    "description": "DashboardView label for the queue queued-count stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatQueueBlocked": "Queue blocked",
+  "@dashboardStatQueueBlocked": {
+    "description": "DashboardView label for the queue blocked-count stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatQueueDelivered": "Queue delivered",
+  "@dashboardStatQueueDelivered": {
+    "description": "DashboardView label for the queue delivered-count stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatRoutesEnabled": "Routes enabled",
+  "@dashboardStatRoutesEnabled": {
+    "description": "DashboardView label for the routes-enabled stat (T177 FR-067 sweep)."
+  },
+  "dashboardStatRoutesDisabled": "Routes disabled",
+  "@dashboardStatRoutesDisabled": {
+    "description": "DashboardView label for the routes-disabled stat (T177 FR-067 sweep)."
+  },
+  "dashboardRuntimeLabelUnreachable": "Unreachable",
+  "@dashboardRuntimeLabelUnreachable": {
+    "description": "DashboardView runtime-state label for the unreachable state (T177 FR-067 sweep)."
+  },
+  "dashboardRuntimeLabelContractMismatch": "Contract mismatch",
+  "@dashboardRuntimeLabelContractMismatch": {
+    "description": "DashboardView runtime-state label for the contract-version-incompatible state (T177 FR-067 sweep)."
+  },
+  "dashboardRuntimeLabelHealthyEmpty": "Healthy (empty)",
+  "@dashboardRuntimeLabelHealthyEmpty": {
+    "description": "DashboardView runtime-state label for the healthy-empty state (T177 FR-067 sweep)."
+  },
+  "dashboardRuntimeLabelHealthy": "Healthy",
+  "@dashboardRuntimeLabelHealthy": {
+    "description": "DashboardView runtime-state label for the healthy-populated state (T177 FR-067 sweep)."
+  },
+  "dashboardRuntimeLabelDegraded": "Degraded",
+  "@dashboardRuntimeLabelDegraded": {
+    "description": "DashboardView runtime-state label for the degraded state (T177 FR-067 sweep)."
+  },
+  "dashboardOutageTitle": "Daemon unreachable",
+  "@dashboardOutageTitle": {
+    "description": "DashboardView outage-state title shown when the daemon is unreachable (T177 FR-067 sweep)."
+  },
+  "dashboardOutageBody": "The Control Panel cannot reach `agenttowerd`.\nCheck that the daemon is running and that the socket path in Settings → Connection matches.",
+  "@dashboardOutageBody": {
+    "description": "DashboardView outage-state body explaining the daemon is unreachable (T177 FR-067 sweep)."
+  },
+  "dashboardOutageBodyLastError": "Last error: {error}",
+  "@dashboardOutageBodyLastError": {
+    "description": "DashboardView outage-state body when a last-error is available (T177 FR-067 sweep).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "SocketException"
+      }
+    }
+  },
+  "dashboardOutageRetryButton": "Retry connection",
+  "@dashboardOutageRetryButton": {
+    "description": "DashboardView outage-state retry-connection button label (T177 FR-067 sweep)."
+  },
+  "dashboardErrorBody": "Dashboard unavailable: {error}",
+  "@dashboardErrorBody": {
+    "description": "DashboardView error-state body when the dashboard provider failed (T177 FR-067 sweep).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "SocketException"
+      }
+    }
+  },
+  "dashboardErrorRetryButton": "Retry connection",
+  "@dashboardErrorRetryButton": {
+    "description": "DashboardView error-state retry-connection button label (T177 FR-067 sweep)."
+  },
+  "appShellNavRailAgentOps": "Agent Ops",
+  "@appShellNavRailAgentOps": {
+    "description": "AppShell navigation-rail label for the Agent Ops workspace (T177 FR-067 sweep)."
+  },
+  "appShellNavRailProjectSpecs": "Project + Specs",
+  "@appShellNavRailProjectSpecs": {
+    "description": "AppShell navigation-rail label for the Project + Specs workspace (T177 FR-067 sweep)."
+  },
+  "appShellNavRailTestingDemo": "Testing + Demo",
+  "@appShellNavRailTestingDemo": {
+    "description": "AppShell navigation-rail label for the Testing + Demo workspace (T177 FR-067 sweep)."
+  },
+  "appShellNavRailSettings": "Settings",
+  "@appShellNavRailSettings": {
+    "description": "AppShell navigation-rail label for the Settings workspace (T177 FR-067 sweep)."
+  },
+  "appShellWorkspaceTitleAgentOps": "Agent Operations",
+  "@appShellWorkspaceTitleAgentOps": {
+    "description": "AppShell AppBar title for the Agent Operations workspace (T177 FR-067 sweep)."
+  },
+  "appShellWorkspaceTitleProjectSpecs": "Project + Specs",
+  "@appShellWorkspaceTitleProjectSpecs": {
+    "description": "AppShell AppBar title for the Project + Specs workspace (T177 FR-067 sweep)."
+  },
+  "appShellWorkspaceTitleTestingDemo": "Testing + Demo",
+  "@appShellWorkspaceTitleTestingDemo": {
+    "description": "AppShell AppBar title for the Testing + Demo workspace (T177 FR-067 sweep)."
+  },
+  "appShellWorkspaceTitleSettings": "Settings",
+  "@appShellWorkspaceTitleSettings": {
+    "description": "AppShell AppBar title for the Settings workspace (T177 FR-067 sweep)."
+  },
+  "appShellSubViewPlaceholder": "{workspace} → {subViewId}\n(Feature widget lands in its US-phase task.)",
+  "@appShellSubViewPlaceholder": {
+    "description": "AppShell placeholder body shown until a US-phase task registers the real workspace widget (T177 FR-067 sweep).",
+    "placeholders": {
+      "workspace": {
+        "type": "String",
+        "example": "Agent Operations"
+      },
+      "subViewId": {
+        "type": "String",
+        "example": "dashboard"
+      }
+    }
+  },
+  "globalBannerContractIncompatibleMessage": "Daemon contract version {daemonVersion} is below the required minimum {requiredVersion}. Update the daemon or downgrade the app.",
+  "@globalBannerContractIncompatibleMessage": {
+    "description": "GlobalBanner FR-002 contract-version-incompatible message (T177 FR-067 sweep).",
+    "placeholders": {
+      "daemonVersion": {
+        "type": "String",
+        "example": "1.0"
+      },
+      "requiredVersion": {
+        "type": "String",
+        "example": "1.1"
+      }
+    }
+  },
+  "globalBannerFirstLaunchUnresolvedMessage": "Previously-active project \"{projectId}\" is not currently registered with the daemon. Pick a project from the Projects view to continue, or wait for it to reappear via adopted-agent inference.",
+  "@globalBannerFirstLaunchUnresolvedMessage": {
+    "description": "GlobalBanner FR-076 first-launch unresolved-project message (T177 FR-067 sweep).",
+    "placeholders": {
+      "projectId": {
+        "type": "String",
+        "example": "agenttower"
+      }
+    }
+  },
+  "globalBannerDismissTooltip": "Dismiss",
+  "@globalBannerDismissTooltip": {
+    "description": "GlobalBanner dismiss-button tooltip (T177 FR-067 sweep)."
+  },
+  "projectSwitcherDialogPlaceholder": "Project switcher\n(populated by US2 T087 — Projects view + provider)",
+  "@projectSwitcherDialogPlaceholder": {
+    "description": "ProjectSwitcher dialog placeholder copy shown until the US2 Projects view + provider lands (T177 FR-067 sweep)."
+  },
+  "projectSwitcherTooltip": "Switch project (Ctrl/Cmd+P)",
+  "@projectSwitcherTooltip": {
+    "description": "ProjectSwitcher icon-button tooltip (T177 FR-067 sweep)."
+  },
+  "versionBadgeLabel": "v{version}",
+  "@versionBadgeLabel": {
+    "description": "VersionBadge label when no newer release is advertised (T177 FR-067 sweep).",
+    "placeholders": {
+      "version": {
+        "type": "String",
+        "example": "0.1.0"
+      }
+    }
+  },
+  "versionBadgeLabelUpdateAvailable": "v{currentVersion} → v{remoteVersion}",
+  "@versionBadgeLabelUpdateAvailable": {
+    "description": "VersionBadge label when a newer release is advertised by the release feed (T177 FR-067 sweep).",
+    "placeholders": {
+      "currentVersion": {
+        "type": "String",
+        "example": "0.1.0"
+      },
+      "remoteVersion": {
+        "type": "String",
+        "example": "0.2.0"
+      }
+    }
+  },
+  "versionDisplayTileTitle": "Installed version v{version}",
+  "@versionDisplayTileTitle": {
+    "description": "VersionDisplayTile title showing the installed version (T177 FR-067 sweep).",
+    "placeholders": {
+      "version": {
+        "type": "String",
+        "example": "0.1.0"
+      }
+    }
+  },
+  "versionDisplayTileSubtitleUpdateAvailable": "Update available: v{remoteVersion} (released {releasedAt})",
+  "@versionDisplayTileSubtitleUpdateAvailable": {
+    "description": "VersionDisplayTile subtitle when a newer release is advertised (T177 FR-067 sweep).",
+    "placeholders": {
+      "remoteVersion": {
+        "type": "String",
+        "example": "0.2.0"
+      },
+      "releasedAt": {
+        "type": "String",
+        "example": "2026-05-25 12:00:00.000"
+      }
+    }
+  },
+  "versionDisplayTileSubtitleLatest": "You are on the latest version.",
+  "@versionDisplayTileSubtitleLatest": {
+    "description": "VersionDisplayTile subtitle when the installed version matches the latest advertised release (T177 FR-067 sweep)."
+  },
+  "versionDisplayTileReleaseNotesButton": "Release notes",
+  "@versionDisplayTileReleaseNotesButton": {
+    "description": "VersionDisplayTile release-notes button label (T177 FR-067 sweep)."
+  },
+  "versionDisplayTileLoadingTitle": "Checking app version…",
+  "@versionDisplayTileLoadingTitle": {
+    "description": "VersionDisplayTile title while the package info is loading (T177 FR-067 sweep)."
+  },
+  "versionDisplayTileErrorTitle": "Version unavailable",
+  "@versionDisplayTileErrorTitle": {
+    "description": "VersionDisplayTile title when package-info fetching errored (T177 FR-067 sweep)."
+  },
+  "versionDisplayTileErrorSubtitle": "{error}",
+  "@versionDisplayTileErrorSubtitle": {
+    "description": "VersionDisplayTile subtitle showing the package-info error (T177 FR-067 sweep).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "MissingPluginException"
+      }
+    }
   }
 }

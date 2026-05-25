@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../features/shell/runtime_state_provider.dart';
 import '../providers.dart';
@@ -60,6 +61,7 @@ class _DashboardBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final counts = (data['counts'] as Map<String, dynamic>?) ?? const {};
     final containers =
         (counts['containers'] as Map<String, dynamic>?) ?? const {};
@@ -76,48 +78,63 @@ class _DashboardBody extends StatelessWidget {
     return ListView(
       children: [
         _Section(
-          title: 'Daemon',
+          title: l10n.dashboardSectionDaemon,
           child: Wrap(
             spacing: 24,
             runSpacing: 8,
             children: [
-              _Stat(label: 'State', value: _runtimeLabel(runtime.kind)),
               _Stat(
-                label: 'Daemon version',
+                label: l10n.dashboardStatState,
+                value: _runtimeLabel(l10n, runtime.kind),
+              ),
+              _Stat(
+                label: l10n.dashboardStatDaemonVersion,
                 value: runtime.daemonVersion ?? '—',
               ),
               _Stat(
-                label: 'Contract version',
+                label: l10n.dashboardStatContractVersion,
                 value: runtime.contractCompat?.daemonVersion.toString() ?? '—',
               ),
             ],
           ),
         ),
         _Section(
-          title: 'Containers',
+          title: l10n.dashboardSectionContainers,
           child: Wrap(
             spacing: 24,
             runSpacing: 8,
             children: [
-              _Stat(label: 'Active', value: '${containers['active'] ?? 0}'),
-              _Stat(label: 'Inactive', value: '${containers['inactive'] ?? 0}'),
               _Stat(
-                label: 'Degraded scan',
+                label: l10n.dashboardStatActive,
+                value: '${containers['active'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatInactive,
+                value: '${containers['inactive'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatDegradedScan,
                 value: '${containers['degraded_scan'] ?? 0}',
               ),
             ],
           ),
         ),
         _Section(
-          title: 'Panes',
+          title: l10n.dashboardSectionPanes,
           child: Wrap(
             spacing: 24,
             runSpacing: 8,
             children: [
-              _Stat(label: 'Total', value: '${panes['total'] ?? 0}'),
-              _Stat(label: 'Registered', value: '${panes['registered'] ?? 0}'),
               _Stat(
-                label: 'Unregistered',
+                label: l10n.dashboardStatTotal,
+                value: '${panes['total'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatRegistered,
+                value: '${panes['registered'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatUnregistered,
                 value: '${panes['unregistered'] ?? 0}',
               ),
             ],
@@ -127,48 +144,72 @@ class _DashboardBody extends StatelessWidget {
         // re-enable a per-state pane breakdown when the contract 1.1
         // adds counts.panes.by_state.
         _Section(
-          title: 'Agents',
+          title: l10n.dashboardSectionAgents,
           child: Wrap(
             spacing: 24,
             runSpacing: 8,
             children: [
-              _Stat(label: 'Total', value: '${agents['total'] ?? 0}'),
+              _Stat(
+                label: l10n.dashboardStatTotal,
+                value: '${agents['total'] ?? 0}',
+              ),
               for (final entry in agentsByRole.entries)
-                _Stat(label: 'By role · ${entry.key}', value: '${entry.value}'),
+                _Stat(
+                  label: l10n.dashboardStatAgentByRole(entry.key),
+                  value: '${entry.value}',
+                ),
             ],
           ),
         ),
         _Section(
-          title: 'Log attachments',
+          title: l10n.dashboardSectionLogAttachments,
           child: Wrap(
             spacing: 24,
             runSpacing: 8,
             children: [
-              _Stat(label: 'Active', value: '${logAttachments['active'] ?? 0}'),
               _Stat(
-                label: 'Degraded',
+                label: l10n.dashboardStatActive,
+                value: '${logAttachments['active'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatDegraded,
                 value: '${logAttachments['degraded'] ?? 0}',
               ),
-              _Stat(label: 'None', value: '${logAttachments['none'] ?? 0}'),
+              _Stat(
+                label: l10n.dashboardStatNone,
+                value: '${logAttachments['none'] ?? 0}',
+              ),
             ],
           ),
         ),
         _Section(
-          title: 'Events + Queue + Routes',
+          title: l10n.dashboardSectionEventsQueueRoutes,
           child: Wrap(
             spacing: 24,
             runSpacing: 8,
             children: [
-              _Stat(label: 'Events total', value: '${events['total'] ?? 0}'),
-              _Stat(label: 'Queue queued', value: '${queue['queued'] ?? 0}'),
-              _Stat(label: 'Queue blocked', value: '${queue['blocked'] ?? 0}'),
               _Stat(
-                label: 'Queue delivered',
+                label: l10n.dashboardStatEventsTotal,
+                value: '${events['total'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatQueueQueued,
+                value: '${queue['queued'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatQueueBlocked,
+                value: '${queue['blocked'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatQueueDelivered,
                 value: '${queue['delivered'] ?? 0}',
               ),
-              _Stat(label: 'Routes enabled', value: '${routes['enabled'] ?? 0}'),
               _Stat(
-                label: 'Routes disabled',
+                label: l10n.dashboardStatRoutesEnabled,
+                value: '${routes['enabled'] ?? 0}',
+              ),
+              _Stat(
+                label: l10n.dashboardStatRoutesDisabled,
                 value: '${routes['disabled'] ?? 0}',
               ),
             ],
@@ -181,12 +222,17 @@ class _DashboardBody extends StatelessWidget {
     );
   }
 
-  static String _runtimeLabel(RuntimeStateKind kind) => switch (kind) {
-        RuntimeStateKind.runtimeUnreachable => 'Unreachable',
-        RuntimeStateKind.contractVersionIncompatible => 'Contract mismatch',
-        RuntimeStateKind.runtimeHealthyEmpty => 'Healthy (empty)',
-        RuntimeStateKind.runtimeHealthyPopulated => 'Healthy',
-        RuntimeStateKind.runtimeDegraded => 'Degraded',
+  static String _runtimeLabel(AppLocalizations l10n, RuntimeStateKind kind) =>
+      switch (kind) {
+        RuntimeStateKind.runtimeUnreachable =>
+          l10n.dashboardRuntimeLabelUnreachable,
+        RuntimeStateKind.contractVersionIncompatible =>
+          l10n.dashboardRuntimeLabelContractMismatch,
+        RuntimeStateKind.runtimeHealthyEmpty =>
+          l10n.dashboardRuntimeLabelHealthyEmpty,
+        RuntimeStateKind.runtimeHealthyPopulated =>
+          l10n.dashboardRuntimeLabelHealthy,
+        RuntimeStateKind.runtimeDegraded => l10n.dashboardRuntimeLabelDegraded,
       };
 }
 
@@ -198,6 +244,7 @@ class _OutageState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -211,23 +258,23 @@ class _OutageState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'Daemon unreachable',
+              l10n.dashboardOutageTitle,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text(
               runtime.lastError == null
-                  ? 'The Control Panel cannot reach `agenttowerd`.\n'
-                      'Check that the daemon is running and that the socket path in '
-                      'Settings → Connection matches.'
-                  : 'Last error: ${runtime.lastError}',
+                  ? l10n.dashboardOutageBody
+                  : l10n.dashboardOutageBodyLastError(
+                      runtime.lastError.toString(),
+                    ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry connection'),
+              label: Text(l10n.dashboardOutageRetryButton),
             ),
           ],
         ),
@@ -244,16 +291,20 @@ class _DashboardError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Dashboard unavailable: $error', textAlign: TextAlign.center),
+          Text(
+            l10n.dashboardErrorBody(error.toString()),
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: onRetry,
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry connection'),
+            label: Text(l10n.dashboardErrorRetryButton),
           ),
         ],
       ),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/l10n/app_localizations.dart';
+
 /// Project switcher — invoked by Ctrl+P (Linux/Windows) / Cmd+P (macOS)
 /// per FR-007, plus a visible UI affordance.
 ///
@@ -19,13 +21,13 @@ class ProjectSwitcher extends StatelessWidget {
     await showDialog<void>(
       context: context,
       barrierDismissible: true,
-      builder: (_) => const Dialog(
+      builder: (dialogCtx) => Dialog(
         child: SizedBox(
           width: 480,
           height: 360,
           child: Center(
             child: Text(
-              'Project switcher\n(populated by US2 T087 — Projects view + provider)',
+              AppLocalizations.of(dialogCtx).projectSwitcherDialogPlaceholder,
               textAlign: TextAlign.center,
             ),
           ),
@@ -37,7 +39,7 @@ class ProjectSwitcher extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      tooltip: 'Switch project (Ctrl/Cmd+P)',
+      tooltip: AppLocalizations.of(context).projectSwitcherTooltip,
       icon: const Icon(Icons.workspaces_outlined),
       onPressed: () => show(context),
     );

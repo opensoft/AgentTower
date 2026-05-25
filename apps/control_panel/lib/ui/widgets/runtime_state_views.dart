@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../domain/models/common_enums.dart';
 import '../../features/shell/runtime_state_provider.dart';
 
@@ -92,6 +93,7 @@ class OutageStateView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -100,8 +102,8 @@ class OutageStateView extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             surfaceLabel == null
-                ? 'runtime-unreachable — daemon not responding'
-                : '$surfaceLabel: runtime-unreachable — daemon not responding',
+                ? l10n.outageStateViewMessage
+                : l10n.outageStateViewMessageLabeled(surfaceLabel!),
             textAlign: TextAlign.center,
           ),
           if (state?.lastError != null) ...[
@@ -117,7 +119,10 @@ class OutageStateView extends StatelessWidget {
           ],
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry connection')),
+            FilledButton(
+              onPressed: onRetry,
+              child: Text(l10n.outageStateViewRetryButton),
+            ),
           ],
         ],
       ),
@@ -140,6 +145,7 @@ class ContractIncompatStateView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compat = state.contractCompat;
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -148,8 +154,8 @@ class ContractIncompatStateView extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             surfaceLabel == null
-                ? 'contract-version-incompatible'
-                : '$surfaceLabel: contract-version-incompatible',
+                ? l10n.contractIncompatStateViewMessage
+                : l10n.contractIncompatStateViewMessageLabeled(surfaceLabel!),
             textAlign: TextAlign.center,
           ),
           if (compat != null) ...[
@@ -157,9 +163,10 @@ class ContractIncompatStateView extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Text(
-                'Daemon advertises ${compat.daemonVersion}; '
-                'app requires ≥ ${compat.appMinimum}. '
-                'Mutation actions are disabled until the daemon is upgraded.',
+                l10n.contractIncompatStateViewDetail(
+                  compat.daemonVersion.toString(),
+                  compat.appMinimum.toString(),
+                ),
                 style: Theme.of(context).textTheme.bodySmall,
                 textAlign: TextAlign.center,
               ),
@@ -186,6 +193,7 @@ class DegradedStateView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -194,13 +202,16 @@ class DegradedStateView extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             surfaceLabel == null
-                ? 'runtime-degraded — some subsystems are unhealthy'
-                : '$surfaceLabel: runtime-degraded — some subsystems are unhealthy',
+                ? l10n.degradedStateViewMessage
+                : l10n.degradedStateViewMessageLabeled(surfaceLabel!),
             textAlign: TextAlign.center,
           ),
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry connection')),
+            FilledButton(
+              onPressed: onRetry,
+              child: Text(l10n.degradedStateViewRetryButton),
+            ),
           ],
         ],
       ),
@@ -265,6 +276,7 @@ class ErrorStateView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -273,13 +285,19 @@ class ErrorStateView extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             surfaceLabel == null
-                ? 'Failed to load:\n$error'
-                : 'Failed to load $surfaceLabel:\n$error',
+                ? l10n.errorStateViewMessage(error.toString())
+                : l10n.errorStateViewMessageLabeled(
+                    surfaceLabel!,
+                    error.toString(),
+                  ),
             textAlign: TextAlign.center,
           ),
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry connection')),
+            FilledButton(
+              onPressed: onRetry,
+              child: Text(l10n.errorStateViewRetryButton),
+            ),
           ],
         ],
       ),

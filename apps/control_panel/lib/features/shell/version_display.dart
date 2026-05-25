@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../core/update/release_feed_check.dart';
 import '../../ui/widgets/safe_url_launcher.dart';
 
@@ -44,6 +45,7 @@ class VersionBadge extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final pkg = ref.watch(packageInfoProvider);
     final feed = ref.watch(releaseFeedCheckProvider);
+    final l10n = AppLocalizations.of(context);
     return pkg.when(
       data: (info) {
         final theme = Theme.of(context);
@@ -67,8 +69,11 @@ class VersionBadge extends ConsumerWidget {
           ),
           label: Text(
             updateAvailable
-                ? 'v${info.version} → v$remoteVersion'
-                : 'v${info.version}',
+                ? l10n.versionBadgeLabelUpdateAvailable(
+                    info.version,
+                    remoteVersion ?? '',
+                  )
+                : l10n.versionBadgeLabel(info.version),
           ),
           onPressed: updateAvailable && url != null && url.isNotEmpty
               ? () => SafeUrlLauncher.open(context, url)
@@ -90,6 +95,7 @@ class VersionDisplayTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final pkg = ref.watch(packageInfoProvider);
     final feed = ref.watch(releaseFeedCheckProvider);
+    final l10n = AppLocalizations.of(context);
     return pkg.when(
       data: (info) {
         final remote = feed.maybeWhen(
@@ -107,30 +113,32 @@ class VersionDisplayTile extends ConsumerWidget {
                 ? Theme.of(context).colorScheme.error
                 : null,
           ),
-          title: Text('Installed version v${info.version}'),
+          title: Text(l10n.versionDisplayTileTitle(info.version)),
           subtitle: Text(
             updateAvailable
-                ? 'Update available: v${remote.version} '
-                    '(released ${remote.releasedAt.toLocal()})'
-                : 'You are on the latest version.',
+                ? l10n.versionDisplayTileSubtitleUpdateAvailable(
+                    remote.version,
+                    remote.releasedAt.toLocal().toString(),
+                  )
+                : l10n.versionDisplayTileSubtitleLatest,
           ),
           trailing: updateAvailable && remote.releaseNotesUrl.isNotEmpty
               ? TextButton(
                   onPressed: () =>
                       SafeUrlLauncher.open(context, remote.releaseNotesUrl),
-                  child: const Text('Release notes'),
+                  child: Text(l10n.versionDisplayTileReleaseNotesButton),
                 )
               : null,
         );
       },
-      loading: () => const ListTile(
-        leading: Icon(Icons.hourglass_empty),
-        title: Text('Checking app version…'),
+      loading: () => ListTile(
+        leading: const Icon(Icons.hourglass_empty),
+        title: Text(l10n.versionDisplayTileLoadingTitle),
       ),
       error: (e, _) => ListTile(
         leading: const Icon(Icons.error_outline),
-        title: const Text('Version unavailable'),
-        subtitle: Text('$e'),
+        title: Text(l10n.versionDisplayTileErrorTitle),
+        subtitle: Text(l10n.versionDisplayTileErrorSubtitle(e.toString())),
       ),
     );
   }

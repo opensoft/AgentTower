@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../domain/models/common_enums.dart';
 import '../project_specs/projects/first_launch_resolution.dart';
 import 'runtime_state_provider.dart';
@@ -17,6 +18,7 @@ class GlobalBanner extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(runtimeStateProvider);
     final firstLaunch = ref.watch(firstLaunchOutcomeProvider);
+    final l10n = AppLocalizations.of(context);
 
     // FR-002 banner takes precedence — it blocks mutations.
     if (state.kind == RuntimeStateKind.contractVersionIncompatible) {
@@ -27,9 +29,10 @@ class GlobalBanner extends ConsumerWidget {
         color: Theme.of(context).colorScheme.errorContainer,
         onColor: Theme.of(context).colorScheme.onErrorContainer,
         icon: Icons.warning_amber_outlined,
-        message:
-            'Daemon contract version $daemonV is below the required minimum '
-            '$requiredV. Update the daemon or downgrade the app.',
+        message: l10n.globalBannerContractIncompatibleMessage(
+          daemonV,
+          requiredV,
+        ),
       );
     }
 
@@ -42,11 +45,9 @@ class GlobalBanner extends ConsumerWidget {
         color: Theme.of(context).colorScheme.tertiaryContainer,
         onColor: Theme.of(context).colorScheme.onTertiaryContainer,
         icon: Icons.info_outline,
-        message:
-            'Previously-active project "${firstLaunch.unresolvedPersistedProjectId}" '
-            'is not currently registered with the daemon. Pick a project from '
-            'the Projects view to continue, or wait for it to reappear via '
-            'adopted-agent inference.',
+        message: l10n.globalBannerFirstLaunchUnresolvedMessage(
+          firstLaunch.unresolvedPersistedProjectId ?? '',
+        ),
         onDismiss: () {
           // Clear the banner by clearing the outcome state. Operator
           // dismisses once they've acknowledged.
@@ -91,7 +92,7 @@ class _BannerShell extends StatelessWidget {
               IconButton(
                 onPressed: onDismiss,
                 icon: Icon(Icons.close, color: onColor),
-                tooltip: 'Dismiss',
+                tooltip: AppLocalizations.of(context).globalBannerDismissTooltip,
               ),
           ],
         ),

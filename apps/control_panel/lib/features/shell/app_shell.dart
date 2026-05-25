@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../domain/models/common_enums.dart';
 import '../../routing/route_paths.dart';
 import '../notifications/badges.dart';
@@ -35,6 +36,7 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final subViews = RoutePath.subViewsFor(route.workspace);
     final selectedSubViewIdx = subViews.indexOf(route.subViewId);
 
@@ -49,7 +51,7 @@ class AppShell extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_workspaceLabel(route.workspace)),
+        title: Text(_workspaceLabel(l10n, route.workspace)),
         // Analyze C2 + Round-3 remediation: VersionBadge appears on
         // every workspace AppBar so T146's "Dashboard + Settings"
         // surface requirement is met globally rather than per-view.
@@ -82,26 +84,26 @@ class AppShell extends ConsumerWidget {
                     );
                   },
                   labelType: NavigationRailLabelType.all,
-                  destinations: const [
+                  destinations: [
                     NavigationRailDestination(
-                      icon: Icon(Icons.dashboard_outlined),
-                      selectedIcon: Icon(Icons.dashboard),
-                      label: Text('Agent Ops'),
+                      icon: const Icon(Icons.dashboard_outlined),
+                      selectedIcon: const Icon(Icons.dashboard),
+                      label: Text(l10n.appShellNavRailAgentOps),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.folder_outlined),
-                      selectedIcon: Icon(Icons.folder),
-                      label: Text('Project + Specs'),
+                      icon: const Icon(Icons.folder_outlined),
+                      selectedIcon: const Icon(Icons.folder),
+                      label: Text(l10n.appShellNavRailProjectSpecs),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.science_outlined),
-                      selectedIcon: Icon(Icons.science),
-                      label: Text('Testing + Demo'),
+                      icon: const Icon(Icons.science_outlined),
+                      selectedIcon: const Icon(Icons.science),
+                      label: Text(l10n.appShellNavRailTestingDemo),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.settings_outlined),
-                      selectedIcon: Icon(Icons.settings),
-                      label: Text('Settings'),
+                      icon: const Icon(Icons.settings_outlined),
+                      selectedIcon: const Icon(Icons.settings),
+                      label: Text(l10n.appShellNavRailSettings),
                     ),
                   ],
                 ),
@@ -152,17 +154,19 @@ class AppShell extends ConsumerWidget {
     );
   }
 
-  static String _workspaceLabel(Workspace w) => switch (w) {
-        Workspace.agentOps => 'Agent Operations',
-        Workspace.projectSpecs => 'Project + Specs',
-        Workspace.testingDemo => 'Testing + Demo',
-        Workspace.settings => 'Settings',
+  static String _workspaceLabel(AppLocalizations l10n, Workspace w) =>
+      switch (w) {
+        Workspace.agentOps => l10n.appShellWorkspaceTitleAgentOps,
+        Workspace.projectSpecs => l10n.appShellWorkspaceTitleProjectSpecs,
+        Workspace.testingDemo => l10n.appShellWorkspaceTitleTestingDemo,
+        Workspace.settings => l10n.appShellWorkspaceTitleSettings,
       };
 
   /// Public hook for placeholder widgets — used by `_SubViewPlaceholder`
   /// and by feature widgets that want to title themselves consistently
   /// with the shell's AppBar.
-  static String workspaceLabel(Workspace w) => _workspaceLabel(w);
+  static String workspaceLabel(AppLocalizations l10n, Workspace w) =>
+      _workspaceLabel(l10n, w);
 }
 
 /// Placeholder body shown until each US-phase task replaces it with the
@@ -175,12 +179,15 @@ class _SubViewPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
-          '${AppShell._workspaceLabel(route.workspace)} → ${route.subViewId}\n'
-          '(Feature widget lands in its US-phase task.)',
+          l10n.appShellSubViewPlaceholder(
+            AppShell._workspaceLabel(l10n, route.workspace),
+            route.subViewId,
+          ),
           textAlign: TextAlign.center,
         ),
       ),

@@ -65,6 +65,12 @@ dev_dependencies:
   freezed: ^2.5.7
   json_serializable: ^6.8.0
 
+  # Static analysis for the T157 FR-005 audit
+  # (tools/audit_no_local_mutation.dart). Pinned to the version the
+  # Flutter 3.27 toolchain already resolves transitively so we don't
+  # destabilize the lock.
+  analyzer: ^7.7.1
+
   # Golden tests across theme/density variants (research R-15)
   alchemist: ^0.11.0
 
