@@ -19,9 +19,24 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from ..errors import CONTAINER_NOT_FOUND, ManagedSessionsError
+from ..dao import (
+    count_ready_panes_for_layout,
+    list_layouts,
+    list_panes,
+    select_layout,
+    select_pane,
+    select_panes_for_layout,
+    select_predecessor_chain,
+)
+from ..errors import (
+    CONTAINER_NOT_FOUND,
+    MANAGED_LAYOUT_NOT_FOUND,
+    MANAGED_PANE_NOT_FOUND,
+    ManagedSessionsError,
+)
 from ..service import ValidationFailedError, create_layout
-from ..state_machine import ManagedState
+from ..state_machine import FailedStage, ManagedState
+from ..view_models import ManagedLayoutView, ManagedPaneView, ORIGIN_MANAGED
 
 if TYPE_CHECKING:
     from ...socket_api.methods import DaemonContext
@@ -256,36 +271,339 @@ def _state_str(state: Any) -> str:
     return str(state)
 
 
-# ─── M2-M5 stubs (Phase 4 T033 wires list/detail; placeholder return) ───
-#
-# These exist so the dispatcher registration in T025 can install the
-# method names; T033 (Phase 4) replaces the stub body with the actual
-# list/detail implementation. We return ``internal_error`` rather than
-# ``unknown_method`` so the operator-facing surface is honest about
-# "registered but not yet implemented" rather than masking as missing.
+# ─── M2-M5 list / detail handlers (T033 — Phase 4a) ─────────────────────
 
 
-def _not_yet_implemented(method: str) -> dict[str, Any]:
-    return _err(
-        "internal_error",
-        f"{method} is dispatch-registered but not yet implemented (T033/T048 follow-up)",
+def _state_filter(value: Any) -> ManagedState | None:
+    """Coerce an optional ``state`` filter param to a ManagedState, or
+    ``None`` if absent. Raises a ValueError-wrapping inside a closed-set
+    validation_failed if the value is non-string or not in the enum."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("state filter must be a string")
+    try:
+        return ManagedState(value)
+    except ValueError:
+        valid = ", ".join(s.value for s in ManagedState)
+        raise ValueError(f"state filter must be one of: {valid}")
+
+
+def _layout_row_to_view(row: Any, panes: list[ManagedPaneView] | None = None) -> ManagedLayoutView:
+    """Project a ManagedLayoutRow → ManagedLayoutView (M2/M3 shape)."""
+    return ManagedLayoutView(
+        layout_id=row.id,
+        container_id=row.container_id,
+        template_name=row.template_name,
+        intended_pane_count=row.intended_pane_count,
+        state=row.state,
+        failed_stage=row.failed_stage,
+        idempotency_key=row.idempotency_key,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        panes=panes or [],
     )
 
 
+def _pane_row_to_view(row: Any) -> ManagedPaneView:
+    """Project a ManagedPaneRow → ManagedPaneView (M4/M5 shape)."""
+    return ManagedPaneView(
+        pane_id=row.id,
+        layout_id=row.layout_id,
+        container_id=row.container_id,
+        role=row.role,
+        capability=row.capability,
+        label=row.label,
+        state=row.state,
+        tmux_session_name=row.tmux_session_name,
+        tmux_pane_index=row.tmux_pane_index,
+        chain_depth=row.chain_depth,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        agent_id=row.agent_id,
+        launch_command_ref=row.launch_command_ref,
+        pending_marker_token=row.pending_marker_token,
+        failed_stage=row.failed_stage,
+        predecessor_id=row.predecessor_id,
+        # log_attached is FEAT-007's concern; it's threaded in Phase 4b
+        # alongside the FEAT-007 log-attach wiring.
+        log_attached=False,
+    )
+
+
+def _layout_view_to_list_payload(
+    view: ManagedLayoutView, ready_pane_count: int
+) -> dict[str, Any]:
+    """Project a layout view into the M2 list-row payload (with ready_pane_count)."""
+    return {
+        "layout_id": view.layout_id,
+        "container_id": view.container_id,
+        "template_name": view.template_name,
+        "state": view.state.value,
+        "intended_pane_count": view.intended_pane_count,
+        "ready_pane_count": ready_pane_count,
+        "created_at": view.created_at,
+        "origin": ORIGIN_MANAGED,
+    }
+
+
+def _pane_view_to_payload(view: ManagedPaneView) -> dict[str, Any]:
+    """Project a pane view into the M3/M4/M5 pane payload shape."""
+    payload: dict[str, Any] = {
+        "pane_id": view.pane_id,
+        "layout_id": view.layout_id,
+        "container_id": view.container_id,
+        "role": view.role,
+        "capability": view.capability,
+        "label": view.label,
+        "state": view.state.value,
+        "tmux_session_name": view.tmux_session_name,
+        "tmux_pane_index": view.tmux_pane_index,
+        "chain_depth": view.chain_depth,
+        "agent_id": view.agent_id,
+        "predecessor_id": view.predecessor_id,
+        "log_attached": view.log_attached,
+        "origin": ORIGIN_MANAGED,
+    }
+    if view.failed_stage is not None:
+        payload["failed_stage"] = (
+            view.failed_stage.value if isinstance(view.failed_stage, FailedStage)
+            else str(view.failed_stage)
+        )
+    return payload
+
+
+def _scope_to_peer_container(
+    peer_container: str | None, requested_container_id: str | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """R12 thin-client peer scoping for list filters.
+
+    If the caller is a bench-container peer:
+    - cross-container explicit filters return ``host_only``
+    - missing filter is silently scoped to the peer's container (per
+      contracts/managed-methods.md §Bench-container thin-client peer scoping)
+    """
+    if peer_container is None:
+        # Host peer (or unknown — treat as host per existing pattern).
+        return requested_container_id, None
+    if requested_container_id is not None and requested_container_id != peer_container:
+        return None, _err(
+            "host_only",
+            "bench-container peers may only list their own container",
+            details={
+                "peer_container_id": peer_container,
+                "requested_container_id": requested_container_id,
+            },
+        )
+    return peer_container, None
+
+
 def _managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
-    return _not_yet_implemented("managed.layout.list")
+    """``managed.layout.list`` (M2) — paginated by ``(created_at DESC, id DESC)``."""
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _err("internal_error", "daemon state_conn not wired")
+
+    peer_container = _peer_container_id(ctx, peer_uid)
+    container_id, scope_err = _scope_to_peer_container(
+        peer_container, params.get("container_id")
+    )
+    if scope_err is not None:
+        return scope_err
+
+    try:
+        state = _state_filter(params.get("state"))
+    except ValueError as exc:
+        return _err(
+            "validation_failed", str(exc),
+            details={"field": "state", "reason": str(exc)},
+        )
+
+    limit = params.get("limit", 50)
+    after = params.get("after")
+    if after is not None and not isinstance(after, str):
+        return _err(
+            "validation_failed", "after cursor must be a string",
+            details={"field": "after", "reason": "wrong type"},
+        )
+
+    rows, next_cursor = list_layouts(
+        conn,
+        container_id=container_id,
+        state=state,
+        limit=int(limit) if isinstance(limit, int) else 50,
+        after=after,
+    )
+
+    items: list[dict[str, Any]] = []
+    for layout_row in rows:
+        ready = count_ready_panes_for_layout(conn, layout_row.id)
+        items.append(_layout_view_to_list_payload(_layout_row_to_view(layout_row), ready))
+
+    return _ok({"items": items, "next": next_cursor})
 
 
 def _managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
-    return _not_yet_implemented("managed.layout.detail")
+    """``managed.layout.detail`` (M3) — full layout + (optionally) terminal panes."""
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _err("internal_error", "daemon state_conn not wired")
+
+    layout_id = params.get("layout_id")
+    if not isinstance(layout_id, str) or not layout_id:
+        return _err(
+            "validation_failed", "missing or empty 'layout_id'",
+            details={"field": "layout_id", "reason": "missing or empty"},
+        )
+    include_terminal = bool(params.get("include_terminal_panes", False))
+
+    layout_row = select_layout(conn, layout_id)
+    if layout_row is None:
+        return _err(
+            MANAGED_LAYOUT_NOT_FOUND,
+            f"unknown layout_id {layout_id!r}",
+            details={"layout_id": layout_id},
+        )
+
+    # R12 peer scoping — bench peer cannot read another container's layout.
+    peer_container = _peer_container_id(ctx, peer_uid)
+    if peer_container is not None and layout_row.container_id != peer_container:
+        return _err(
+            "host_only",
+            "bench-container peers may only read their own container's layouts",
+            details={
+                "peer_container_id": peer_container,
+                "layout_container_id": layout_row.container_id,
+            },
+        )
+
+    panes = select_panes_for_layout(conn, layout_id)
+    if not include_terminal:
+        panes = [
+            p for p in panes
+            if p.state not in (ManagedState.REMOVED,)
+        ]
+    pane_views = [_pane_row_to_view(p) for p in panes]
+    view = _layout_row_to_view(layout_row, panes=pane_views)
+    return _ok(
+        {
+            "layout_id": view.layout_id,
+            "container_id": view.container_id,
+            "template_name": view.template_name,
+            "state": view.state.value,
+            "failed_stage": view.failed_stage.value if view.failed_stage else None,
+            "intended_pane_count": view.intended_pane_count,
+            "panes": [_pane_view_to_payload(p) for p in pane_views],
+            "created_at": view.created_at,
+            "updated_at": view.updated_at,
+            "origin": ORIGIN_MANAGED,
+        }
+    )
 
 
 def _managed_pane_list(ctx, params, peer_uid=-1):  # noqa: ANN001
-    return _not_yet_implemented("managed.pane.list")
+    """``managed.pane.list`` (M4) — filtered + paginated by ``(layout_id, tmux_pane_index, id)``."""
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _err("internal_error", "daemon state_conn not wired")
+
+    peer_container = _peer_container_id(ctx, peer_uid)
+    container_id, scope_err = _scope_to_peer_container(
+        peer_container, params.get("container_id")
+    )
+    if scope_err is not None:
+        return scope_err
+
+    layout_id = params.get("layout_id")
+    if layout_id is not None and not isinstance(layout_id, str):
+        return _err(
+            "validation_failed", "layout_id must be a string",
+            details={"field": "layout_id", "reason": "wrong type"},
+        )
+
+    try:
+        state = _state_filter(params.get("state"))
+    except ValueError as exc:
+        return _err(
+            "validation_failed", str(exc),
+            details={"field": "state", "reason": str(exc)},
+        )
+
+    limit = params.get("limit", 50)
+    after = params.get("after")
+    if after is not None and not isinstance(after, str):
+        return _err(
+            "validation_failed", "after cursor must be a string",
+            details={"field": "after", "reason": "wrong type"},
+        )
+
+    rows, next_cursor = list_panes(
+        conn,
+        container_id=container_id,
+        layout_id=layout_id,
+        state=state,
+        limit=int(limit) if isinstance(limit, int) else 50,
+        after=after,
+    )
+    items = [_pane_view_to_payload(_pane_row_to_view(r)) for r in rows]
+    return _ok({"items": items, "next": next_cursor})
 
 
 def _managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
-    return _not_yet_implemented("managed.pane.detail")
+    """``managed.pane.detail`` (M5) — single pane + optional predecessor chain."""
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _err("internal_error", "daemon state_conn not wired")
+
+    pane_id = params.get("pane_id")
+    if not isinstance(pane_id, str) or not pane_id:
+        return _err(
+            "validation_failed", "missing or empty 'pane_id'",
+            details={"field": "pane_id", "reason": "missing or empty"},
+        )
+    include_chain = bool(params.get("include_predecessor_chain", False))
+
+    row = select_pane(conn, pane_id)
+    if row is None:
+        return _err(
+            MANAGED_PANE_NOT_FOUND,
+            f"unknown pane_id {pane_id!r}",
+            details={"pane_id": pane_id},
+        )
+
+    # R12 peer scoping.
+    peer_container = _peer_container_id(ctx, peer_uid)
+    if peer_container is not None and row.container_id != peer_container:
+        return _err(
+            "host_only",
+            "bench-container peers may only read their own container's panes",
+            details={
+                "peer_container_id": peer_container,
+                "pane_container_id": row.container_id,
+            },
+        )
+
+    payload = _pane_view_to_payload(_pane_row_to_view(row))
+    if include_chain and row.predecessor_id is not None:
+        chain = select_predecessor_chain(conn, row.predecessor_id)
+        payload["predecessor_chain"] = [
+            {
+                "pane_id": p.id,
+                "state": p.state.value,
+                "chain_depth": p.chain_depth,
+                "predecessor_id": p.predecessor_id,
+            }
+            for p in chain
+        ]
+    return _ok(payload)
 
 
 # ─── Registration ────────────────────────────────────────────────────────

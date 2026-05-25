@@ -66,11 +66,24 @@ from .errors import (
     MANAGED_TEMPLATE_NOT_FOUND,
     ManagedSessionsError,
 )
+from .events import (
+    LAYOUT_CREATED,
+    PANE_CREATED,
+    PANE_PENDING_MARKER_SET,
+    build_event,
+)
 from .launch_profiles import LaunchCommandProfile, load_profiles, resolve_profile
 from .pending_marker import new_marker_token
 from .serializer import ContainerSerializer
 from .state_machine import ManagedState
 from .templates import ManagedTemplate, resolve_template
+
+
+# Type alias for the event emitter callback the handler layer passes in.
+# Each emitted event is a fully-built dict from ``events.build_event``;
+# the callback is responsible for the actual JSONL append. ``None`` is a
+# valid default for tests that don't care about event side effects.
+EventEmitter = Callable[[dict[str, object]], None]
 
 
 # ─── FR-016 amendment: operator-input validation ─────────────────────────
@@ -202,6 +215,8 @@ def create_layout(
     template_override_dir: Optional[Path] = None,
     profile_override_dir: Optional[Path] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
+    event_emitter: Optional[EventEmitter] = None,
+    actor: str = "operator",
 ) -> CreateLayoutResult:
     """Create a managed layout — synchronous orchestration entry point.
 
@@ -396,6 +411,51 @@ def create_layout(
             except sqlite3.Error:
                 pass
             raise
+
+        # 7. Emit FR-015-ordered synchronous lifecycle events. Per-layout
+        #    sequence starts at 0; per-pane sequences start at 0 per pane.
+        #    Background spawn events (state-change to ready/degraded/failed)
+        #    land in Phase 4b alongside the FEAT-006/007 wiring.
+        if event_emitter is not None:
+            layout_seq = 0
+            event_emitter(
+                build_event(
+                    LAYOUT_CREATED,
+                    actor=actor,
+                    layout_id=layout_id,
+                    sequence=layout_seq,
+                    payload={
+                        "template_name": template.name,
+                        "container_id": container_id,
+                        "intended_pane_count": template.pane_count,
+                    },
+                )
+            )
+            for index, (row, summary) in enumerate(zip(pane_rows, pane_summaries)):
+                event_emitter(
+                    build_event(
+                        PANE_CREATED,
+                        actor=actor,
+                        layout_id=layout_id,
+                        pane_id=row.id,
+                        sequence=0,
+                        payload={
+                            "role": row.role,
+                            "label": row.label,
+                            "tmux_session_name": row.tmux_session_name,
+                            "tmux_pane_index": row.tmux_pane_index,
+                        },
+                    )
+                )
+                event_emitter(
+                    build_event(
+                        PANE_PENDING_MARKER_SET,
+                        actor=actor,
+                        pane_id=row.id,
+                        sequence=1,
+                        payload={"marker_token": row.pending_marker_token or ""},
+                    )
+                )
 
         return CreateLayoutResult(
             layout_id=layout_id,

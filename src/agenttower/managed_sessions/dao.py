@@ -183,6 +183,168 @@ def select_panes_for_layout(
     return [_row_to_pane(row) for row in cur.fetchall()]
 
 
+def select_pane(conn: sqlite3.Connection, pane_id: str) -> Optional[ManagedPaneRow]:
+    """Return one pane by id, or ``None`` if not found (M5 detail)."""
+    cur = conn.execute(
+        "SELECT id, layout_id, container_id, agent_id, role, capability, label, "
+        "launch_command_ref, tmux_session_name, tmux_pane_index, "
+        "pending_marker_token, state, failed_stage, predecessor_id, "
+        "chain_depth, created_at, updated_at "
+        "FROM managed_pane WHERE id = ?",
+        (pane_id,),
+    )
+    row = cur.fetchone()
+    return _row_to_pane(row) if row is not None else None
+
+
+def select_predecessor_chain(
+    conn: sqlite3.Connection, predecessor_id: str
+) -> list[ManagedPaneRow]:
+    """Walk the ``predecessor_id`` chain from a starting pane (M5).
+
+    Returns the chain in descending chain-depth order (most-recent
+    predecessor first). The chain is bounded at 17 hops (one more than
+    FR-023's depth=16 cap) as defensive infinite-loop protection — a
+    well-formed chain never exceeds 16 entries.
+    """
+    chain: list[ManagedPaneRow] = []
+    current: Optional[str] = predecessor_id
+    seen: set[str] = set()
+    for _ in range(17):
+        if current is None or current in seen:
+            break
+        seen.add(current)
+        row = select_pane(conn, current)
+        if row is None:
+            break
+        chain.append(row)
+        current = row.predecessor_id
+    return chain
+
+
+# ─── M2 / M4 list helpers ───────────────────────────────────────────────
+
+
+_LIST_LIMIT_DEFAULT: int = 50
+_LIST_LIMIT_CAP: int = 200
+
+
+def list_layouts(
+    conn: sqlite3.Connection,
+    *,
+    container_id: Optional[str] = None,
+    state: Optional[ManagedState] = None,
+    limit: int = _LIST_LIMIT_DEFAULT,
+    after: Optional[str] = None,
+) -> tuple[list[ManagedLayoutRow], Optional[str]]:
+    """Paginated layout listing for ``managed.layout.list`` (M2).
+
+    Ordering: ``(created_at DESC, id DESC)``. Pagination uses ``id`` as
+    the opaque cursor; ``after`` is the last seen ``id`` from the prior
+    page. Returns ``(rows, next_cursor)`` where ``next_cursor`` is the
+    last row's id if there might be more results, else ``None``.
+
+    ``limit`` is clamped to ``[1, 200]`` per FEAT-011's pagination cap
+    (inherited from FR-020a).
+    """
+    limit = max(1, min(int(limit), _LIST_LIMIT_CAP))
+    where: list[str] = []
+    params: list[object] = []
+    if container_id is not None:
+        where.append("container_id = ?")
+        params.append(container_id)
+    if state is not None:
+        where.append("state = ?")
+        params.append(state.value)
+    if after is not None:
+        # Skip rows whose created_at is newer than or equal to the cursor
+        # row's created_at; ties broken by id. We reconstruct the cursor's
+        # created_at via subquery to keep the cursor opaque from the
+        # caller's perspective.
+        where.append(
+            "(created_at, id) < (SELECT created_at, id FROM managed_layout WHERE id = ?)"
+        )
+        params.append(after)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    cur = conn.execute(
+        "SELECT id, container_id, template_name, intended_pane_count, state, "
+        "failed_stage, idempotency_key, created_at, updated_at "
+        "FROM managed_layout"
+        + where_sql
+        + " ORDER BY created_at DESC, id DESC LIMIT ?",
+        (*params, limit + 1),
+    )
+    rows = cur.fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    layouts = [_row_to_layout(r) for r in rows]
+    next_cursor = layouts[-1].id if has_more and layouts else None
+    return layouts, next_cursor
+
+
+def list_panes(
+    conn: sqlite3.Connection,
+    *,
+    container_id: Optional[str] = None,
+    layout_id: Optional[str] = None,
+    state: Optional[ManagedState] = None,
+    limit: int = _LIST_LIMIT_DEFAULT,
+    after: Optional[str] = None,
+) -> tuple[list[ManagedPaneRow], Optional[str]]:
+    """Paginated pane listing for ``managed.pane.list`` (M4).
+
+    Ordering: ``(layout_id ASC, tmux_pane_index ASC, id ASC)`` per
+    contracts/managed-methods.md M4. Cursor is ``id``.
+    """
+    limit = max(1, min(int(limit), _LIST_LIMIT_CAP))
+    where: list[str] = []
+    params: list[object] = []
+    if container_id is not None:
+        where.append("container_id = ?")
+        params.append(container_id)
+    if layout_id is not None:
+        where.append("layout_id = ?")
+        params.append(layout_id)
+    if state is not None:
+        where.append("state = ?")
+        params.append(state.value)
+    if after is not None:
+        where.append(
+            "(layout_id, tmux_pane_index, id) > "
+            "(SELECT layout_id, tmux_pane_index, id FROM managed_pane WHERE id = ?)"
+        )
+        params.append(after)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    cur = conn.execute(
+        "SELECT id, layout_id, container_id, agent_id, role, capability, label, "
+        "launch_command_ref, tmux_session_name, tmux_pane_index, "
+        "pending_marker_token, state, failed_stage, predecessor_id, "
+        "chain_depth, created_at, updated_at "
+        "FROM managed_pane"
+        + where_sql
+        + " ORDER BY layout_id ASC, tmux_pane_index ASC, id ASC LIMIT ?",
+        (*params, limit + 1),
+    )
+    rows = cur.fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    panes = [_row_to_pane(r) for r in rows]
+    next_cursor = panes[-1].id if has_more and panes else None
+    return panes, next_cursor
+
+
+def count_ready_panes_for_layout(
+    conn: sqlite3.Connection, layout_id: str
+) -> int:
+    """Return the count of ``ready``-state panes for a layout (M2 summary)."""
+    cur = conn.execute(
+        "SELECT COUNT(*) FROM managed_pane WHERE layout_id = ? AND state = 'ready'",
+        (layout_id,),
+    )
+    (n,) = cur.fetchone()
+    return int(n)
+
+
 # ─── internal row converters ────────────────────────────────────────────
 
 

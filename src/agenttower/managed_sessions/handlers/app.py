@@ -28,12 +28,24 @@ from ...app_contract.errors import (
 # (which itself imports APP_DISPATCH at module load to merge with the
 # legacy DISPATCH table). The pre-existing FEAT-011 handlers
 # (preflight.py, hello.py, sessions.py) use the same lazy pattern.
+from ..dao import (
+    count_ready_panes_for_layout,
+    list_layouts,
+    list_panes,
+    select_layout,
+    select_pane,
+    select_panes_for_layout,
+    select_predecessor_chain,
+)
 from ..errors import (
     CONTAINER_NOT_FOUND,
+    MANAGED_LAYOUT_NOT_FOUND,
+    MANAGED_PANE_NOT_FOUND,
     ManagedSessionsError,
 )
 from ..service import ValidationFailedError, create_layout
-from ..state_machine import ManagedState
+from ..state_machine import FailedStage, ManagedState
+from ..view_models import ManagedLayoutView, ManagedPaneView, ORIGIN_MANAGED
 
 if TYPE_CHECKING:
     from ...socket_api.methods import DaemonContext
@@ -225,59 +237,252 @@ def _build_managed_error_envelope(
     }
 
 
-# ─── M2-M5 stubs (Phase 4 T033 wires list/detail; placeholder return) ───
+# ─── M2-M5 list / detail handlers (T033 — Phase 4a) ─────────────────────
 
 
-def _not_yet_implemented_envelope(method: str) -> dict[str, Any]:
-    return _envelope.failure(
-        INTERNAL_ERROR,
-        f"{method} is dispatch-registered but not yet implemented (T033/T048 follow-up)",
-        details={},
-    )
+def _state_filter(value: Any) -> ManagedState | None:
+    """Coerce the optional ``state`` filter param. Raises ValueError on bad type."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("state filter must be a string")
+    try:
+        return ManagedState(value)
+    except ValueError:
+        valid = ", ".join(s.value for s in ManagedState)
+        raise ValueError(f"state filter must be one of: {valid}")
+
+
+def _layout_view_payload_list(row: Any, ready_pane_count: int) -> dict[str, Any]:
+    """M2 list-row shape (with ready_pane_count summary)."""
+    return {
+        "layout_id": row.id,
+        "container_id": row.container_id,
+        "template_name": row.template_name,
+        "state": row.state.value,
+        "intended_pane_count": row.intended_pane_count,
+        "ready_pane_count": ready_pane_count,
+        "created_at": row.created_at,
+        "origin": ORIGIN_MANAGED,
+    }
+
+
+def _pane_row_to_payload(row: Any) -> dict[str, Any]:
+    """M3/M4/M5 pane-row shape."""
+    payload: dict[str, Any] = {
+        "pane_id": row.id,
+        "layout_id": row.layout_id,
+        "container_id": row.container_id,
+        "role": row.role,
+        "capability": row.capability,
+        "label": row.label,
+        "state": row.state.value,
+        "tmux_session_name": row.tmux_session_name,
+        "tmux_pane_index": row.tmux_pane_index,
+        "chain_depth": row.chain_depth,
+        "agent_id": row.agent_id,
+        "predecessor_id": row.predecessor_id,
+        "log_attached": False,  # threaded in Phase 4b alongside FEAT-007 wiring
+        "origin": ORIGIN_MANAGED,
+    }
+    if row.failed_stage is not None:
+        payload["failed_stage"] = (
+            row.failed_stage.value if isinstance(row.failed_stage, FailedStage)
+            else str(row.failed_stage)
+        )
+    return payload
 
 
 def app_managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_layout_list`` (M2)."""
     from ...app_contract.host_only import is_host_peer  # lazy: see module note
 
     if not is_host_peer(peer_uid):
         return _envelope.failure(
-            HOST_ONLY, "app.managed_layout_list is host-only",
-            details={},
+            HOST_ONLY, "app.managed_layout_list is host-only", details={},
         )
-    return _not_yet_implemented_envelope("app.managed_layout_list")
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon state_conn not wired", details={}
+        )
+    try:
+        state = _state_filter(params.get("state"))
+    except ValueError as exc:
+        return _envelope.failure(
+            VALIDATION_FAILED, str(exc),
+            details={"field": "state", "reason": str(exc)},
+        )
+    container_id = params.get("container_id")
+    if container_id is not None and not isinstance(container_id, str):
+        return _envelope.failure(
+            VALIDATION_FAILED, "container_id must be a string when provided",
+            details={"field": "container_id", "reason": "wrong type"},
+        )
+    limit = params.get("limit", 50)
+    after = params.get("after")
+    if after is not None and not isinstance(after, str):
+        return _envelope.failure(
+            VALIDATION_FAILED, "after cursor must be a string",
+            details={"field": "after", "reason": "wrong type"},
+        )
+    rows, next_cursor = list_layouts(
+        conn,
+        container_id=container_id if isinstance(container_id, str) else None,
+        state=state,
+        limit=int(limit) if isinstance(limit, int) else 50,
+        after=after,
+    )
+    items = [
+        _layout_view_payload_list(r, count_ready_panes_for_layout(conn, r.id))
+        for r in rows
+    ]
+    return _envelope.success({"items": items, "next": next_cursor})
 
 
 def app_managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_layout_detail`` (M3)."""
     from ...app_contract.host_only import is_host_peer  # lazy: see module note
 
     if not is_host_peer(peer_uid):
         return _envelope.failure(
-            HOST_ONLY, "app.managed_layout_detail is host-only",
-            details={},
+            HOST_ONLY, "app.managed_layout_detail is host-only", details={},
         )
-    return _not_yet_implemented_envelope("app.managed_layout_detail")
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon state_conn not wired", details={}
+        )
+    layout_id = params.get("layout_id")
+    if not isinstance(layout_id, str) or not layout_id:
+        return _envelope.failure(
+            VALIDATION_FAILED, "missing or empty 'layout_id'",
+            details={"field": "layout_id", "reason": "missing or empty"},
+        )
+    include_terminal = bool(params.get("include_terminal_panes", False))
+    layout_row = select_layout(conn, layout_id)
+    if layout_row is None:
+        return _build_managed_error_envelope(
+            MANAGED_LAYOUT_NOT_FOUND,
+            f"unknown layout_id {layout_id!r}",
+            details={"layout_id": layout_id},
+        )
+    panes = select_panes_for_layout(conn, layout_id)
+    if not include_terminal:
+        panes = [p for p in panes if p.state != ManagedState.REMOVED]
+    return _envelope.success(
+        {
+            "layout_id": layout_row.id,
+            "container_id": layout_row.container_id,
+            "template_name": layout_row.template_name,
+            "state": layout_row.state.value,
+            "failed_stage": (
+                layout_row.failed_stage.value if layout_row.failed_stage else None
+            ),
+            "intended_pane_count": layout_row.intended_pane_count,
+            "panes": [_pane_row_to_payload(p) for p in panes],
+            "created_at": layout_row.created_at,
+            "updated_at": layout_row.updated_at,
+            "origin": ORIGIN_MANAGED,
+        }
+    )
 
 
 def app_managed_pane_list(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_pane_list`` (M4)."""
     from ...app_contract.host_only import is_host_peer  # lazy: see module note
 
     if not is_host_peer(peer_uid):
         return _envelope.failure(
-            HOST_ONLY, "app.managed_pane_list is host-only",
-            details={},
+            HOST_ONLY, "app.managed_pane_list is host-only", details={},
         )
-    return _not_yet_implemented_envelope("app.managed_pane_list")
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon state_conn not wired", details={}
+        )
+    container_id = params.get("container_id")
+    layout_id = params.get("layout_id")
+    for field, value in (("container_id", container_id), ("layout_id", layout_id)):
+        if value is not None and not isinstance(value, str):
+            return _envelope.failure(
+                VALIDATION_FAILED, f"{field} must be a string when provided",
+                details={"field": field, "reason": "wrong type"},
+            )
+    try:
+        state = _state_filter(params.get("state"))
+    except ValueError as exc:
+        return _envelope.failure(
+            VALIDATION_FAILED, str(exc),
+            details={"field": "state", "reason": str(exc)},
+        )
+    limit = params.get("limit", 50)
+    after = params.get("after")
+    if after is not None and not isinstance(after, str):
+        return _envelope.failure(
+            VALIDATION_FAILED, "after cursor must be a string",
+            details={"field": "after", "reason": "wrong type"},
+        )
+    rows, next_cursor = list_panes(
+        conn,
+        container_id=container_id if isinstance(container_id, str) else None,
+        layout_id=layout_id if isinstance(layout_id, str) else None,
+        state=state,
+        limit=int(limit) if isinstance(limit, int) else 50,
+        after=after,
+    )
+    items = [_pane_row_to_payload(r) for r in rows]
+    return _envelope.success({"items": items, "next": next_cursor})
 
 
 def app_managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_pane_detail`` (M5) — single pane + optional predecessor chain."""
     from ...app_contract.host_only import is_host_peer  # lazy: see module note
 
     if not is_host_peer(peer_uid):
         return _envelope.failure(
-            HOST_ONLY, "app.managed_pane_detail is host-only",
-            details={},
+            HOST_ONLY, "app.managed_pane_detail is host-only", details={},
         )
-    return _not_yet_implemented_envelope("app.managed_pane_detail")
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon state_conn not wired", details={}
+        )
+    pane_id = params.get("pane_id")
+    if not isinstance(pane_id, str) or not pane_id:
+        return _envelope.failure(
+            VALIDATION_FAILED, "missing or empty 'pane_id'",
+            details={"field": "pane_id", "reason": "missing or empty"},
+        )
+    include_chain = bool(params.get("include_predecessor_chain", False))
+    row = select_pane(conn, pane_id)
+    if row is None:
+        return _build_managed_error_envelope(
+            MANAGED_PANE_NOT_FOUND,
+            f"unknown pane_id {pane_id!r}",
+            details={"pane_id": pane_id},
+        )
+    payload = _pane_row_to_payload(row)
+    if include_chain and row.predecessor_id is not None:
+        chain = select_predecessor_chain(conn, row.predecessor_id)
+        payload["predecessor_chain"] = [
+            {
+                "pane_id": p.id,
+                "state": p.state.value,
+                "chain_depth": p.chain_depth,
+                "predecessor_id": p.predecessor_id,
+            }
+            for p in chain
+        ]
+    return _envelope.success(payload)
 
 
 # ─── Registration ────────────────────────────────────────────────────────

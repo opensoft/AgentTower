@@ -63,9 +63,9 @@ def conn() -> sqlite3.Connection:
         "  active INTEGER NOT NULL DEFAULT 1"
         ")"
     )
-    c.execute(
+    c.executemany(
         "INSERT INTO containers (container_id, active) VALUES (?, 1)",
-        ("bench-alpha",),
+        [("bench-alpha",), ("bench-beta",)],
     )
     _apply_migration_v9(c)
     c.commit()
@@ -292,3 +292,222 @@ def test_app_create_idempotency_replay_returns_replay_true(ctx: Any) -> None:
     assert second["ok"] is True
     assert second["result"]["replay"] is True
     assert second["result"]["layout_id"] == first_layout_id
+
+
+# ─── M2-M5 list / detail handlers (T033 — Phase 4a) ─────────────────────
+
+
+def _create_two_layouts(ctx: Any) -> tuple[str, str]:
+    """Seed two layouts in DIFFERENT containers (per FR-003 the per-container
+    label-uniqueness index would reject two layouts in the same container
+    sharing template labels). Returns (layout_in_alpha, layout_in_beta).
+    """
+    r1 = _app_create(
+        ctx, container_id="bench-alpha", template_name="1m+2s",
+        tmux_session_name="session-a",
+    )
+    r2 = _app_create(
+        ctx, container_id="bench-beta", template_name="2m+2s",
+        tmux_session_name="session-b",
+    )
+    assert r1["ok"] is True, f"first create failed: {r1}"
+    assert r2["ok"] is True, f"second create failed: {r2}"
+    return r1["result"]["layout_id"], r2["result"]["layout_id"]
+
+
+# M2 — layout.list
+
+
+def test_app_layout_list_returns_seeded_layouts(ctx: Any) -> None:
+    """M2: ``app.managed_layout_list`` returns both layouts with ready_pane_count + origin."""
+    layout1_id, layout2_id = _create_two_layouts(ctx)
+    resp = APP_DISPATCH["app.managed_layout_list"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is True
+    items = resp["result"]["items"]
+    assert {item["layout_id"] for item in items} == {layout1_id, layout2_id}
+    for item in items:
+        assert item["origin"] == "managed"
+        assert item["state"] == "creating"
+        assert item["ready_pane_count"] == 0  # background spawn not yet wired (Phase 4b)
+        assert "container_id" in item
+        assert "template_name" in item
+
+
+def test_app_layout_list_filters_by_container(ctx: Any) -> None:
+    layout_alpha, layout_beta = _create_two_layouts(ctx)
+    resp = APP_DISPATCH["app.managed_layout_list"](
+        ctx, {"container_id": "bench-alpha"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    items = resp["result"]["items"]
+    assert len(items) == 1
+    assert items[0]["layout_id"] == layout_alpha
+    assert items[0]["container_id"] == "bench-alpha"
+
+
+def test_app_layout_list_filters_by_state(ctx: Any) -> None:
+    _create_two_layouts(ctx)
+    # No layouts in 'ready' yet because spawn pipeline is Phase 4b.
+    resp = APP_DISPATCH["app.managed_layout_list"](
+        ctx, {"state": "ready"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    assert resp["result"]["items"] == []
+
+
+def test_app_layout_list_rejects_unknown_state_value(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_layout_list"](
+        ctx, {"state": "exploded"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "validation_failed"
+    assert resp["error"]["details"]["field"] == "state"
+
+
+# M3 — layout.detail
+
+
+def test_app_layout_detail_returns_full_pane_list(ctx: Any) -> None:
+    """M3: detail returns ``managed_pane`` rows projected with origin + agent_id NULL."""
+    r = _app_create(
+        ctx, container_id="bench-alpha", template_name="1m+2s",
+        tmux_session_name="session-x",
+    )
+    layout_id = r["result"]["layout_id"]
+    resp = APP_DISPATCH["app.managed_layout_detail"](
+        ctx, {"layout_id": layout_id}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert result["layout_id"] == layout_id
+    assert result["template_name"] == "1m+2s"
+    assert result["state"] == "creating"
+    assert result["origin"] == "managed"
+    assert len(result["panes"]) == 3
+    assert [p["role"] for p in result["panes"]] == ["master", "slave", "slave"]
+    assert all(p["origin"] == "managed" for p in result["panes"])
+    assert all(p["agent_id"] is None for p in result["panes"])  # background pipeline is Phase 4b
+
+
+def test_app_layout_detail_unknown_layout_returns_closed_set_code(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_layout_detail"](
+        ctx, {"layout_id": "01HZ-DOES-NOT-EXIST"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "managed_layout_not_found"
+    assert resp["error"]["details"] == {"layout_id": "01HZ-DOES-NOT-EXIST"}
+
+
+def test_app_layout_detail_missing_layout_id_fails_validation(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_layout_detail"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "validation_failed"
+    assert resp["error"]["details"]["field"] == "layout_id"
+
+
+# M4 — pane.list
+
+
+def test_app_pane_list_returns_all_panes_across_layouts(ctx: Any) -> None:
+    """M4: pane.list returns every pane from every layout, ordered by (layout_id, pane_index)."""
+    layout1_id, layout2_id = _create_two_layouts(ctx)
+    resp = APP_DISPATCH["app.managed_pane_list"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is True
+    items = resp["result"]["items"]
+    # 3 panes (1m+2s) + 4 panes (2m+2s) = 7 total
+    assert len(items) == 7
+    assert all(p["origin"] == "managed" for p in items)
+    # Ordering: layout_id ASC then tmux_pane_index ASC
+    for layout_id in sorted([layout1_id, layout2_id]):
+        layout_panes = [p for p in items if p["layout_id"] == layout_id]
+        indices = [p["tmux_pane_index"] for p in layout_panes]
+        assert indices == sorted(indices)
+
+
+def test_app_pane_list_filters_by_layout_id(ctx: Any) -> None:
+    layout1_id, _ = _create_two_layouts(ctx)
+    resp = APP_DISPATCH["app.managed_pane_list"](
+        ctx, {"layout_id": layout1_id}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    items = resp["result"]["items"]
+    assert len(items) == 3
+    assert all(p["layout_id"] == layout1_id for p in items)
+
+
+# M5 — pane.detail
+
+
+def test_app_pane_detail_returns_pane_with_origin_managed(ctx: Any) -> None:
+    r = _app_create(
+        ctx, container_id="bench-alpha", template_name="1m+2s",
+        tmux_session_name="session-y",
+    )
+    pane_id = r["result"]["panes"][0]["pane_id"]
+    resp = APP_DISPATCH["app.managed_pane_detail"](
+        ctx, {"pane_id": pane_id}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    pane = resp["result"]
+    assert pane["pane_id"] == pane_id
+    assert pane["origin"] == "managed"
+    assert pane["role"] == "master"
+    assert pane["state"] == "creating"
+    assert pane["chain_depth"] == 0
+    assert pane["predecessor_id"] is None
+    # No predecessor_chain key unless explicitly requested + predecessor exists.
+    assert "predecessor_chain" not in pane
+
+
+def test_app_pane_detail_unknown_pane_returns_closed_set_code(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_pane_detail"](
+        ctx, {"pane_id": "01HZ-NOPE"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "managed_pane_not_found"
+    assert resp["error"]["details"] == {"pane_id": "01HZ-NOPE"}
+
+
+# ─── Synchronous event emission (T032 — Phase 4a) ───────────────────────
+
+
+def test_app_create_emits_synchronous_lifecycle_events(ctx: Any) -> None:
+    """T032: ``create_layout`` emits LAYOUT_CREATED + PANE_CREATED + PANE_PENDING_MARKER_SET
+    once per pane via the ``event_emitter`` callback the handler passes through.
+
+    The handler layer doesn't currently take an event_emitter; this test
+    drives the service entry point directly to assert the event shape.
+    Phase 4b will thread the FEAT-008 JSONL writer through DaemonContext.
+    """
+    from agenttower.managed_sessions.service import create_layout
+
+    events: list[dict[str, Any]] = []
+    result = create_layout(
+        conn=ctx.state_conn,
+        serializer=ctx.managed_serializer,
+        container_id="bench-alpha",
+        template_name="1m+2s",
+        tmux_session_name="session-events",
+        event_emitter=events.append,
+    )
+    assert result.state.value == "creating"
+    # 1 layout_created + 3 panes × (pane_created + pending_marker_set) = 7 events
+    assert len(events) == 7
+    types = [e["event_type"] for e in events]
+    assert types[0] == "managed_layout_created"
+    # Each pane emits PANE_CREATED then PANE_PENDING_MARKER_SET in order.
+    for i in range(3):
+        assert types[1 + 2 * i] == "managed_pane_created"
+        assert types[2 + 2 * i] == "managed_pane_pending_marker_set"
+
+    # FR-015: every event carries origin=managed, an actor, a timestamp,
+    # and a per-scope sequence counter.
+    for e in events:
+        assert e["origin"] == "managed"
+        assert e["actor"] == "operator"
+        assert "timestamp" in e
+        assert "sequence" in e
+    assert events[0]["layout_id"] == result.layout_id
+    # Pane events carry both layout_id and pane_id (pane-scoped events).
+    pane_events = [e for e in events if e["event_type"].startswith("managed_pane_")]
+    assert all(e["pane_id"] is not None for e in pane_events)
