@@ -26,18 +26,16 @@ from __future__ import annotations
 
 import pytest
 
-# Until T022/T023/T024/T025 land, the service / handlers won't be
-# importable / registered. Skip the whole module.
-service = pytest.importorskip(
-    "agenttower.managed_sessions.service",
-    reason="Service entry points implemented by T022 (Phase 3b)",
-)
 
-
-pytestmark = pytest.mark.skipif(
-    not hasattr(service, "create_layout"),
-    reason="T022 service + T023/T024 handlers + T025 dispatcher "
-    "registration pending Phase 3b",
+# All US1 integration scenarios need the **background spawn pipeline**
+# (FEAT-004 docker-exec + FEAT-006 register-self + FEAT-007 log attach)
+# AND the dispatcher wiring (T023/T024 handlers + T025 dispatcher
+# registration). T022 (synchronous create_layout) lands in Phase 3b;
+# the end-to-end integration lands in Phase 3c (T023/T024/T025) +
+# Phase 4 (T029/T030 spawn pipeline).
+pytestmark = pytest.mark.skip(
+    reason="US1 end-to-end needs T023/T024/T025 (Phase 3c) + "
+    "T029/T030 spawn pipeline (Phase 4)"
 )
 
 
