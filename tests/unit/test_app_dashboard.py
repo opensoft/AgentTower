@@ -1052,3 +1052,74 @@ def test_dashboard_v1_1_fr020_agent_partition_at_wire(
     assert (
         by_state["log-attached"] + by_state["log-detached"]
     ) == agents["total"]
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T011 — US2 wire-level assertions (recently_skipped_*)
+#
+# All assertions below are @pytest.mark.v1_1 per the v1.1 marker rule. They
+# are EXPECTED to fail (KeyError) until T015 wires
+# counts.routes.recently_skipped_count + .recently_skipped_window_ms into
+# the dashboard.py response envelope. T013 creates the underlying
+# skip_counter module; T011 is the contract-level RED test for the wire
+# surface FR-007 / FR-008 demand.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_routes_recently_skipped_window_ms_is_300000(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-008 + Clarifications Q6: ``counts.routes.recently_skipped_window_ms``
+    is the exact literal ``300_000`` ms (5 min, fixed daemon-side, not
+    client-tunable in v1.1)."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    routes = env["result"]["counts"]["routes"]
+    assert routes["recently_skipped_window_ms"] == 300_000
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_routes_recently_skipped_count_is_non_negative_int(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-007 / FR-004 typing: ``counts.routes.recently_skipped_count`` is a
+    non-negative integer. On an empty daemon with no skip events recorded
+    (post-construction / post-restart per FR-008) the value MUST be ``0``."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    routes = env["result"]["counts"]["routes"]
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert routes["recently_skipped_count"] >= 0
+    # Empty daemon, no record_skip calls yet → 0.
+    assert routes["recently_skipped_count"] == 0
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_routes_recently_skipped_fields_present_even_when_zero(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-003 (generalized to v1.1 route fields): both ``recently_skipped_count``
+    and ``recently_skipped_window_ms`` MUST be present as keys with integer
+    values, NEVER omitted and NEVER ``null`` — even on an empty daemon where
+    the count is ``0``. This mirrors FR-003's by_state key-presence guarantee
+    for the route surface."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    routes = env["result"]["counts"]["routes"]
+
+    # Both keys MUST be present.
+    assert "recently_skipped_count" in routes, (
+        "FR-003: recently_skipped_count key MUST be present (not omitted)"
+    )
+    assert "recently_skipped_window_ms" in routes, (
+        "FR-003: recently_skipped_window_ms key MUST be present (not omitted)"
+    )
+
+    # Neither field is ever null.
+    assert routes["recently_skipped_count"] is not None, "FR-003: never null"
+    assert routes["recently_skipped_window_ms"] is not None, "FR-003: never null"
+
+    # Both are integer-typed.
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert isinstance(routes["recently_skipped_window_ms"], int)
