@@ -47,7 +47,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Final, Optional
 
 from .dao import (
     ManagedLayoutRow,
@@ -61,10 +61,17 @@ from .dao import (
     update_layout_state,
     update_pane_state,
 )
+from .dao import select_pane
 from .errors import (
     MANAGED_LAYOUT_CAPACITY_EXCEEDED,
     MANAGED_LAUNCH_COMMAND_NOT_FOUND,
+    MANAGED_PANE_CONCURRENT_RECREATE,
+    MANAGED_PANE_ILLEGAL_RECREATE_SOURCE,
+    MANAGED_PANE_ILLEGAL_TRANSITION,
     MANAGED_PANE_LABEL_CONFLICT,
+    MANAGED_PANE_NOT_FOUND,
+    MANAGED_PANE_PROTECTED_ADOPTED,
+    MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP,
     MANAGED_SESSION_NAME_CONFLICT,
     MANAGED_TEMPLATE_NOT_FOUND,
     ManagedSessionsError,
@@ -77,6 +84,8 @@ from .events import (
     PANE_LOG_ATTACH_FAILED,
     PANE_PENDING_MARKER_CLEARED,
     PANE_PENDING_MARKER_SET,
+    PANE_RECREATED,
+    PANE_REMOVED,
     PANE_STATE_CHANGED,
     build_event,
 )
@@ -828,3 +837,403 @@ def _spawn_single_pane(
     _emit_marker_cleared()
     _emit_state_change(ManagedState.CREATING, ManagedState.READY, None)
     return ManagedState.READY
+
+
+# ─── Phase 5a: lifecycle operations (T042 + T043 + T044 + T045) ─────────
+#
+# remove_pane (T042) / recreate_pane (T043) / promote_from_adopted (T045)
+# implement the M6 / M7 / M8 contract surface from contracts/managed-methods.md.
+# Adopted-pane protection (T044) is woven through remove_pane + recreate_pane
+# rather than a separate entry point — a pane_id without a managed_pane row
+# is, by definition, adopted (FEAT-006 registered it directly), so the
+# protect-adopted check is a missing-row probe.
+
+
+# ─── Backend protocol additions ──────────────────────────────────────────
+
+
+# tmux kill-pane backend for remove_pane (T042). Idempotent: pane already
+# killed counts as success (data-model.md + state-machine.md §Recreate
+# semantics step describe `tmux kill-pane` as not-found-tolerant).
+# (pane) -> {ok: True} or {ok: False, error: {code, message}}
+TmuxKillFn = Callable[[ManagedPaneRow], dict[str, object]]
+
+# Route + log cleanup hooks for remove_pane (T042). Stubbed for testability
+# the same way as the spawn backends — production wiring delegates to
+# FEAT-010 routes service + FEAT-007 log service. Cleanup hooks MUST be
+# idempotent (re-removal of an already-removed pane succeeds).
+# (pane) -> None (side-effecting; failure is logged but does not block the
+# state transition because the pane row is being archived regardless).
+CleanupFn = Callable[[ManagedPaneRow], None]
+
+
+# ─── T042: remove_pane (M6) ──────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class RemovePaneResult:
+    """Returned by :func:`remove_pane` on success."""
+
+    pane_id: str
+    state: ManagedState  # always ManagedState.REMOVED on success
+
+
+def remove_pane(
+    *,
+    conn: sqlite3.Connection,
+    serializer: ContainerSerializer,
+    pane_id: str,
+    tmux_kill_fn: Optional[TmuxKillFn] = None,
+    route_cleanup_fn: Optional[CleanupFn] = None,
+    log_detach_fn: Optional[CleanupFn] = None,
+    event_emitter: Optional[EventEmitter] = None,
+    clock: Optional[Callable[[], _dt.datetime]] = None,
+    actor: str = "operator",
+) -> RemovePaneResult:
+    """Remove a managed pane (M6 contract).
+
+    1. T044 adopted-pane protection: if ``pane_id`` is not in
+       ``managed_pane`` → ``managed_pane_protected_adopted`` (the pane
+       is registered with FEAT-006 but not managed by us, so we refuse
+       to act on it).
+    2. ``managed_pane_illegal_transition`` if the pane is in
+       ``creating`` (FR-018: cancellation of in-flight create is out
+       of scope; operator must wait or use recreate after failure).
+    3. ``tmux kill-pane`` via ``tmux_kill_fn``; idempotent — backend
+       returning ``{ok: False, error.code == 'tmux_pane_not_found'}``
+       counts as success because the operator intent ("the pane is
+       gone") is satisfied either way.
+    4. Cleanup hooks (routes via FEAT-010, log detach via FEAT-007) are
+       best-effort — failures are tolerated because the pane row is
+       being archived regardless. Production wiring threads these
+       through the daemon's RoutesService + LogService.
+    5. Transition state to ``removed``; emit
+       ``managed_pane_removed`` lifecycle event.
+    """
+    pane = select_pane(conn, pane_id)
+    if pane is None:
+        # T044 — adopted-pane protection. Per the M6 contract, a missing
+        # managed_pane row means the pane is either truly adopted (lives
+        # in FEAT-006's agents table but not in our managed_pane table)
+        # or never existed. We surface the protected-adopted error
+        # because that's the operator-actionable answer either way.
+        raise ManagedSessionsError(
+            MANAGED_PANE_PROTECTED_ADOPTED,
+            details={"agent_id": pane_id, "is_adopted": True},
+        )
+
+    if pane.state == ManagedState.CREATING:
+        raise ManagedSessionsError(
+            MANAGED_PANE_ILLEGAL_TRANSITION,
+            details={
+                "pane_id": pane.id,
+                "current_state": pane.state.value,
+                "requested_action": "remove",
+            },
+        )
+
+    if pane.state == ManagedState.REMOVED:
+        # Idempotent — already removed.
+        return RemovePaneResult(pane_id=pane.id, state=ManagedState.REMOVED)
+
+    lock = serializer.for_container(pane.container_id)
+    with lock:
+        # 3. tmux kill-pane (best-effort idempotent).
+        tmux_ok = True
+        if tmux_kill_fn is not None:
+            kill_result = tmux_kill_fn(pane)
+            tmux_ok = bool(kill_result.get("ok"))
+            # ``tmux_pane_not_found`` is a synonym for "already gone";
+            # treat as success.
+            if not tmux_ok:
+                err = kill_result.get("error", {})
+                if isinstance(err, dict) and err.get("code") == "tmux_pane_not_found":
+                    tmux_ok = True
+
+        # 4. Best-effort cleanup (failures logged but ignored).
+        if route_cleanup_fn is not None:
+            try:
+                route_cleanup_fn(pane)
+            except Exception:  # noqa: BLE001 — defensive: cleanup is best-effort
+                pass
+        if log_detach_fn is not None:
+            try:
+                log_detach_fn(pane)
+            except Exception:  # noqa: BLE001 — defensive
+                pass
+
+        # 5. State transition + event.
+        now = _utc_now_rfc3339(clock)
+        prior_state = pane.state
+        update_pane_state(
+            conn, pane.id,
+            state=ManagedState.REMOVED,
+            clear_marker=True,  # any leftover marker is cleared on removal
+            now=now,
+        )
+        if event_emitter is not None:
+            # Per-pane sequence resumes from a high integer to stay
+            # beyond any spawn-pipeline events; the absolute value
+            # doesn't matter — only that it's higher than any prior
+            # emission for this pane.
+            event_emitter(
+                build_event(
+                    PANE_REMOVED,
+                    actor=actor,
+                    layout_id=pane.layout_id,
+                    pane_id=pane.id,
+                    sequence=1_000,
+                    payload={"tmux_kill_succeeded": tmux_ok},
+                )
+            )
+            event_emitter(
+                build_event(
+                    PANE_STATE_CHANGED,
+                    actor=actor,
+                    layout_id=pane.layout_id,
+                    pane_id=pane.id,
+                    sequence=1_001,
+                    payload={
+                        "prev_state": prior_state.value,
+                        "new_state": ManagedState.REMOVED.value,
+                    },
+                )
+            )
+
+        # Aggregate layout state — if all panes are now removed, the
+        # layout transitions to removed too (data-model.md ManagedLayout
+        # lifecycle: "all panes removed → layout removed").
+        layout = select_layout(conn, pane.layout_id)
+        if layout is not None and layout.state != ManagedState.REMOVED:
+            refreshed = select_panes_for_layout(conn, pane.layout_id)
+            new_layout_state = aggregate_layout_state([p.state for p in refreshed])
+            if new_layout_state != layout.state:
+                update_layout_state(
+                    conn, pane.layout_id,
+                    state=new_layout_state,
+                    now=now,
+                )
+                if event_emitter is not None:
+                    event_emitter(
+                        build_event(
+                            LAYOUT_STATE_CHANGED,
+                            actor=actor,
+                            layout_id=pane.layout_id,
+                            sequence=1_000,
+                            payload={
+                                "prev_state": layout.state.value,
+                                "new_state": new_layout_state.value,
+                            },
+                        )
+                    )
+
+    return RemovePaneResult(pane_id=pane.id, state=ManagedState.REMOVED)
+
+
+# ─── T043: recreate_pane (M7) ────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class RecreatePaneResult:
+    """Returned by :func:`recreate_pane` on success — references the
+    new managed_pane row, NOT the predecessor."""
+
+    pane_id: str
+    predecessor_id: str
+    chain_depth: int
+    state: ManagedState  # always ManagedState.CREATING on success
+
+
+# FR-023 / R4 — recreate-chain depth bound. The new row's chain_depth is
+# `predecessor.chain_depth + 1`; we reject if predecessor.chain_depth ≥ 15
+# (so the new depth would be ≥16, which is the configured bound).
+_CHAIN_DEPTH_LIMIT: int = 16
+_CHAIN_DEPTH_REJECTION_THRESHOLD: int = 15  # predecessor.chain_depth >= this
+
+
+def recreate_pane(
+    *,
+    conn: sqlite3.Connection,
+    serializer: ContainerSerializer,
+    predecessor_pane_id: str,
+    launch_command_override: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    event_emitter: Optional[EventEmitter] = None,
+    clock: Optional[Callable[[], _dt.datetime]] = None,
+    actor: str = "operator",
+) -> RecreatePaneResult:
+    """Recreate a managed pane from a predecessor (M7 contract).
+
+    1. T044 adopted-pane protection: if ``predecessor_pane_id`` is not
+       in ``managed_pane`` → ``managed_pane_protected_adopted`` (mirrors
+       remove_pane's protection — we refuse to recreate from an
+       adopted pane).
+    2. ``managed_pane_illegal_recreate_source`` if the predecessor is
+       not in ``removed`` or ``failed`` (per state-machine.md §Recreate
+       semantics: ``ready`` / ``degraded`` / ``creating`` are invalid
+       sources — operator must ``remove_pane`` first).
+    3. ``managed_pane_recreate_chain_too_deep`` (FR-023 / R4) when
+       ``predecessor.chain_depth >= 15`` (the new row would be at depth
+       16, the configured bound).
+    4. ``managed_pane_concurrent_recreate`` (FR-027) when there's
+       already a ``creating``-state successor row pointing at this
+       predecessor (operator must wait for the in-flight successor
+       to settle to ``ready`` / ``degraded`` / ``failed`` first).
+    5. Insert the new ``managed_pane`` row with ``predecessor_id`` set,
+       ``chain_depth = predecessor.chain_depth + 1``, a fresh
+       ``pending_marker_token`` (= idempotency_key if present, else
+       uuid4), and ``state = 'creating'``.
+    6. Emit ``managed_pane_recreated`` lifecycle event.
+    7. The actual tmux spawn / FEAT-006 register / FEAT-007 log attach
+       is the same background pipeline ``create_layout`` uses — kicked
+       off by the caller via ``spawn_layout_in_background`` against
+       the parent layout. (We don't re-spawn just the new pane here
+       because the per-container serializer + the pending-managed
+       marker already provide the right semantics; the bg pipeline
+       picks up any pane row in ``creating`` state.)
+    """
+    predecessor = select_pane(conn, predecessor_pane_id)
+    if predecessor is None:
+        raise ManagedSessionsError(
+            MANAGED_PANE_PROTECTED_ADOPTED,
+            details={"agent_id": predecessor_pane_id, "is_adopted": True},
+        )
+
+    if predecessor.state not in (ManagedState.REMOVED, ManagedState.FAILED):
+        raise ManagedSessionsError(
+            MANAGED_PANE_ILLEGAL_RECREATE_SOURCE,
+            details={
+                "predecessor_pane_id": predecessor.id,
+                "current_state": predecessor.state.value,
+            },
+        )
+
+    if predecessor.chain_depth >= _CHAIN_DEPTH_REJECTION_THRESHOLD:
+        raise ManagedSessionsError(
+            MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP,
+            details={
+                "predecessor_pane_id": predecessor.id,
+                "predecessor_chain_depth": predecessor.chain_depth,
+                "limit": _CHAIN_DEPTH_LIMIT,
+            },
+        )
+
+    lock = serializer.for_container(predecessor.container_id)
+    with lock:
+        # 4. FR-027: detect an in-flight successor.
+        in_flight = conn.execute(
+            "SELECT id FROM managed_pane "
+            "WHERE predecessor_id = ? AND state = 'creating'",
+            (predecessor.id,),
+        ).fetchone()
+        if in_flight is not None:
+            raise ManagedSessionsError(
+                MANAGED_PANE_CONCURRENT_RECREATE,
+                details={
+                    "predecessor_pane_id": predecessor.id,
+                    "in_flight_successor_pane_id": in_flight[0],
+                },
+            )
+
+        # 5. Insert the new row.
+        new_pane_id = str(uuid.uuid4())
+        marker_token = idempotency_key or new_marker_token()
+        now = _utc_now_rfc3339(clock)
+        new_chain_depth = predecessor.chain_depth + 1
+        # Reuse the predecessor's role / capability / label / launch_command
+        # so the operator gets a like-for-like replacement. The label
+        # uniqueness scope is per-container across non-terminal panes —
+        # the predecessor is terminal (removed/failed) so its label is
+        # free to be reused.
+        # `launch_command_override`, if supplied, replaces the predecessor's
+        # launch_command_ref for this recreate only.
+        new_launch_ref = (
+            launch_command_override if launch_command_override is not None
+            else predecessor.launch_command_ref
+        )
+        new_row = ManagedPaneRow(
+            id=new_pane_id,
+            layout_id=predecessor.layout_id,
+            container_id=predecessor.container_id,
+            agent_id=None,
+            role=predecessor.role,
+            capability=predecessor.capability,
+            label=predecessor.label,
+            launch_command_ref=new_launch_ref,
+            tmux_session_name=predecessor.tmux_session_name,
+            tmux_pane_index=predecessor.tmux_pane_index,
+            pending_marker_token=marker_token,
+            state=ManagedState.CREATING,
+            failed_stage=None,
+            predecessor_id=predecessor.id,
+            chain_depth=new_chain_depth,
+            created_at=now,
+            updated_at=now,
+        )
+        # Single-row insert — no explicit transaction needed (atomicity
+        # is intrinsic to one statement). The per-container lock above
+        # already serializes against other recreate / remove / create
+        # against the same container.
+        insert_pane(conn, new_row)
+
+        # 6. Emit managed_pane_recreated.
+        if event_emitter is not None:
+            event_emitter(
+                build_event(
+                    PANE_RECREATED,
+                    actor=actor,
+                    layout_id=new_row.layout_id,
+                    pane_id=new_pane_id,
+                    sequence=0,
+                    payload={
+                        "predecessor_id": predecessor.id,
+                        "chain_depth": new_chain_depth,
+                    },
+                )
+            )
+            event_emitter(
+                build_event(
+                    PANE_PENDING_MARKER_SET,
+                    actor=actor,
+                    pane_id=new_pane_id,
+                    sequence=1,
+                    payload={"marker_token": marker_token},
+                )
+            )
+
+        return RecreatePaneResult(
+            pane_id=new_pane_id,
+            predecessor_id=predecessor.id,
+            chain_depth=new_chain_depth,
+            state=ManagedState.CREATING,
+        )
+
+
+# ─── T045: promote_from_adopted stub (M8) ────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class PromoteFromAdoptedStubResult:
+    """Per FR-018 / state-machine.md §Promotion stub — MVP returns
+    ``not_implemented``. The state-machine module's
+    ``PROMOTE_FROM_ADOPTED`` constant is exposed for tests; the
+    transition itself is gated off."""
+
+    error_code: str  # always "not_implemented"
+    details: dict[str, str]
+
+
+def promote_from_adopted(agent_id: str) -> PromoteFromAdoptedStubResult:
+    """MVP stub — always returns ``not_implemented``.
+
+    Per spec §FR-018 and state-machine.md §Promotion stub, the
+    ``promote_from_adopted`` transition is reserved for a later feature.
+    The service entry point exists so the M8 contract surface is
+    reachable (the handler layer translates this into the FEAT-011
+    envelope shape with ``error.code = "not_implemented"`` and
+    ``details = {"reserved_since": "FEAT-013"}``).
+    """
+    return PromoteFromAdoptedStubResult(
+        error_code="not_implemented",
+        details={"reserved_since": "FEAT-013"},
+    )
