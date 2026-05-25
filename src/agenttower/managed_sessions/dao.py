@@ -424,6 +424,68 @@ def update_pane_state(
     )
 
 
+def select_non_terminal_layouts(
+    conn: sqlite3.Connection,
+) -> list[ManagedLayoutRow]:
+    """Return every layout in a non-terminal state (creating / ready /
+    degraded / failed) for the boot-time recovery reconcile (T046).
+
+    ``removed`` is excluded — terminal layouts don't participate in
+    reconcile (their panes are archived).
+    """
+    cur = conn.execute(
+        "SELECT id, container_id, template_name, intended_pane_count, state, "
+        "failed_stage, idempotency_key, created_at, updated_at "
+        "FROM managed_layout "
+        "WHERE state != 'removed' "
+        "ORDER BY container_id ASC, id ASC"
+    )
+    return [_row_to_layout(r) for r in cur.fetchall()]
+
+
+def select_non_terminal_panes_for_container(
+    conn: sqlite3.Connection, container_id: str
+) -> list[ManagedPaneRow]:
+    """Return every pane in container ``container_id`` in a non-terminal
+    state (creating / ready / degraded). The reconcile groups panes by
+    container so the tmux list-panes RPC is issued once per container.
+
+    ``failed`` is excluded too because already-failed rows are not
+    reattach candidates — they were already in a terminal-from-tmux
+    standpoint. The only exception is FR-022 sweep targets, which
+    Phase 6 T050 handles separately.
+    """
+    cur = conn.execute(
+        "SELECT id, layout_id, container_id, agent_id, role, capability, label, "
+        "launch_command_ref, tmux_session_name, tmux_pane_index, "
+        "pending_marker_token, state, failed_stage, predecessor_id, "
+        "chain_depth, created_at, updated_at "
+        "FROM managed_pane "
+        "WHERE container_id = ? "
+        "AND state IN ('creating', 'ready', 'degraded') "
+        "ORDER BY tmux_session_name ASC, tmux_pane_index ASC",
+        (container_id,),
+    )
+    return [_row_to_pane(r) for r in cur.fetchall()]
+
+
+def clear_pending_marker_token(
+    conn: sqlite3.Connection, pane_id: str, *, now: str
+) -> None:
+    """Set ``managed_pane.pending_marker_token = NULL`` for a single row.
+
+    Used by the recovery reconcile (T046) to drop stale markers for
+    rows that the reconcile transitions to a non-``creating`` state.
+    Does not touch state — caller has already done that via
+    ``update_pane_state(clear_marker=True, ...)`` or equivalent.
+    """
+    conn.execute(
+        "UPDATE managed_pane SET pending_marker_token = NULL, updated_at = ? "
+        "WHERE id = ?",
+        (now, pane_id),
+    )
+
+
 def update_layout_state(
     conn: sqlite3.Connection,
     layout_id: str,
