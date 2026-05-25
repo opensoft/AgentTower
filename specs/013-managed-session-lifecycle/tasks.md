@@ -43,7 +43,7 @@ Single Python package: `src/agenttower/managed_sessions/`. Tests under `tests/co
 - [x] T007 Verify migration v9 idempotency in `tests/contract/test_managed_migration.py`: the DDL added in T002 uses `CREATE TABLE IF NOT EXISTS` and `CREATE [UNIQUE] INDEX IF NOT EXISTS` so re-running `_apply_migration_v9` against an already-migrated DB MUST (a) not raise, (b) leave `schema_version` at 9, (c) introduce zero row mutations on the second run. Depends on T002.
 - [x] T008 [P] Implement layout template registry in `src/agenttower/managed_sessions/templates.py`: built-in `1m+2s` (3 panes) and `2m+2s` (4 panes) `ManagedTemplate` instances; YAML loader for `~/.config/opensoft/agenttower/managed_templates/*.yaml` with override-by-name semantics (FR-024); schema validator; `TemplateNotFoundError` raised by lookup
 - [x] T009 [P] Implement launch command profile YAML loader in `src/agenttower/managed_sessions/launch_profiles.py`: parses `~/.config/opensoft/agenttower/launch_commands/*.yaml`, argv-shape enforcement (R9), lookup-by-name with override-by-name semantics (FR-024)
-- [x] T010 [P] Implement per-container serializer in `src/agenttower/managed_sessions/serializer.py`: `dict[container_id, asyncio.Lock]` with FIFO waiter semantics (research §R2); no wait-time cap; cross-container calls run in parallel
+- [x] T010 [P] Implement per-container serializer in `src/agenttower/managed_sessions/serializer.py`: `dict[container_id, threading.Lock]` with FIFO waiter semantics (research §R2; matches the FEAT-009 `agents/mutex.py` lock-map pattern — the AgentTower daemon is threaded, not asyncio); no wait-time cap; cross-container calls run in parallel
 - [x] T011 [P] Implement tmux command composer in `src/agenttower/managed_sessions/tmux_create.py`: argv-first wrappers for `tmux new-session -d -s <name> -- <argv>`, `tmux split-window -t … -- <argv>`, `tmux select-pane -T <title>`, `tmux kill-pane -t …`, `tmux list-panes -t <container> -F …`; invokes through the existing FEAT-004 `docker exec -u "$USER"` channel; `shlex.quote` fallback only when env / working_dir requires it (Principle III safety). Each tmux RPC MUST enforce the per-stage 30-second timeout from FR-013 with 2x transient retry (1s / 2s back-off); on timeout the call returns a stage-specific error so the service can attribute the `failed_stage`
 - [x] T012 [P] Implement pending-managed marker module in `src/agenttower/managed_sessions/pending_marker.py`: set/read/clear `@MANAGED:<token>:<label>` tmux pane title (via tmux_create) AND `managed_pane.pending_marker_token` SQLite column; sweep helper `sweep()` (boot + periodic 60s) implementing FR-022 5-minute TTL transitioning stale rows to `failed` with appropriate `failed_stage`
 - [x] T013 [P] Implement managed-layout / managed-pane view models in `src/agenttower/managed_sessions/view_models.py`: row shapes for list/detail surfaces with `origin = "managed"` distinction, `failed_stage`, `predecessor_id`, `chain_depth`, `log_attached` derived fields (FR-005)
@@ -204,11 +204,11 @@ Task: "Integration test in tests/integration/test_story1_create_standard_layout.
 
 ```bash
 # Launch the 10 parallelizable Phase 2 tasks together:
-Task: "Implement errors.py with 9 closed-set codes"
+Task: "Implement errors.py with 12 closed-set codes"
 Task: "Implement state_machine.py with 5-state transition table"
 Task: "Implement templates.py with built-ins + YAML loader"
 Task: "Implement launch_profiles.py YAML loader"
-Task: "Implement serializer.py asyncio.Lock map"
+Task: "Implement serializer.py threading.Lock map"
 Task: "Implement tmux_create.py argv-first composer"
 Task: "Implement pending_marker.py marker store + sweep helper"
 Task: "Implement view_models.py row shapes"

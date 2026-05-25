@@ -37,4 +37,4 @@
 
 ## Outstanding
 
-- [ ] CHK020 Has `/speckit.analyze` run cleanly **after** the pre-implement walk integration (FR-025/026/027 + amendments + 2 new error codes)? [Gate — the integration is large enough that one final clean analyze pass is recommended before launching `/speckit.implement`.]
+- [x] CHK020 Has `/speckit.analyze` run cleanly **after** the pre-implement walk integration (FR-025/026/027 + amendments + 2 new error codes)? [Gate — RESOLVED: 5 consecutive clean `/speckit.analyze` passes post-pre-implement-walk (Pass 8, 10, 12, 13, 15 — each returned 0 findings; Pass 15 verified against commit `e3af4d0`).]

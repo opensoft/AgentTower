@@ -72,6 +72,7 @@ The full closed set for an `app.managed_*` or legacy `managed.*` response contin
   ```json
   {"pane_id": "string", "current_state": "string", "requested_action": "string"}
   ```
+- **Closed set for `requested_action`**: `"remove"` | `"recreate"` | `"promote_from_adopted"`. (`remove` rejected when state is `creating`; `recreate` rejected when state is `ready` / `degraded` / `creating` — but `recreate` against `ready`/`degraded` is reported by the more specific `managed_pane_illegal_recreate_source` and only falls through to `managed_pane_illegal_transition` if a future caller invents a new action; `promote_from_adopted` is rejected by `not_implemented` not this code in MVP, but the value is reserved here so the closed set is forward-compatible.) Spec §FR-007 names this set; the state-machine graph in [state-machine.md](./state-machine.md) is the authoritative source for which (state, action) pairs surface this code.
 
 ### `managed_pane_illegal_recreate_source`
 
@@ -81,7 +82,7 @@ The full closed set for an `app.managed_*` or legacy `managed.*` response contin
   {"predecessor_pane_id": "string", "current_state": "string"}
   ```
 
-### `managed_pane_recreate_chain_too_deep` (R4)
+### `managed_pane_recreate_chain_too_deep` (FR-023, R4)
 
 - **When**: Predecessor's `chain_depth >= 15` (a new record would be at depth 16, which is the configured bound).
 - **Details schema**:

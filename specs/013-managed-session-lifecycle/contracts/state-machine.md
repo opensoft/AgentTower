@@ -65,7 +65,7 @@ A layout cannot be removed independently of its panes — removing the layout ca
 
 When the operator invokes `recreate_pane` against a pane in `removed` or `failed`:
 
-1. Service validates `predecessor.chain_depth < 16` else `managed_pane_recreate_chain_too_deep` (R4).
+1. Service validates `predecessor.chain_depth < 16` else `managed_pane_recreate_chain_too_deep` (FR-023, R4).
 2. A new `managed_pane` row is inserted with:
    - Fresh `id` (uuid4).
    - Same `layout_id`, `role`, `capability` as predecessor.

@@ -241,7 +241,7 @@ failed ──► removed   (terminal)
 
 ## Concurrency
 
-- The per-container `asyncio.Lock` (research §R2) serializes all SQLite writes for a given `container_id`'s managed_layout / managed_pane rows.
+- The per-container `threading.Lock` (research §R2; matches the FEAT-009 `agents/mutex.py` lock-map pattern — AgentTower's daemon is threaded, not asyncio) serializes all SQLite writes for a given `container_id`'s managed_layout / managed_pane rows.
 - Cross-container writes proceed in parallel; SQLite WAL mode (already enabled by FEAT-001) handles cross-container interleaving.
 - Reads (list / detail) do **not** take the lock; they run inside a read transaction.
 - The recovery path (boot reconcile) holds **all** per-container locks for the duration of reconcile; it runs before the socket starts accepting requests so this is exclusive.

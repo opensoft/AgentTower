@@ -20,6 +20,8 @@ The FEAT-004 scan checks for the `@MANAGED:` prefix and skips registration; FEAT
 
 **Rationale**: Visible to the existing scan path without modifying the scan; survives daemon restart because the SQLite column persists and the tmux title persists for as long as the pane exists; integrity-checked by comparing the column to the parsed title prefix during recovery.
 
+**In-pane process editing the title before registration completes** (edge case): A launched agent process could call `tmux select-pane -T` from inside its own pane and overwrite the `@MANAGED:<token>:<label>` prefix before the daemon registers it. Mitigation: the SQLite `pending_marker_token` column is the **authoritative** marker (the tmux title is the scan-side mirror). The FEAT-004 scan still skips the pane while `pending_marker_token IS NOT NULL`, because the scan additionally consults the SQLite column via the existing FEAT-006 registry lookup. The tmux title is a secondary signal, not the only signal. The 5-minute TTL sweep (R5) bounds the residual risk if both signals diverge.
+
 **Alternatives considered**:
 - Tmux per-pane user options (`tmux set-option -p -t <pane> @managed-token "<token>"`) — requires changing the scan's `list-panes` formatter to include `#{@managed-token}`; modifies FEAT-004's surface and is harder to verify on legacy tmux versions.
 - Environment variables on the pane process — invisible to scan; depends on the operator's process reading them; lost across pane respawn.
@@ -112,6 +114,10 @@ Launch argv is passed as separate argv items after `--`; **no shell `-c` is used
 
 **Rationale**: Aligns to the four-stage create pipeline + the two restart-path stages. Testable (FR-013 contract tests assert the exact enum value).
 
+**Alternatives considered**:
+- Open string field — operator can't write portable diagnostics; downstream tests can't assert exact values.
+- Two-state binary (`create_failed` / `runtime_failed`) — too coarse to drive operator-facing recovery hints; collapses `pane_create` (no pane exists, must retry) against `registration` (pane exists, must clean up) into one bucket.
+
 ---
 
 ## R8. Template schema and storage
@@ -171,6 +177,10 @@ working_dir: /workspace
 
 **Rationale**: Argv shape forces Principle III safety. Matches constitution paths.
 
+**Alternatives considered**:
+- Single string `command` with shell parsing — reintroduces the Principle III shell-interpolation hazard the rest of the design avoids.
+- Inline launch command in template YAML — couples templates to specific binaries; operators can't swap launch commands across templates without copying the template.
+
 ---
 
 ## R10. Idempotency-key behavior for create-layout
@@ -184,6 +194,11 @@ working_dir: /workspace
 The pending-managed marker token (R1) equals `idempotency_key` when present, else `uuid4()`.
 
 **Rationale**: Mirrors the FEAT-011 `app.send_input` idempotency model. Collapses dedupe storage into the pending-managed marker storage.
+
+**Alternatives considered**:
+- No idempotency at all — retries after a transient socket error duplicate the layout; operator sees two `creating` rows for the same intent.
+- Always-restart on duplicate key — defeats the point; a retry restarts the pipeline and risks tmux double-spawn.
+- Idempotency scoped daemon-wide (not per-container) — would let a key collide across containers, surprising operators who use the same logical key (e.g., a CI job id) against multiple bench containers.
 
 ---
 
@@ -201,6 +216,11 @@ No separate file. **No retention pruning in MVP** — pruning is a later feature
 
 **Rationale**: Single observability surface; matches Principle IV.
 
+**Alternatives considered**:
+- Widen the SQLite `events` table's `event_type` CHECK constraint to admit `managed_*` types — re-opens a schema-level closed-set decision that FEAT-008 made deliberately; bench-side migrations would have to roll across all installs.
+- New `managed_events` SQLite table — second event source diverges from the FEAT-008 single-observability principle; operator tooling has to merge two streams.
+- Dedicated `managed-events.jsonl` file — adds a second JSONL file alongside FEAT-008's audit file; operators have to know which file to tail.
+
 ---
 
 ## R12. Operator authorization (MVP)
@@ -212,6 +232,11 @@ No separate file. **No retention pruning in MVP** — pruning is a later feature
 - No UID-match or per-container ACL in MVP. Captured in spec Assumptions.
 
 **Rationale**: Matches FR-017 + spec Assumptions. Preserves the principle that a bench container can manage its own panes but cannot affect other containers.
+
+**Alternatives considered**:
+- Per-container ACL list keyed by UID — adds a new persisted user-identity store; out of scope for MVP per spec §Assumptions and FR-017.
+- Reuse FEAT-011 host-only gate everywhere (no thin-client `managed.*`) — eliminates the legacy CLI as a useful surface inside a bench container, breaking the "operator inside the container" demo path.
+- Open everything to all peers — violates the "bench container cannot affect other containers" principle that justifies the FEAT-009 peer detection.
 
 ---
 
@@ -234,6 +259,11 @@ No separate file. **No retention pruning in MVP** — pruning is a later feature
 Illegal transitions are rejected with `managed_pane_illegal_transition`. `promoted_from_adopted` is reserved and rejected with `not_implemented` in MVP.
 
 **Rationale**: Maps directly onto the Q1/Q8/Q9 clarifications. Recovery from `degraded` to `ready` is **not** permitted in MVP — recovery is via `recreate`, which produces a fresh record linked by `predecessor_id`. This keeps the state graph acyclic and the audit story clean.
+
+**Alternatives considered**:
+- Allow `degraded → ready` on health-probe recovery — introduces a cycle in the graph, complicates audit-replay (one pane id can re-enter `ready` after going `degraded`), and forces every reader to handle "is this the same `ready` as before or a recovered one?"
+- Single `unhealthy` state replacing both `degraded` and `failed` — collapses the operator-actionable distinction (recoverable-via-recreate vs unusable-until-recreated) and loses the ability to surface a partial layout as still partly-usable.
+- Allow `failed → ready` via daemon-side auto-retry — re-opens auto-recovery that Principle V (conservative automation) explicitly closes.
 
 ---
 
