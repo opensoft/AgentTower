@@ -16,7 +16,7 @@ from ..config import (
     _verify_file_mode,
 )
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 _COMPANION_SUFFIXES = ("-journal", "-wal", "-shm")
 
@@ -761,6 +761,117 @@ def _apply_migration_v8(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_v9(conn: sqlite3.Connection) -> None:
+    """FEAT-013 — add ``managed_layout`` and ``managed_pane`` tables.
+
+    See ``specs/013-managed-session-lifecycle/data-model.md`` §DDL for the
+    authoritative column reference. Idempotent (every DDL uses
+    ``IF NOT EXISTS``); no existing FEAT-001..FEAT-012 table is altered.
+
+    ``managed_pane.container_id`` is denormalized from
+    ``managed_layout.container_id`` at insert time so the per-container
+    label-uniqueness index can be expressed directly without a subquery
+    (SQLite forbids subqueries in ``CREATE INDEX`` expressions). The
+    per-container serializer (FR-019) is the only writer to either table,
+    so the denormalized column cannot drift.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS managed_layout (
+            id                    TEXT PRIMARY KEY,
+            container_id          TEXT NOT NULL,
+            template_name         TEXT NOT NULL,
+            intended_pane_count   INTEGER NOT NULL,
+            state                 TEXT NOT NULL CHECK (state IN
+                                      ('creating','ready','degraded','failed','removed')),
+            failed_stage          TEXT,
+            idempotency_key       TEXT,
+            created_at            TEXT NOT NULL,
+            updated_at            TEXT NOT NULL,
+            CHECK (failed_stage IS NULL OR failed_stage IN
+                ('pane_create','launch_command','registration','log_attach',
+                 'tmux_kill','recovery_reattach'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_managed_layout_container_state
+            ON managed_layout(container_id, state)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_layout_idempotency_key
+            ON managed_layout(container_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS managed_pane (
+            id                    TEXT PRIMARY KEY,
+            layout_id             TEXT NOT NULL REFERENCES managed_layout(id),
+            container_id          TEXT NOT NULL,
+            agent_id              TEXT REFERENCES agents(agent_id),
+            role                  TEXT NOT NULL,
+            capability            TEXT NOT NULL,
+            label                 TEXT NOT NULL,
+            launch_command_ref    TEXT,
+            tmux_session_name     TEXT NOT NULL,
+            tmux_pane_index       INTEGER NOT NULL,
+            pending_marker_token  TEXT,
+            state                 TEXT NOT NULL CHECK (state IN
+                                      ('creating','ready','degraded','failed','removed')),
+            failed_stage          TEXT,
+            predecessor_id        TEXT REFERENCES managed_pane(id),
+            chain_depth           INTEGER NOT NULL DEFAULT 0
+                                  CHECK (chain_depth >= 0 AND chain_depth <= 16),
+            created_at            TEXT NOT NULL,
+            updated_at            TEXT NOT NULL,
+            CHECK (failed_stage IS NULL OR failed_stage IN
+                ('pane_create','launch_command','registration','log_attach',
+                 'tmux_kill','recovery_reattach')),
+            CHECK (pending_marker_token IS NULL OR state = 'creating')
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_pane_container_label
+            ON managed_pane(container_id, label)
+            WHERE state IN ('creating','ready','degraded')
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_managed_pane_layout_state
+            ON managed_pane(layout_id, state)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_managed_pane_pending_marker
+            ON managed_pane(pending_marker_token)
+            WHERE pending_marker_token IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_managed_pane_predecessor
+            ON managed_pane(predecessor_id)
+            WHERE predecessor_id IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_pane_tmux_target
+            ON managed_pane(tmux_session_name, tmux_pane_index)
+            WHERE state IN ('creating','ready','degraded')
+        """
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _apply_migration_v2,
     3: _apply_migration_v3,
@@ -769,6 +880,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     6: _apply_migration_v6,
     7: _apply_migration_v7,
     8: _apply_migration_v8,
+    9: _apply_migration_v9,
 }
 
 
@@ -856,6 +968,7 @@ def _ensure_current_schema(conn: sqlite3.Connection, current_version: int) -> No
     _apply_migration_v6(conn)
     _apply_migration_v7(conn)
     _apply_migration_v8(conn)
+    _apply_migration_v9(conn)
 
 
 def _chmod_new_companions(

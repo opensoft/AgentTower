@@ -100,9 +100,7 @@ src/agenttower/managed_sessions/
 │                           #   managed_layout_not_found, managed_pane_not_found,
 │                           #   managed_pane_recreate_chain_too_deep, managed_pane_protected_adopted,
 │                           #   managed_template_not_found
-└── migration.py            # SQLite migration registration
-
-migrations/00NN_managed_sessions.sql        # SQLite DDL for managed_layout + managed_pane
+└── (migration registration lives in FEAT-001 src/agenttower/state/schema.py as _apply_migration_v9; no separate migrations/*.sql file)
 
 tests/contract/
 ├── test_managed_layout_create.py            # FR-001/002/003/019; managed_session_name_conflict
