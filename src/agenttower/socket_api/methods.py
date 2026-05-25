@@ -2185,3 +2185,12 @@ DISPATCH: dict[str, Handler] = {
 from agenttower.app_contract.dispatcher import APP_DISPATCH  # noqa: E402
 
 DISPATCH.update(APP_DISPATCH)
+
+# FEAT-013 (T025): merge the legacy ``managed.*`` namespace into DISPATCH.
+# Additive — no FEAT-002 method binding is altered. Mirrors the FEAT-011
+# merge above so the import order is unsurprising (managed_sessions/
+# handlers/cli.py imports from socket_api lazily inside its handlers so
+# this import cannot loop).
+from agenttower.managed_sessions.handlers.cli import register as _managed_cli_register  # noqa: E402
+
+DISPATCH.update(_managed_cli_register())

@@ -125,8 +125,9 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
     from . import readiness as _readiness
     from . import reads as _reads
     from . import scan_handlers as _scan_handlers
+    from ..managed_sessions.handlers import app as _managed_app  # FEAT-013 T025
 
-    return {
+    dispatch: dict[str, _AppHandler] = {
         # ── Bootstrap + dashboard (US1) ──────────────────────────────
         "app.preflight": _wrap_handler(_preflight.app_preflight),
         "app.hello": _wrap_handler(_hello.app_hello),
@@ -166,6 +167,14 @@ def _build_app_dispatch() -> dict[str, _AppHandler]:
         "app.route.remove": _wrap_handler(_mutations.app_route_remove),
         "app.route.update": _wrap_handler(_mutations.app_route_update),
     }
+    # ── FEAT-013 managed-session methods (T025) ─────────────────────
+    # Additive evolution within app_contract_version = "1.0" per
+    # contracts/managed-methods.md §Versioning. Wrapped with the same
+    # _wrap_handler safety net so a FEAT-013-side bug surfaces as
+    # internal_error rather than leaking a raw exception.
+    for name, handler in _managed_app.register().items():
+        dispatch[name] = _wrap_handler(handler)
+    return dispatch
 
 
 APP_DISPATCH: dict[str, _AppHandler] = _build_app_dispatch()

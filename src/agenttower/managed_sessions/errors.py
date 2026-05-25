@@ -1,6 +1,6 @@
 """FEAT-013 closed-set error codes (T005).
 
-11 new codes added on top of FEAT-011's 27-entry registry (38 total).
+13 new codes added on top of FEAT-011's 27-entry registry (40 total).
 See ``specs/013-managed-session-lifecycle/contracts/error-codes.md`` for
 each entry's authoritative ``details`` schema.
 
@@ -8,6 +8,13 @@ Codes follow the FEAT-011 convention (lowercase snake_case, matches the
 ``^[a-z][a-z0-9_]*$`` shape from FR-034). The ``DETAILS_SCHEMAS`` mapping
 names the required ``details`` keys per code; callers building error
 envelopes assemble the actual values from runtime context.
+
+The ``container_not_found`` code does not carry the ``managed_`` prefix —
+it was originally documented as a reused-from-FEAT-003 code by
+contracts/error-codes.md "Reused codes" section, but no upstream FEAT
+defines it. FEAT-013 owns it (handler layer raises it before calling
+the service) but preserves the contract-side wire spelling for client
+compatibility.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP: Final[str] = "managed_pane_recreate_chain_
 MANAGED_LAYOUT_CAPACITY_EXCEEDED: Final[str] = "managed_layout_capacity_exceeded"
 MANAGED_PANE_CONCURRENT_RECREATE: Final[str] = "managed_pane_concurrent_recreate"
 MANAGED_PANE_LABEL_CONFLICT: Final[str] = "managed_pane_label_conflict"
+CONTAINER_NOT_FOUND: Final[str] = "container_not_found"
 
 
 # All FEAT-013 codes as a frozen set for closed-set membership tests
@@ -47,6 +55,7 @@ ALL_CODES: Final[frozenset[str]] = frozenset(
         MANAGED_LAYOUT_CAPACITY_EXCEEDED,
         MANAGED_PANE_CONCURRENT_RECREATE,
         MANAGED_PANE_LABEL_CONFLICT,
+        CONTAINER_NOT_FOUND,
     }
 )
 
@@ -78,6 +87,7 @@ DETAILS_SCHEMAS: Final[dict[str, tuple[str, ...]]] = {
         "in_flight_successor_pane_id",
     ),
     MANAGED_PANE_LABEL_CONFLICT: ("container_id", "label"),
+    CONTAINER_NOT_FOUND: ("container_id",),
 }
 
 
