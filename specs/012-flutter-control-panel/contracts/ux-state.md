@@ -186,7 +186,7 @@ The Settings doctor (FR-009) includes a check that:
 
 The doctor output is included verbatim in the FR-074 diagnostics bundle.
 
-Unit tests for the persistence layer live at `apps/control_panel/test/unit/persistence_test.dart` and exercise:
+Unit tests for the persistence layer live at `apps/control_panel/test/core/ux_state/persistence_test.dart` (module-based layout per /speckit-analyze Round 5 T-N1, matching T149's placement) and exercise:
 
 - Fresh-install defaults.
 - Schema migration `v1 → vN` paths (one per shipped migration).
