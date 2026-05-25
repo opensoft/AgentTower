@@ -1061,6 +1061,120 @@ def test_dashboard_v1_1_fr020_agent_partition_at_wire(
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T022 — US4 v1.0-reader + FR-012 symmetric forward-compat
+#
+# Two sub-tests. Both expected GREEN at landing — they verify behavior
+# that is already true at the current branch state (the v1.0 keys are
+# emitted bit-identically per FR-014, and the dashboard handler reads
+# only known params via params.get() so unknown fields are silently
+# ignored). The tests document the contract so any future regression
+# would be caught.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_v1_0_only_reader_unaffected_by_v1_1_additions(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """US4 acceptance #1: a v1.0 client that reads only v1.0 keys
+    (``counts.panes.{total,registered,unregistered}``, ``counts.agents.total``,
+    ``counts.agents.by_role``, ``counts.routes.{enabled,disabled}``,
+    ``recent``, ``hints``) gets bit-identical v1.0 values even when the
+    daemon emits v1.1 additions (``by_state``, ``recently_skipped_*``) in
+    the same envelope. The v1.1 fields exist but they don't disturb the
+    v1.0 surface."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    # Minimal mixed-state fixture: 1 active container + 1 registered pane +
+    # 1 unadopted pane + 2 agents + 1 enabled route.
+    _seed_container(conn, container_id="c1", name="c1", active=True)
+    _seed_pane(conn, container_id="c1", container_name="c1", pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c1", container_name="c1", pane_id="%1", pane_index=1)
+    _seed_agent(conn, agent_id="a1", container_id="c1", pane_id="%0", pane_index=0)
+    _seed_route(conn, route_id="r1", enabled=True)
+    conn.commit()
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["ok"] is True
+    result = env["result"]
+
+    # v1.0 panes surface unchanged.
+    assert result["counts"]["panes"]["total"] == 2
+    assert result["counts"]["panes"]["registered"] == 1
+    assert result["counts"]["panes"]["unregistered"] == 1
+
+    # v1.0 agents surface unchanged.
+    assert result["counts"]["agents"]["total"] == 1
+    assert "by_role" in result["counts"]["agents"]
+    assert isinstance(result["counts"]["agents"]["by_role"], dict)
+
+    # v1.0 routes surface unchanged (the {enabled, disabled} numbers).
+    assert result["counts"]["routes"]["enabled"] == 1
+    assert result["counts"]["routes"]["disabled"] == 0
+
+    # v1.0 recents + hints surfaces present and well-typed.
+    assert isinstance(result["recent"]["events"], list)
+    assert isinstance(result["recent"]["queue"], list)
+    assert isinstance(result["recent"]["routes"], list)
+    assert isinstance(result["hints"], list)
+
+    # The v1.1 additions ARE emitted (additive-minor; v1.0 reader ignores
+    # them) — verify they exist as expected types so a v1.0 client reading
+    # only the v1.0 keys cannot accidentally trip over them.
+    assert isinstance(result["counts"]["panes"]["by_state"], dict)
+    assert isinstance(result["counts"]["agents"]["by_state"], dict)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_count"], int)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_window_ms"], int)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr012_daemon_ignores_unknown_request_fields(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-012 R2 / Clarifications R2 Q3 — symmetric forward-compat: a v1.1+
+    client sending an unknown future request field MUST NOT cause the daemon
+    to reject the call or return an error envelope. The daemon silently
+    ignores unknown fields, returning the standard v1.1 success envelope.
+
+    This establishes the symmetric forward-compat convention BEFORE any
+    future v1.x minor introduces request parameters. Without this rule,
+    daemons that strict-validate the request dict would force a synchronized
+    client-daemon upgrade for any future minor that adds a request param —
+    breaking the additive-minor evolution model FR-013/FR-014 promise."""
+    host_peer, token = host_session
+    # Synthetic unknown future fields. The daemon must silently ignore them.
+    params = {
+        "app_session_token": token,
+        "unknown_future_field": True,
+        "another_v1_2_param": "future-value",
+        "nested_unknown": {"deep": {"foo": "bar"}},
+        "recent_limit": 10,  # known field, should still be honored
+    }
+    env = dashboard_mod.app_dashboard(
+        daemon_ctx_with_db, params, peer_uid=host_peer
+    )
+
+    # Daemon accepts the call.
+    assert env["ok"] is True, (
+        f"FR-012 R2 violation: unknown request fields caused error: "
+        f"{env.get('error')!r}"
+    )
+
+    # The v1.1 success envelope is intact.
+    result = env["result"]
+    assert "counts" in result
+    assert "panes" in result["counts"]
+    assert "by_state" in result["counts"]["panes"], (
+        "v1.1 fields must be present despite unknown request fields"
+    )
+    assert "agents" in result["counts"]
+    assert "by_state" in result["counts"]["agents"]
+
+    # No error code surfaced.
+    assert "error" not in env or env.get("error") is None
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # FEAT-014 T011 — US2 wire-level assertions (recently_skipped_*)
 #
 # All assertions below are @pytest.mark.v1_1 per the v1.1 marker rule. They
