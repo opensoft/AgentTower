@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/l10n/l10n_wiring.dart';
 import 'domain/models/common_enums.dart' as enums;
+import 'features/notifications/os_native_dispatch_watcher.dart';
 import 'features/settings/providers.dart';
 import 'routing/router.dart';
 import 'ui/theme/color_tokens.dart';
@@ -37,6 +38,11 @@ class AgentTowerControlPanel extends ConsumerWidget {
       enums.ThemeMode.dark => ThemeMode.dark,
       enums.ThemeMode.system => ThemeMode.system,
     };
+    // T171 — keep the FR-058 OS-native-dispatch watcher alive for the
+    // app's lifetime. The provider is side-effect-only (`Provider<void>`)
+    // and uses `ref.listen` internally to forward newly-arrived
+    // `incoming` notifications to the dispatcher.
+    ref.watch(osNativeDispatchWatcherProvider);
     return MaterialApp(
       title: 'AgentTower Control Panel',
       theme: ColorTokens.light(),
