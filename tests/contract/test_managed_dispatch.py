@@ -115,31 +115,41 @@ def force_host_peer(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_legacy_managed_methods_registered() -> None:
-    """T025: all 5 ``managed.*`` methods reachable through FEAT-002 DISPATCH."""
+    """T025 + T048: all 8 ``managed.*`` methods (M1-M8) reachable through
+    FEAT-002 DISPATCH."""
     expected = {
         "managed.layout.create",
         "managed.layout.list",
         "managed.layout.detail",
         "managed.pane.list",
         "managed.pane.detail",
+        "managed.pane.remove",
+        "managed.pane.recreate",
+        "managed.pane.promote_from_adopted",
     }
     assert expected.issubset(DISPATCH.keys())
 
 
 def test_app_managed_methods_registered() -> None:
-    """T025: all 5 ``app.managed_*`` methods reachable through FEAT-011 APP_DISPATCH."""
+    """T025 + T048: all 8 ``app.managed_*`` methods (M1-M8) reachable
+    through FEAT-011 APP_DISPATCH."""
     expected = {
         "app.managed_layout_create",
         "app.managed_layout_list",
         "app.managed_layout_detail",
         "app.managed_pane_list",
         "app.managed_pane_detail",
+        "app.managed_pane_remove",
+        "app.managed_pane_recreate",
+        "app.managed_pane_promote_from_adopted",
     }
     assert expected.issubset(APP_DISPATCH.keys())
 
 
-def test_cli_register_returns_five_methods() -> None:
-    """T025: ``cli.register()`` returns the closed 5-method mapping."""
+def test_cli_register_returns_full_method_set() -> None:
+    """T025 + T048: ``cli.register()`` returns the closed 8-method mapping
+    (M1-M8). Was 5 in Phase 3c (T025 registered M1 + M2-M5 stubs); Phase 5c
+    (T048) added M6/M7/M8."""
     mapping = cli_register()
     assert set(mapping.keys()) == {
         "managed.layout.create",
@@ -147,6 +157,9 @@ def test_cli_register_returns_five_methods() -> None:
         "managed.layout.detail",
         "managed.pane.list",
         "managed.pane.detail",
+        "managed.pane.remove",
+        "managed.pane.recreate",
+        "managed.pane.promote_from_adopted",
     }
 
 
@@ -591,3 +604,180 @@ def test_app_create_emits_synchronous_lifecycle_events(ctx: Any) -> None:
     # Pane events carry both layout_id and pane_id (pane-scoped events).
     pane_events = [e for e in events if e["event_type"].startswith("managed_pane_")]
     assert all(e["pane_id"] is not None for e in pane_events)
+
+
+# ─── M6 / M7 / M8 dispatcher tests (T048 — Phase 5c) ────────────────────
+
+
+def _seed_and_drive_to_ready(ctx: Any, container_id: str = "bench-alpha",
+                              session: str = "session-m6") -> dict[str, Any]:
+    """Create a layout via the dispatcher, then drive it to ready via the
+    spawn pipeline with canned backends. Returns the M1 result payload
+    so tests can pick a pane_id to operate on."""
+    from agenttower.managed_sessions.service import spawn_layout_in_background
+
+    resp = APP_DISPATCH["app.managed_layout_create"](
+        ctx,
+        {
+            "container_id": container_id,
+            "template_name": "1m+2s",
+            "tmux_session_name": session,
+        },
+        HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    layout_id = resp["result"]["layout_id"]
+
+    def _good_tmux(pane):
+        return {
+            "ok": True,
+            "tmux_pane_id": f"%t-{pane.tmux_pane_index}",
+            "launch_alive": True,
+        }
+
+    def _register(pane, tmux_pane_id):
+        agent_id = f"agent-{pane.id[:8]}"
+        ctx.state_conn.execute("INSERT INTO agents (agent_id) VALUES (?)", (agent_id,))
+        return {"ok": True, "agent_id": agent_id}
+
+    def _log_ok(pane, agent_id):
+        return {"ok": True}
+
+    spawn_layout_in_background(
+        layout_id,
+        conn=ctx.state_conn,
+        serializer=ctx.managed_serializer,
+        tmux_spawn_fn=_good_tmux,
+        register_fn=_register,
+        log_attach_fn=_log_ok,
+    )
+    return resp["result"]
+
+
+# M6 — managed.pane.remove
+
+
+def test_app_pane_remove_missing_pane_id_fails_validation(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_pane_remove"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "validation_failed"
+    assert resp["error"]["details"]["field"] == "pane_id"
+
+
+def test_app_pane_remove_unknown_pane_returns_not_found(ctx: Any) -> None:
+    """Per N38: unknown pane_id (not in agents either) → managed_pane_not_found."""
+    resp = APP_DISPATCH["app.managed_pane_remove"](
+        ctx, {"pane_id": "01HZ-NEVER"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "managed_pane_not_found"
+
+
+def test_app_pane_remove_happy_path(ctx: Any) -> None:
+    result = _seed_and_drive_to_ready(ctx)
+    target_pane_id = result["panes"][0]["pane_id"]
+    resp = APP_DISPATCH["app.managed_pane_remove"](
+        ctx, {"pane_id": target_pane_id}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+    assert resp["result"]["pane_id"] == target_pane_id
+    assert resp["result"]["state"] == "removed"
+
+
+def test_app_pane_remove_in_creating_state_returns_illegal_transition(ctx: Any) -> None:
+    """FR-018: pane in `creating` state cannot be removed (cancel-in-flight
+    is out of scope)."""
+    resp = APP_DISPATCH["app.managed_layout_create"](
+        ctx,
+        {
+            "container_id": "bench-alpha",
+            "template_name": "1m+2s",
+            "tmux_session_name": "session-creating-rm",
+        },
+        HOST_PEER_UID,
+    )
+    creating_pane_id = resp["result"]["panes"][0]["pane_id"]
+    # Don't drive it to ready — remove while still in 'creating'.
+    rm = APP_DISPATCH["app.managed_pane_remove"](
+        ctx, {"pane_id": creating_pane_id}, HOST_PEER_UID,
+    )
+    assert rm["ok"] is False
+    assert rm["error"]["code"] == "managed_pane_illegal_transition"
+    assert rm["error"]["details"]["current_state"] == "creating"
+    assert rm["error"]["details"]["requested_action"] == "remove"
+
+
+# M7 — managed.pane.recreate
+
+
+def test_app_pane_recreate_missing_predecessor_id_fails_validation(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_pane_recreate"](ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "validation_failed"
+    assert resp["error"]["details"]["field"] == "predecessor_pane_id"
+
+
+def test_app_pane_recreate_unknown_predecessor_returns_not_found(ctx: Any) -> None:
+    resp = APP_DISPATCH["app.managed_pane_recreate"](
+        ctx, {"predecessor_pane_id": "01HZ-NEVER"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "managed_pane_not_found"
+
+
+def test_app_pane_recreate_happy_path(ctx: Any) -> None:
+    """Drive a pane to ready → remove it → recreate it. Verify the new
+    pane has predecessor_id set + chain_depth=1 + state=creating."""
+    result = _seed_and_drive_to_ready(ctx, session="session-recreate")
+    target_pane_id = result["panes"][0]["pane_id"]
+
+    # Remove the pane so it becomes a valid recreate source.
+    rm = APP_DISPATCH["app.managed_pane_remove"](
+        ctx, {"pane_id": target_pane_id}, HOST_PEER_UID,
+    )
+    assert rm["ok"] is True
+
+    # Recreate from the removed pane.
+    rc = APP_DISPATCH["app.managed_pane_recreate"](
+        ctx, {"predecessor_pane_id": target_pane_id}, HOST_PEER_UID,
+    )
+    assert rc["ok"] is True
+    assert rc["result"]["predecessor_id"] == target_pane_id
+    assert rc["result"]["chain_depth"] == 1
+    assert rc["result"]["state"] == "creating"
+    assert rc["result"]["pane_id"] != target_pane_id  # fresh id
+
+
+def test_app_pane_recreate_from_ready_returns_illegal_recreate_source(ctx: Any) -> None:
+    """Predecessor must be in `removed` or `failed` — `ready` is rejected."""
+    result = _seed_and_drive_to_ready(ctx, session="session-rc-ready")
+    ready_pane_id = result["panes"][0]["pane_id"]
+    rc = APP_DISPATCH["app.managed_pane_recreate"](
+        ctx, {"predecessor_pane_id": ready_pane_id}, HOST_PEER_UID,
+    )
+    assert rc["ok"] is False
+    assert rc["error"]["code"] == "managed_pane_illegal_recreate_source"
+
+
+# M8 — managed.pane.promote_from_adopted (stub)
+
+
+def test_app_pane_promote_from_adopted_returns_not_implemented(ctx: Any) -> None:
+    """Stub always returns not_implemented + reserved_since=FEAT-013."""
+    resp = APP_DISPATCH["app.managed_pane_promote_from_adopted"](
+        ctx, {"agent_id": "01HZ-ANY-ADOPTED"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["app_contract_version"] == "1.0"
+    assert resp["error"]["code"] == "not_implemented"
+    assert resp["error"]["details"] == {"reserved_since": "FEAT-013"}
+
+
+def test_legacy_pane_promote_from_adopted_returns_not_implemented(ctx: Any) -> None:
+    """Same stub through the FEAT-002 legacy CLI namespace."""
+    resp = DISPATCH["managed.pane.promote_from_adopted"](
+        ctx, {"agent_id": "01HZ-ANY-ADOPTED"}, HOST_PEER_UID,
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "not_implemented"
+    assert resp["error"]["details"] == {"reserved_since": "FEAT-013"}

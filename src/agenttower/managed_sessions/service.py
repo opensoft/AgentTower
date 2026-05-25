@@ -604,7 +604,15 @@ def spawn_layout_in_background(
     pane_states: dict[str, ManagedState] = {}
     lock = serializer.for_container(layout.container_id)
     with lock:
-        panes = select_panes_for_layout(conn, layout_id)
+        # Only process panes that are still in `creating` state. After
+        # the initial spawn, ready/degraded/failed/removed panes don't
+        # need (and shouldn't get) another spawn cycle — the spawn task
+        # is re-runnable across recreate iterations (Phase 5c T041
+        # chain-traversal: a recreated pane lands in creating and
+        # subsequent spawn_layout_in_background calls pick it up without
+        # disturbing already-settled siblings).
+        all_panes = select_panes_for_layout(conn, layout_id)
+        panes = [p for p in all_panes if p.state == ManagedState.CREATING]
         for pane in panes:
             final_state = _spawn_single_pane(
                 conn=conn,

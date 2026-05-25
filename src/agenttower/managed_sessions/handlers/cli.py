@@ -34,7 +34,13 @@ from ..errors import (
     MANAGED_PANE_NOT_FOUND,
     ManagedSessionsError,
 )
-from ..service import ValidationFailedError, create_layout
+from ..service import (
+    ValidationFailedError,
+    create_layout,
+    promote_from_adopted,
+    recreate_pane,
+    remove_pane,
+)
 from ..state_machine import FailedStage, ManagedState
 from ..view_models import ManagedLayoutView, ManagedPaneView, ORIGIN_MANAGED
 
@@ -606,6 +612,156 @@ def _managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
     return _ok(payload)
 
 
+# ─── M6 / M7 / M8 lifecycle handlers (T048 — Phase 5c) ──────────────────
+
+
+def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``managed.pane.remove`` (M6) — kill underlying tmux pane + cleanup
+    routes/logs + transition to ``removed``. R12 peer scoping: thin-client
+    peers may only remove panes in their own container."""
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _err("internal_error", "daemon state_conn not wired")
+    serializer = _serializer(ctx)
+    if serializer is None:
+        return _err("internal_error", "daemon managed_serializer not wired")
+
+    pane_id = params.get("pane_id")
+    if not isinstance(pane_id, str) or not pane_id:
+        return _err(
+            "validation_failed", "missing or empty 'pane_id'",
+            details={"field": "pane_id", "reason": "missing or empty"},
+        )
+
+    # R12 peer scoping — for known managed panes, refuse cross-container
+    # operations from bench-container peers. (Unknown pane_id falls through
+    # to service.remove_pane's protected_adopted / not_found check.)
+    pane_row = select_pane(conn, pane_id)
+    if pane_row is not None:
+        peer_container = _peer_container_id(ctx, peer_uid)
+        if peer_container is not None and pane_row.container_id != peer_container:
+            return _err(
+                "host_only",
+                "bench-container peers may only remove panes in their own container",
+                details={
+                    "peer_container_id": peer_container,
+                    "pane_container_id": pane_row.container_id,
+                },
+            )
+
+    # Service performs the actual lifecycle work + raises closed-set errors.
+    # The tmux kill / route / log cleanup backends are pulled from ctx
+    # (production wiring) or default to None (test fixtures + the spawn-
+    # backends factory pattern from Phase 4c).
+    tmux_kill_fn = getattr(ctx, "managed_tmux_kill_fn", None)
+    route_cleanup_fn = getattr(ctx, "managed_route_cleanup_fn", None)
+    log_detach_fn = getattr(ctx, "managed_log_detach_fn", None)
+
+    try:
+        result = remove_pane(
+            conn=conn, serializer=serializer, pane_id=pane_id,
+            tmux_kill_fn=tmux_kill_fn,
+            route_cleanup_fn=route_cleanup_fn,
+            log_detach_fn=log_detach_fn,
+        )
+    except ManagedSessionsError as exc:
+        return _err(exc.code, str(exc), details=exc.details)
+    except Exception as exc:  # noqa: BLE001
+        return _err(
+            "internal_error",
+            f"managed.pane.remove failed: {type(exc).__name__}",
+        )
+
+    return _ok({"pane_id": result.pane_id, "state": result.state.value})
+
+
+def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``managed.pane.recreate`` (M7) — produce a new pane row linked via
+    ``predecessor_id``. Same R12 scoping + ctx-injected backends pattern
+    as M6."""
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _err("internal_error", "daemon state_conn not wired")
+    serializer = _serializer(ctx)
+    if serializer is None:
+        return _err("internal_error", "daemon managed_serializer not wired")
+
+    predecessor_pane_id = params.get("predecessor_pane_id")
+    if not isinstance(predecessor_pane_id, str) or not predecessor_pane_id:
+        return _err(
+            "validation_failed", "missing or empty 'predecessor_pane_id'",
+            details={"field": "predecessor_pane_id", "reason": "missing or empty"},
+        )
+
+    launch_command_override = params.get("launch_command_override")
+    if launch_command_override is not None and not isinstance(launch_command_override, str):
+        return _err(
+            "validation_failed", "launch_command_override must be a string when provided",
+            details={"field": "launch_command_override", "reason": "wrong type"},
+        )
+
+    idempotency_key = params.get("idempotency_key")
+    if idempotency_key is not None and not isinstance(idempotency_key, str):
+        return _err(
+            "validation_failed", "idempotency_key must be a string when provided",
+            details={"field": "idempotency_key", "reason": "wrong type"},
+        )
+
+    # R12 peer scoping — for known managed predecessors, refuse cross-
+    # container recreate from a bench-container peer.
+    predecessor = select_pane(conn, predecessor_pane_id)
+    if predecessor is not None:
+        peer_container = _peer_container_id(ctx, peer_uid)
+        if peer_container is not None and predecessor.container_id != peer_container:
+            return _err(
+                "host_only",
+                "bench-container peers may only recreate panes in their own container",
+                details={
+                    "peer_container_id": peer_container,
+                    "pane_container_id": predecessor.container_id,
+                },
+            )
+
+    try:
+        result = recreate_pane(
+            conn=conn, serializer=serializer,
+            predecessor_pane_id=predecessor_pane_id,
+            launch_command_override=launch_command_override,
+            idempotency_key=idempotency_key,
+        )
+    except ManagedSessionsError as exc:
+        return _err(exc.code, str(exc), details=exc.details)
+    except Exception as exc:  # noqa: BLE001
+        return _err(
+            "internal_error",
+            f"managed.pane.recreate failed: {type(exc).__name__}",
+        )
+
+    return _ok({
+        "pane_id": result.pane_id,
+        "predecessor_id": result.predecessor_id,
+        "chain_depth": result.chain_depth,
+        "state": result.state.value,
+    })
+
+
+def _managed_pane_promote_from_adopted(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``managed.pane.promote_from_adopted`` (M8) — STUB. Always returns
+    ``not_implemented`` with ``details.reserved_since = "FEAT-013"``."""
+    if not isinstance(params, dict):
+        params = {}
+    agent_id = params.get("agent_id", "")
+    if not isinstance(agent_id, str):
+        agent_id = ""
+    stub = promote_from_adopted(agent_id)
+    return _err(stub.error_code, "promote_from_adopted is reserved for a later feature",
+                details=stub.details)
+
+
 # ─── Registration ────────────────────────────────────────────────────────
 
 
@@ -615,6 +771,9 @@ _LEGACY_METHODS: dict[str, Any] = {
     "managed.layout.detail": _managed_layout_detail,
     "managed.pane.list": _managed_pane_list,
     "managed.pane.detail": _managed_pane_detail,
+    "managed.pane.remove": _managed_pane_remove,
+    "managed.pane.recreate": _managed_pane_recreate,
+    "managed.pane.promote_from_adopted": _managed_pane_promote_from_adopted,
 }
 
 

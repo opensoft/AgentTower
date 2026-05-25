@@ -43,7 +43,13 @@ from ..errors import (
     MANAGED_PANE_NOT_FOUND,
     ManagedSessionsError,
 )
-from ..service import ValidationFailedError, create_layout
+from ..service import (
+    ValidationFailedError,
+    create_layout,
+    promote_from_adopted,
+    recreate_pane,
+    remove_pane,
+)
 from ..state_machine import FailedStage, ManagedState
 from ..view_models import ManagedLayoutView, ManagedPaneView, ORIGIN_MANAGED
 
@@ -485,6 +491,148 @@ def app_managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
     return _envelope.success(payload)
 
 
+# ─── M6 / M7 / M8 lifecycle handlers (T048 — Phase 5c) ──────────────────
+
+
+def app_managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_pane_remove`` (M6)."""
+    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+
+    if not is_host_peer(peer_uid):
+        return _envelope.failure(
+            HOST_ONLY, "app.managed_pane_remove is host-only", details={},
+        )
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon state_conn not wired", details={}
+        )
+    serializer = _serializer(ctx)
+    if serializer is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon managed_serializer not wired", details={}
+        )
+
+    pane_id = params.get("pane_id")
+    if not isinstance(pane_id, str) or not pane_id:
+        return _envelope.failure(
+            VALIDATION_FAILED, "missing or empty 'pane_id'",
+            details={"field": "pane_id", "reason": "missing or empty"},
+        )
+
+    tmux_kill_fn = getattr(ctx, "managed_tmux_kill_fn", None)
+    route_cleanup_fn = getattr(ctx, "managed_route_cleanup_fn", None)
+    log_detach_fn = getattr(ctx, "managed_log_detach_fn", None)
+
+    try:
+        result = remove_pane(
+            conn=conn, serializer=serializer, pane_id=pane_id,
+            tmux_kill_fn=tmux_kill_fn,
+            route_cleanup_fn=route_cleanup_fn,
+            log_detach_fn=log_detach_fn,
+        )
+    except ManagedSessionsError as exc:
+        return _build_managed_error_envelope(exc.code, str(exc), details=exc.details)
+
+    return _envelope.success(
+        {"pane_id": result.pane_id, "state": result.state.value}
+    )
+
+
+def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_pane_recreate`` (M7)."""
+    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+
+    if not is_host_peer(peer_uid):
+        return _envelope.failure(
+            HOST_ONLY, "app.managed_pane_recreate is host-only", details={},
+        )
+    if not isinstance(params, dict):
+        params = {}
+    conn = _state_conn(ctx)
+    if conn is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon state_conn not wired", details={}
+        )
+    serializer = _serializer(ctx)
+    if serializer is None:
+        return _envelope.failure(
+            INTERNAL_ERROR, "daemon managed_serializer not wired", details={}
+        )
+
+    predecessor_pane_id = params.get("predecessor_pane_id")
+    if not isinstance(predecessor_pane_id, str) or not predecessor_pane_id:
+        return _envelope.failure(
+            VALIDATION_FAILED, "missing or empty 'predecessor_pane_id'",
+            details={"field": "predecessor_pane_id", "reason": "missing or empty"},
+        )
+
+    launch_command_override = params.get("launch_command_override")
+    if launch_command_override is not None and not isinstance(launch_command_override, str):
+        return _envelope.failure(
+            VALIDATION_FAILED, "launch_command_override must be a string when provided",
+            details={"field": "launch_command_override", "reason": "wrong type"},
+        )
+
+    idempotency_key = params.get("idempotency_key")
+    if idempotency_key is not None and not isinstance(idempotency_key, str):
+        return _envelope.failure(
+            VALIDATION_FAILED, "idempotency_key must be a string when provided",
+            details={"field": "idempotency_key", "reason": "wrong type"},
+        )
+
+    try:
+        result = recreate_pane(
+            conn=conn, serializer=serializer,
+            predecessor_pane_id=predecessor_pane_id,
+            launch_command_override=launch_command_override,
+            idempotency_key=idempotency_key,
+        )
+    except ManagedSessionsError as exc:
+        return _build_managed_error_envelope(exc.code, str(exc), details=exc.details)
+
+    return _envelope.success({
+        "pane_id": result.pane_id,
+        "predecessor_id": result.predecessor_id,
+        "chain_depth": result.chain_depth,
+        "state": result.state.value,
+    })
+
+
+def app_managed_pane_promote_from_adopted(ctx, params, peer_uid=-1):  # noqa: ANN001
+    """``app.managed_pane_promote_from_adopted`` (M8 stub)."""
+    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+
+    if not is_host_peer(peer_uid):
+        return _envelope.failure(
+            HOST_ONLY,
+            "app.managed_pane_promote_from_adopted is host-only",
+            details={},
+        )
+    if not isinstance(params, dict):
+        params = {}
+    agent_id = params.get("agent_id", "")
+    if not isinstance(agent_id, str):
+        agent_id = ""
+    stub = promote_from_adopted(agent_id)
+    # `not_implemented` is in the FEAT-011 closed set with required
+    # details = {} per FR-034a — but our stub carries reserved_since,
+    # which is a FEAT-013-specific extension. Build the envelope
+    # directly so FEAT-011's validate_details doesn't reject it.
+    from ...app_contract.versioning import APP_CONTRACT_VERSION
+    return {
+        "ok": False,
+        "app_contract_version": APP_CONTRACT_VERSION,
+        "error": {
+            "code": stub.error_code,
+            "message": "promote_from_adopted is reserved for a later feature.",
+            "details": dict(stub.details),
+        },
+    }
+
+
 # ─── Registration ────────────────────────────────────────────────────────
 
 
@@ -501,6 +649,9 @@ def register() -> dict[str, Any]:
         "app.managed_layout_detail": app_managed_layout_detail,
         "app.managed_pane_list": app_managed_pane_list,
         "app.managed_pane_detail": app_managed_pane_detail,
+        "app.managed_pane_remove": app_managed_pane_remove,
+        "app.managed_pane_recreate": app_managed_pane_recreate,
+        "app.managed_pane_promote_from_adopted": app_managed_pane_promote_from_adopted,
     }
 
 
@@ -511,4 +662,7 @@ __all__ = [
     "app_managed_layout_detail",
     "app_managed_pane_list",
     "app_managed_pane_detail",
+    "app_managed_pane_remove",
+    "app_managed_pane_recreate",
+    "app_managed_pane_promote_from_adopted",
 ]
