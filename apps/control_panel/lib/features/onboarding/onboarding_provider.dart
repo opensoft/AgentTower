@@ -35,10 +35,19 @@ import '../agent_ops/providers.dart';
 class OnboardingProgressNotifier
     extends Notifier<Set<OnboardingMilestone>> {
   bool _skipped = false;
+  bool _disposed = false;
   Set<OnboardingMilestone> _persistedSnapshot = const {};
 
   @override
   Set<OnboardingMilestone> build() {
+    // Bench-verified fix (2026-05-25): `ref.mounted` is Riverpod 3.x
+    // only; this project pins Riverpod 2.x, so we track disposal via
+    // `ref.onDispose` + a local flag instead. Prevents NoSuchMethodError
+    // from the post-build microtask if the provider is torn down
+    // (e.g. operator navigates away from Onboarding) before the persist
+    // microtask fires.
+    ref.onDispose(() => _disposed = true);
+
     // Load persisted state once per build.
     final repo = ref.read(uxStateRepositoryProvider);
     final raw = (repo.current?['onboarding'] as Map<String, dynamic>?) ??
@@ -65,7 +74,7 @@ class OnboardingProgressNotifier
     if (autoDetected.difference(persisted).isNotEmpty) {
       // Schedule the persist outside `build` to avoid mutating state mid-build.
       Future<void>.microtask(() {
-        if (!ref.mounted) return;
+        if (_disposed) return;
         _persistIfChanged(union);
       });
     }
