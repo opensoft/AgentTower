@@ -1,7 +1,6 @@
 """FEAT-014 T010 — Unit tests for the skip-counter ring buffer.
 
-Exercises ``agenttower.routing.skip_counter`` (T013 will create this module —
-this test file is written TDD-red first per the spec's FR-017 mandate).
+Exercises ``agenttower.routing.skip_counter`` (created by T013).
 
 Maps to:
 
@@ -18,14 +17,14 @@ rule' (applied uniformly to new FEAT-014 test files for SC-004 regression
 deselectability — same convention as ``test_pane_state_buckets.py`` and
 ``test_agent_state_buckets.py``).
 
-Expected runtime behavior at TDD red phase: every test fails with
-``ImportError: No module named 'agenttower.routing.skip_counter'`` until
-T013 creates the module.
+Public API under test (``agenttower.routing.skip_counter`` — see T013):
 
-Public test contract (what T013 must expose):
-
-- class ``SkipCounter`` with:
-    - ``__init__() -> None``  — empty buffer
+- class ``SkipCounter`` (private per-test instances for isolation) with:
+    - ``__init__() -> None``  — empty buffer + private ``threading.Lock``
+    - ``record_skip(now_ms: int) -> None``
+    - ``count_in_window(now_ms: int) -> int``
+- module-level convenience functions (production callers — routing
+  worker and dashboard) delegating to a process-local default instance:
     - ``record_skip(now_ms: int) -> None``
     - ``count_in_window(now_ms: int) -> int``
 - module constants:

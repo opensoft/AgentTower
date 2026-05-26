@@ -404,7 +404,10 @@ def _maybe_test_only_inject_latency() -> None:
         time.sleep(inject_ms / 1000.0)
 
 
-def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
+def _compute_pane_state_buckets(
+    ctx: "DaemonContext",
+    failed_subsystems: set[str] | None = None,
+) -> dict[str, int]:
     """v1.1 — PaneState buckets per data-model.md §PaneState (FEAT-014 FR-001..FR-002).
 
     4-key closed set with Research §PB priority order
@@ -427,6 +430,16 @@ def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
       no active agent).
 
     FR-025 fallback: returns all-zero if the SQLite accessor fails.
+
+    FR-025 second-half signal (codex P2 #3298870845): if ``failed_subsystems``
+    is supplied and the SQLite accessor raises, ``"sqlite"`` is added to
+    the set so the caller can propagate it into ``degraded_subsystems``
+    for the recommendation engine. This is what makes
+    ``recommended_next_action.code == "subsystem_degraded"`` fire on raw
+    aggregator failure (the spec's "AND" leg in FR-025). The ``state_conn
+    is None`` startup-window path deliberately does NOT flag — that case
+    is a daemon-bring-up signal already covered by FEAT-011's
+    ``probe_sqlite``, not a runtime aggregator failure.
 
     FR-019 (post-R3 loosened invariant): ``dar <= v1.0 counts.panes.registered``,
     with the gap equal to the count of panes whose registered agent is on
@@ -479,10 +492,15 @@ def _compute_pane_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
             "discovery-degraded": 0,
         }
     except Exception:  # noqa: BLE001 — FR-025 aggregator-failure fallback
+        if failed_subsystems is not None:
+            failed_subsystems.add("sqlite")
         return zeros
 
 
-def _compute_agent_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
+def _compute_agent_state_buckets(
+    ctx: "DaemonContext",
+    failed_subsystems: set[str] | None = None,
+) -> dict[str, int]:
     """v1.1 — AgentState buckets per data-model.md §AgentState (FEAT-014 FR-004..FR-006, FR-020).
 
     5-key set, two orthogonal partitions:
@@ -501,6 +519,11 @@ def _compute_agent_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
     Sum of all five MAY exceed total agents (FR-006 documented overlap).
 
     FR-025 fallback: returns all-zero if the SQLite accessor fails.
+
+    FR-025 second-half signal (codex P2 #3298870845): if ``failed_subsystems``
+    is supplied and the SQLite accessor raises, ``"sqlite"`` is added to
+    the set so the caller propagates it into ``degraded_subsystems``.
+    See ``_compute_pane_state_buckets`` for the full rationale.
     """
     zeros = {k: 0 for k in AGENT_STATE_KEYS}
     conn = getattr(ctx, "state_conn", None)
@@ -558,6 +581,8 @@ def _compute_agent_state_buckets(ctx: "DaemonContext") -> dict[str, int]:
             "log-detached": log_detached,
         }
     except Exception:  # noqa: BLE001 — FR-025 aggregator-failure fallback
+        if failed_subsystems is not None:
+            failed_subsystems.add("sqlite")
         return zeros
 
 
@@ -713,8 +738,15 @@ def _app_dashboard_body(
     # set the env var to force the dashboard past the SC-006 budget. No-op
     # in production (env var is never set in release builds).
     _maybe_test_only_inject_latency()
-    pane_state_buckets = _compute_pane_state_buckets(ctx)
-    agent_state_buckets = _compute_agent_state_buckets(ctx)
+    # FEAT-014 FR-025 second-half (codex P2 #3298870845): aggregators
+    # signal SQLite-side failure into this set so the recommendation
+    # engine sees ``sqlite`` in ``degraded_subsystems`` and emits
+    # ``subsystem_degraded``. Without this collector, an aggregator
+    # exception only produced zero-filled buckets — the recommendation
+    # would fall through to a healthy-looking code (FR-025 spec gap).
+    _aggregator_failed: set[str] = set()
+    pane_state_buckets = _compute_pane_state_buckets(ctx, _aggregator_failed)
+    agent_state_buckets = _compute_agent_state_buckets(ctx, _aggregator_failed)
 
     # Hints: reuse the readiness emission helper. We probe subsystems
     # again here because the dashboard is independently callable; the
@@ -758,9 +790,17 @@ def _app_dashboard_body(
     #     wire fields; on exception set BOTH to None (paired-null) and
     #     emit a WARN log with the stable event name. The rest of the
     #     v1.1 payload is unaffected either way.
+    # Merge probe-reported degradation with aggregator-reported failures
+    # (FR-025 second-half — codex P2 #3298870845). Dedupe while preserving
+    # PROBE_ORDER so a probe-reported subsystem doesn't get re-listed by
+    # the aggregator path. The recommendation engine normalizes order
+    # internally via PROBE_ORDER, so caller order isn't load-bearing —
+    # this is purely defensive against double-counting.
+    _probe_degraded = {row.name for row in subsystem_rows if row.status != "ok"}
+    _all_degraded = _probe_degraded | _aggregator_failed
     rec_state = recommendations.RecommendationState(
         degraded_subsystems=tuple(
-            row.name for row in subsystem_rows if row.status != "ok"
+            name for name in recommendations.PROBE_ORDER if name in _all_degraded
         ),
         container_count=(
             container_counts["active"]

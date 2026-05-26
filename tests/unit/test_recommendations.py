@@ -1,7 +1,6 @@
 """FEAT-014 T016 — Unit tests for the recommendation engine.
 
-Exercises ``agenttower.app_contract.recommendations`` (T019 will create
-this module — TDD red phase per FR-017).
+Exercises ``agenttower.app_contract.recommendations`` (created by T019).
 
 Maps to:
 
@@ -24,27 +23,23 @@ Maps to:
 
 Every assertion carries ``@pytest.mark.v1_1`` per the v1.1 marker rule.
 
-Expected runtime behavior at TDD red phase: every test fails with
-``ImportError`` until T019 creates the module.
+Public API under test (``agenttower.app_contract.recommendations`` — see
+T019; the canonical signatures live in that module's docstring +
+``__all__``, this list is mirrored here for test-reader convenience):
 
-Public test contract (what T019 must expose):
-
-  @dataclass(frozen=True)
+  @dataclass(frozen=True, slots=True, kw_only=True)
   class RecommendationState:
-      # Subsystem health, ordered per Research §SS probe order.
       degraded_subsystems: tuple[str, ...] = ()
-      # Container surface
       container_count: int = 0
       first_active_container_id: str | None = None
-      # Pane surface
       pane_count: int = 0
       first_unadopted_pane_id: str | None = None
-      # Queue surface
+      unadopted_pane_count: int = 0          # used by {N} template
       oldest_blocked_message_id: str | None = None
-      # Route surface
+      blocked_queue_count: int = 0           # used by {N} template
       route_count: int = 0
 
-  @dataclass(frozen=True)
+  @dataclass(frozen=True, slots=True)
   class RecommendedNextAction:
       code: str
       title: str
@@ -55,7 +50,11 @@ Public test contract (what T019 must expose):
       # Pure. Walks the 7-code precedence list; returns the first match.
       # `all_clear` is always returned as the floor when nothing else matches.
 
-  PROBE_ORDER: tuple[str, ...]   # = SUBSYSTEM_NAMES from versioning.py.
+  PROBE_ORDER: tuple[str, ...]   # = versioning.SUBSYSTEM_NAMES alias.
+
+If the production dataclass adds a field, update this mirror AND the
+``recommendations`` module docstring's contract block in the same PR so
+the two stay in sync (Copilot review feedback 2026-05-25 #3299740771).
 """
 
 from __future__ import annotations
@@ -130,6 +129,59 @@ def test_code_blocked_queue_drain() -> None:
         )
     )
     assert result.code == "blocked_queue_drain"
+
+
+@pytest.mark.v1_1
+def test_unadopted_panes_present_fires_when_count_positive_but_id_lookup_failed() -> None:
+    """codex P2 #3298870848: gate on COUNT, not the id-lookup result.
+
+    The dashboard handler builds ``RecommendationState`` from two queries:
+    a count query (``_pane_counts``) AND a separate first-id query
+    (``_first_unadopted_pane_id``) that can independently fail under
+    FR-025 best-effort semantics. If the count succeeds (> 0) but the
+    id-lookup returned ``None``, the recommendation MUST still fire
+    ``unadopted_panes_present`` (with ``target=None``) — falling through
+    to a lower-priority code would hide the real backlog the count just
+    surfaced.
+    """
+    result = compute_recommendation(
+        _state(
+            container_count=1,
+            first_active_container_id="c-1",
+            pane_count=3,
+            first_unadopted_pane_id=None,  # id lookup failed
+            unadopted_pane_count=2,        # but count says 2 unadopted
+            route_count=1,                 # would otherwise be no_routes
+        )
+    )
+    assert result.code == "unadopted_panes_present"
+    assert result.target is None, (
+        "id-lookup failed → emit recommendation WITHOUT target, not with "
+        "a stale or fabricated target"
+    )
+
+
+@pytest.mark.v1_1
+def test_blocked_queue_drain_fires_when_count_positive_but_id_lookup_failed() -> None:
+    """codex P2 #3298870848 symmetric leg: ``blocked_queue_drain`` has the
+    same gate-on-id-not-count bug as ``unadopted_panes_present``. Fix
+    must be symmetric so a failed ``_oldest_blocked_message_id`` lookup
+    doesn't hide a real backlog signaled by the count.
+    """
+    result = compute_recommendation(
+        _state(
+            container_count=1,
+            first_active_container_id="c-1",
+            pane_count=3,
+            first_unadopted_pane_id=None,         # all adopted
+            unadopted_pane_count=0,
+            oldest_blocked_message_id=None,       # id lookup failed
+            blocked_queue_count=5,                # but count says 5 blocked
+            route_count=1,                        # would otherwise be no_routes
+        )
+    )
+    assert result.code == "blocked_queue_drain"
+    assert result.target is None
 
 
 @pytest.mark.v1_1

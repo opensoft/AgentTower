@@ -210,25 +210,46 @@ def compute_recommendation(state: RecommendationState) -> RecommendedNextAction:
         )
 
     # 4. unadopted_panes_present
-    if state.first_unadopted_pane_id is not None:
+    #
+    # Gate on the COUNT, not the id-lookup result (codex P2 #3298870848).
+    # The id is sourced from a separate SQL query that can fail under
+    # FR-025 best-effort semantics; if count > 0 but the id lookup
+    # returned None, we still emit the recommendation — without a target
+    # — instead of falling through to a lower-priority code that would
+    # hide the real signal.
+    if state.unadopted_pane_count > 0 or state.first_unadopted_pane_id is not None:
         # Use the explicit count if supplied; default to 1 (the known
         # first id) so templated prose is never "0 pane(s)".
         n = state.unadopted_pane_count if state.unadopted_pane_count > 0 else 1
+        target = (
+            {"kind": "pane", "id": state.first_unadopted_pane_id}
+            if state.first_unadopted_pane_id is not None
+            else None
+        )
         return RecommendedNextAction(
             code="unadopted_panes_present",
             title=_UNADOPTED_TITLE,
             detail=_unadopted_detail(n),
-            target={"kind": "pane", "id": state.first_unadopted_pane_id},
+            target=target,
         )
 
     # 5. blocked_queue_drain
-    if state.oldest_blocked_message_id is not None:
+    #
+    # Same count-gate pattern as unadopted_panes_present above
+    # (codex P2 #3298870848 applies symmetrically): a failed
+    # oldest-blocked-message-id lookup must not hide a real backlog.
+    if state.blocked_queue_count > 0 or state.oldest_blocked_message_id is not None:
         n = state.blocked_queue_count if state.blocked_queue_count > 0 else 1
+        target = (
+            {"kind": "message", "id": state.oldest_blocked_message_id}
+            if state.oldest_blocked_message_id is not None
+            else None
+        )
         return RecommendedNextAction(
             code="blocked_queue_drain",
             title=_BLOCKED_QUEUE_TITLE,
             detail=_blocked_queue_detail(n),
-            target={"kind": "message", "id": state.oldest_blocked_message_id},
+            target=target,
         )
 
     # 6. no_routes_configured

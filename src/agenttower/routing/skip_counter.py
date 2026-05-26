@@ -52,6 +52,7 @@ going silently to zero.
 from __future__ import annotations
 
 from collections import deque
+from threading import Lock
 from typing import Final
 
 WINDOW_MS: Final[int] = 300_000
@@ -62,17 +63,24 @@ class SkipCounter:
     """Process-local sliding-window counter of FEAT-010 route-skip events.
 
     Each instance owns a private ``collections.deque(maxlen=MAXLEN)`` of
-    monotonic-millisecond integers. Thread-safety: instance methods are
-    NOT internally synchronized; production callers serialize through the
-    routing worker's single-threaded cycle (FEAT-010 §R1) and the
-    dashboard's per-request lock-free read (FR-018). Tests use private
-    instances and run single-threaded.
+    monotonic-millisecond integers guarded by a ``threading.Lock``.
+
+    Thread-safety: production callers cross threads — the FEAT-010
+    ``RoutingWorkerThread`` calls ``record_skip`` while
+    ``ThreadingUnixStreamServer`` request-handler threads call
+    ``count_in_window`` for ``app.dashboard``. Both paths take the lock,
+    so concurrent ``append`` + snapshot cannot raise
+    ``RuntimeError: deque mutated during iteration`` and counts are
+    consistent across reads. Critical sections are bounded:
+    ``record_skip`` is O(1); the count_in_window snapshot is
+    O(min(len, MAXLEN)) and at MAXLEN=10_000 ints is ~80 KB / sub-ms.
     """
 
-    __slots__ = ("_entries",)
+    __slots__ = ("_entries", "_lock")
 
     def __init__(self) -> None:
         self._entries: deque[int] = deque(maxlen=MAXLEN)
+        self._lock = Lock()
 
     def record_skip(self, now_ms: int) -> None:
         """Record a skip event at the given monotonic-millisecond timestamp.
@@ -80,7 +88,8 @@ class SkipCounter:
         Drop-oldest semantics when the buffer is at ``MAXLEN`` capacity
         (Research §RB).
         """
-        self._entries.append(now_ms)
+        with self._lock:
+            self._entries.append(now_ms)
 
     def count_in_window(self, now_ms: int) -> int:
         """Count entries whose age is strictly less than ``WINDOW_MS``.
@@ -89,16 +98,14 @@ class SkipCounter:
         ``now_ms - WINDOW_MS`` is **excluded** — the window is a half-open
         interval ``(now_ms - WINDOW_MS, now_ms]``.
 
-        Concurrency note (post-swarm fix per Copilot + Codex P1): we
-        snapshot the deque via ``list()`` before iterating. ``list(deque)``
-        is a single atomic operation in CPython, immune to the
-        ``RuntimeError: deque mutated during iteration`` race that would
-        otherwise be possible when the FEAT-010 routing-worker thread
-        appends concurrently with a dashboard read. The snapshot is also
-        cheap — at MAXLEN=10_000 ints this is ~80 KB per read.
+        Concurrency: snapshots the deque under ``_lock`` and releases the
+        lock before the threshold filter walk, so the writer's
+        ``record_skip`` is not blocked on the (length-bounded but
+        non-trivial) filter pass.
         """
         threshold = now_ms - WINDOW_MS
-        entries = list(self._entries)
+        with self._lock:
+            entries = list(self._entries)
         return sum(1 for entry_ms in entries if entry_ms > threshold)
 
 

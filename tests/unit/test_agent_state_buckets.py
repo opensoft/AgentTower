@@ -79,6 +79,26 @@ def test_fr025_fallback_accessor_raises() -> None:
     assert result == {k: 0 for k in AGENT_STATE_KEYS}
 
 
+@pytest.mark.v1_1
+def test_fr025_second_half_failed_subsystems_collects_sqlite() -> None:
+    """FR-025 second-half (codex P2 #3298870845): same contract as the
+    pane-state aggregator — SQLite raise + ``failed_subsystems`` set
+    supplied → ``"sqlite"`` added so the dashboard handler can flip the
+    recommendation to ``subsystem_degraded``.
+    """
+
+    class BrokenConn:
+        def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("simulated SQLite outage")
+
+    failed: set[str] = set()
+    result = _compute_agent_state_buckets(
+        SimpleNamespace(state_conn=BrokenConn()), failed
+    )
+    assert result == {k: 0 for k in AGENT_STATE_KEYS}
+    assert failed == {"sqlite"}
+
+
 # ─── FR-020 — strict configuration partition ───────────────────────────────
 
 

@@ -75,6 +75,42 @@ def test_fr025_fallback_accessor_raises() -> None:
     assert result == {k: 0 for k in PANE_STATE_KEYS}
 
 
+@pytest.mark.v1_1
+def test_fr025_second_half_failed_subsystems_collects_sqlite() -> None:
+    """FR-025 second-half (codex P2 #3298870845): when the SQLite accessor
+    raises AND a ``failed_subsystems`` set is supplied, the aggregator adds
+    ``"sqlite"`` to it so the dashboard handler propagates it into
+    ``degraded_subsystems`` and the recommendation fires
+    ``subsystem_degraded``. Without this signal the spec gap (zero-filled
+    buckets + healthy-looking recommendation) re-opens.
+    """
+
+    class BrokenConn:
+        def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("simulated SQLite outage")
+
+    failed: set[str] = set()
+    result = _compute_pane_state_buckets(
+        SimpleNamespace(state_conn=BrokenConn()), failed
+    )
+    assert result == {k: 0 for k in PANE_STATE_KEYS}
+    assert failed == {"sqlite"}
+
+
+@pytest.mark.v1_1
+def test_fr025_no_state_conn_does_not_flag_subsystem() -> None:
+    """FR-025 second-half boundary: a missing ``state_conn`` is a daemon
+    bring-up signal (already covered by FEAT-011 ``probe_sqlite``), NOT a
+    runtime aggregator failure — ``failed_subsystems`` is left untouched
+    so the dashboard handler doesn't double-flag what readiness already
+    flagged.
+    """
+    failed: set[str] = set()
+    result = _compute_pane_state_buckets(SimpleNamespace(), failed)
+    assert result == {k: 0 for k in PANE_STATE_KEYS}
+    assert failed == set()
+
+
 # ─── US1 acceptance scenario #1 ────────────────────────────────────────────
 
 
