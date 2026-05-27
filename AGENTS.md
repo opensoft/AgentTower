@@ -16,6 +16,25 @@ Read these project docs before creating or implementing specs:
 
 Spec Kit lives under `.specify/`. OpenSpec lives under `openspec/`.
 
+## Single-Bench Feature Ownership
+
+Every AgentTower feature must be owned by exactly one execution bench. Do not
+plan or implement a feature that requires agents to work across both
+`py-bench` and `flutter-bench` in the same feature scope.
+
+- `py-bench` features may change Python daemon, CLI, local app contracts,
+  backend tests, OpenSpec/Spec Kit artifacts, and backend documentation.
+- `flutter-bench` features may change the Flutter desktop app, Flutter client
+  contract consumption, UI tests, desktop build/run checks, and UI
+  documentation.
+- If a product change needs both backend and Flutter work, split it into
+  separate features with separate branches/worktrees: one `py-bench` feature
+  for the backend/contract side and one `flutter-bench` feature for the app
+  consumer side.
+- Each feature spec/plan must name its owning bench and keep implementation
+  tasks inside that bench. Cross-bench follow-up work belongs in a later
+  feature, not as hidden scope inside the current one.
+
 ## Host Path & Command Execution
 
 Why: absolute host paths baked into repo files (or pointer files like `.git`)
@@ -60,6 +79,29 @@ back into committed files.
 
 If the right devBench invocation isn't obvious from project tooling, stop and
 ask before defaulting to the host shell.
+
+## Shared File Path Coordination
+
+When a human or another agent names a specific file path for shared
+coordination, use that exact path as the coordination surface. This matters
+most for files edited by both host-side Codex and container-side Claude, such
+as Spec Kit clarification files, plans, task lists, and review notes.
+
+- Do shared-file work through the devBench container, not the host shell. For
+  this repo, `/workspace/projects/...` inside `py-bench` is the canonical
+  shared project mount used by Claude and other container-side agents.
+- If the path is under `/workspace/...`, treat `/workspace/...` as canonical
+  for that task. Use the container's `/workspace/...` path for reads, edits,
+  git checks, and verification. Do not use the host's `/workspace/...` path;
+  it may be a different stale/root-owned directory.
+- Before editing, verify the exact named file exists and is writable from
+  inside the container that owns the shared workspace.
+- If the exact path is missing, stale, or not writable, stop and report the
+  mismatch. Do not create or edit a mirror copy unless the user explicitly
+  approves that fallback.
+- When answering clarification questions from a file, put the answers inline
+  in that same file, not only in chat and not in a separate answers file,
+  unless the user explicitly requests a separate file.
 
 ## Claude Launch Rule
 
