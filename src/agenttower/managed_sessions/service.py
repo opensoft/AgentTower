@@ -1259,7 +1259,8 @@ class RecreatePaneResult:
     predecessor_id: str
     layout_id: str  # the parent layout (= predecessor's layout) the new pane joins
     chain_depth: int
-    state: ManagedState  # always ManagedState.CREATING on success
+    state: ManagedState  # ManagedState.CREATING on a fresh recreate
+    replay: bool = False  # True for an R10 idempotency-key replay (review #10)
 
 
 # FR-023 / R4 — recreate-chain depth bound. The new row's chain_depth is
@@ -1368,11 +1369,42 @@ def recreate_pane(
 
     lock = serializer.for_container(predecessor.container_id)
     with lock:
-        # 4. FR-027: detect an in-flight successor.
+        # review #10: R10 idempotency replay ("same semantics as create").
+        # If THIS idempotency_key already produced a successor of this
+        # predecessor (its pending_marker_token, set while creating),
+        # return that successor as a replay instead of rejecting the
+        # safe retry as concurrent_recreate. (The marker is cleared once
+        # the pane settles, so replay covers the in-flight retry window —
+        # the realistic network-blip case the contract targets.)
+        if idempotency_key is not None:
+            with tx_guard(tx_lock):
+                prior = conn.execute(
+                    "SELECT id, state, chain_depth FROM managed_pane "
+                    "WHERE predecessor_id = ? AND pending_marker_token = ?",
+                    (predecessor.id, idempotency_key),
+                ).fetchone()
+            if prior is not None:
+                return RecreatePaneResult(
+                    pane_id=prior[0],
+                    predecessor_id=predecessor.id,
+                    layout_id=predecessor.layout_id,
+                    chain_depth=int(prior[2]),
+                    state=ManagedState(prior[1]),
+                    replay=True,
+                )
+
+        # 4. FR-027: reject when the predecessor already has a NON-TERMINAL
+        #    successor (review #6: broadened from 'creating' only to
+        #    creating/ready/degraded — a live ready/degraded successor still
+        #    occupies the predecessor's tmux-target + label slot, so a second
+        #    recreate would trip the partial unique index and raise a raw
+        #    IntegrityError). Recreating again is only valid once the prior
+        #    successor is itself terminal (removed/failed).
         with tx_guard(tx_lock):
             in_flight = conn.execute(
                 "SELECT id FROM managed_pane "
-                "WHERE predecessor_id = ? AND state = 'creating'",
+                "WHERE predecessor_id = ? "
+                "AND state IN ('creating', 'ready', 'degraded')",
                 (predecessor.id,),
             ).fetchone()
         if in_flight is not None:
@@ -1425,8 +1457,35 @@ def recreate_pane(
         # against the same container. tx_lock guards the connection
         # against concurrent FEAT-009 worker mutations on the shared
         # ``worker_conn``.
+        #
+        # review #6: translate the partial-unique-index IntegrityError into
+        # the closed-set conflict codes (mirrors create_layout) rather than
+        # leaking a raw sqlite3.IntegrityError out of the M7 contract — e.g.
+        # when an unrelated live pane (via create_layout or recovery) has
+        # re-occupied the freed (tmux_session_name, tmux_pane_index)/label
+        # slot between the in-flight check above and this insert.
         with tx_guard(tx_lock):
-            insert_pane(conn, new_row)
+            try:
+                insert_pane(conn, new_row)
+            except sqlite3.IntegrityError as exc:
+                err_text = str(exc)
+                if "tmux_session_name" in err_text and "tmux_pane_index" in err_text:
+                    raise ManagedSessionsError(
+                        MANAGED_SESSION_NAME_CONFLICT,
+                        details={
+                            "container_id": new_row.container_id,
+                            "tmux_session_name": new_row.tmux_session_name,
+                        },
+                    ) from exc
+                if "container_id" in err_text and "label" in err_text:
+                    raise ManagedSessionsError(
+                        MANAGED_PANE_LABEL_CONFLICT,
+                        details={
+                            "container_id": new_row.container_id,
+                            "label": new_row.label,
+                        },
+                    ) from exc
+                raise
 
         # 6. Emit managed_pane_recreated.
         if event_emitter is not None:

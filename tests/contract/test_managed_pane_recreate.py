@@ -25,14 +25,17 @@ from agenttower.managed_sessions.dao import (
     insert_pane,
     select_pane,
     select_panes_for_layout,
+    update_pane_state,
 )
 from agenttower.managed_sessions.errors import (
     MANAGED_LAUNCH_COMMAND_NOT_FOUND,
     MANAGED_PANE_CONCURRENT_RECREATE,
     MANAGED_PANE_ILLEGAL_RECREATE_SOURCE,
+    MANAGED_PANE_LABEL_CONFLICT,
     MANAGED_PANE_NOT_FOUND,
     MANAGED_PANE_PROTECTED_ADOPTED,
     MANAGED_PANE_RECREATE_CHAIN_TOO_DEEP,
+    MANAGED_SESSION_NAME_CONFLICT,
     ManagedSessionsError,
 )
 from agenttower.managed_sessions.serializer import ContainerSerializer
@@ -318,6 +321,107 @@ def test_concurrent_recreate_of_same_predecessor_returns_in_flight_id(
     assert exc.code == MANAGED_PANE_CONCURRENT_RECREATE
     assert exc.details["predecessor_pane_id"] == removed_id
     assert exc.details["in_flight_successor_pane_id"] == first.pane_id
+
+
+def test_review10_recreate_idempotency_key_replays_in_flight_successor(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review #10: a recreate retried with the SAME idempotency_key returns
+    the existing successor as a replay (R10 'same as create'), instead of
+    rejecting the safe retry as managed_pane_concurrent_recreate."""
+    _layout_id, removed_id = _layout_with_removed_pane(conn, serializer)
+
+    first = recreate_pane(
+        conn=conn, serializer=serializer,
+        predecessor_pane_id=removed_id, idempotency_key="retry-key-1",
+    )
+    assert first.replay is False
+
+    again = recreate_pane(
+        conn=conn, serializer=serializer,
+        predecessor_pane_id=removed_id, idempotency_key="retry-key-1",
+    )
+    assert again.replay is True
+    assert again.pane_id == first.pane_id
+    assert again.predecessor_id == removed_id
+
+
+def test_review10_recreate_different_idempotency_key_still_concurrent(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """A DIFFERENT idempotency_key (genuine concurrent recreate, not a
+    retry) while a successor is in-flight still returns concurrent_recreate."""
+    _layout_id, removed_id = _layout_with_removed_pane(conn, serializer)
+    recreate_pane(
+        conn=conn, serializer=serializer,
+        predecessor_pane_id=removed_id, idempotency_key="key-A",
+    )
+    with pytest.raises(ManagedSessionsError) as exc:
+        recreate_pane(
+            conn=conn, serializer=serializer,
+            predecessor_pane_id=removed_id, idempotency_key="key-B",
+        )
+    assert exc.value.code == MANAGED_PANE_CONCURRENT_RECREATE
+
+
+def test_review6_recreate_with_ready_successor_rejects_not_integrityerror(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review #6: a second recreate of a predecessor whose first successor
+    is already READY (occupying the tmux-target/label slot) is rejected
+    with the closed-set concurrent_recreate — NOT a raw IntegrityError."""
+    _layout_id, removed_id = _layout_with_removed_pane(conn, serializer)
+    first = recreate_pane(
+        conn=conn, serializer=serializer, predecessor_pane_id=removed_id,
+    )
+    # Drive the successor to ready (clears its marker, keeps the slot).
+    update_pane_state(
+        conn, first.pane_id, state=ManagedState.READY,
+        clear_marker=True, now="2026-06-01T00:00:00.000000Z",
+    )
+    conn.commit()
+
+    with pytest.raises(ManagedSessionsError) as exc:
+        recreate_pane(
+            conn=conn, serializer=serializer, predecessor_pane_id=removed_id,
+        )
+    assert exc.value.code == MANAGED_PANE_CONCURRENT_RECREATE
+
+
+def test_review6_recreate_slot_collision_translates_to_closed_set(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review #6: if an UNRELATED live pane re-occupies the predecessor's
+    freed (tmux_session_name, tmux_pane_index) slot, the insert's
+    IntegrityError is translated to a closed-set conflict code (not leaked
+    raw out of the M7 contract)."""
+    _layout_id, removed_id = _layout_with_removed_pane(conn, serializer)
+    pred = select_pane(conn, removed_id)
+    # An unrelated ready pane (no predecessor link) occupying pred's slot.
+    insert_pane(
+        conn,
+        ManagedPaneRow(
+            id=str(uuid.uuid4()), layout_id=pred.layout_id,
+            container_id=pred.container_id, agent_id=None,
+            role="slave", capability="worker", label="unrelated-occupant",
+            launch_command_ref=None,
+            tmux_session_name=pred.tmux_session_name,
+            tmux_pane_index=pred.tmux_pane_index,
+            pending_marker_token=None, state=ManagedState.READY,
+            failed_stage=None, predecessor_id=None, chain_depth=0,
+            created_at="2026-06-01T00:00:00.000000Z",
+            updated_at="2026-06-01T00:00:00.000000Z",
+        ),
+    )
+    conn.commit()
+
+    with pytest.raises(ManagedSessionsError) as exc:
+        recreate_pane(
+            conn=conn, serializer=serializer, predecessor_pane_id=removed_id,
+        )
+    assert exc.value.code in (
+        MANAGED_SESSION_NAME_CONFLICT, MANAGED_PANE_LABEL_CONFLICT,
+    )
 
 
 # ─── FR-023 / R4: chain_depth bound ─────────────────────────────────────

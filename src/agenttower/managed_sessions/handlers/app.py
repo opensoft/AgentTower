@@ -634,6 +634,7 @@ def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
         "predecessor_id": result.predecessor_id,
         "chain_depth": result.chain_depth,
         "state": result.state.value,
+        "replay": result.replay,
     })
 
 
