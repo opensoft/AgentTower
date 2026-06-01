@@ -2,8 +2,11 @@ import '../../../core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/persistence/sort_filter_state.dart';
+import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/validation_entrypoint.dart';
+import '../../../ui/widgets/list_controls.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../../project_specs/providers.dart' as project_providers;
 import '../providers.dart';
@@ -14,13 +17,34 @@ import 'trigger_run.dart';
 /// Renders entrypoints grouped by [EntrypointScope.kind]. Each card
 /// shows label / type / scope / description / blocking level /
 /// estimated duration / enabled state and an inline Run button.
-class AvailableValidationView extends ConsumerWidget {
+///
+/// FR-078 (T180): persisted blocking-level filter, per-project scope.
+class AvailableValidationView extends ConsumerStatefulWidget {
   const AvailableValidationView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AvailableValidationView> createState() =>
+      _AvailableValidationViewState();
+}
+
+class _AvailableValidationViewState
+    extends ConsumerState<AvailableValidationView> {
+  static const _viewId = 'testing_demo/available_validation';
+  BlockingLevel? _filter;
+  String? _loadedForProject;
+
+  @override
+  Widget build(BuildContext context) {
     final selectedId = ref.watch(project_providers.selectedProjectIdProvider);
     if (selectedId == null) return const _NoProjectSelected();
+    if (selectedId != _loadedForProject) {
+      _loadedForProject = selectedId;
+      final p = ref
+          .read(sortFilterRepositoryProvider)
+          .load(viewId: _viewId, projectId: selectedId);
+      _filter = filterValueFromWire(
+          p.filters['blocking_level'], BlockingLevel.values, (s) => s.wireValue);
+    }
     final query = EntrypointListQuery(projectId: selectedId);
     final list = ref.watch(validationEntrypointListProvider(query));
     final l10n = AppLocalizations.of(context);
@@ -28,6 +52,14 @@ class AvailableValidationView extends ConsumerWidget {
       appBar: AppBar(
         title: Text(l10n.availableValidationTitle),
         actions: [
+          EnumFilterMenu<BlockingLevel>(
+            tooltip: l10n.availableValidationFilterTooltip,
+            allLabel: l10n.availableValidationFilterAll,
+            value: _filter,
+            options: BlockingLevel.values,
+            labelOf: (s) => s.wireValue,
+            onSelected: (v) => _onFilter(selectedId, v),
+          ),
           IconButton(
             tooltip: l10n.commonRefresh,
             icon: const Icon(Icons.refresh),
@@ -55,7 +87,17 @@ class AvailableValidationView extends ConsumerWidget {
                 icon: Icons.science_outlined,
               );
             }
-            return _GroupedList(entries: rows, projectId: selectedId);
+            final filtered = _filter == null
+                ? rows
+                : rows
+                    .where((e) => e.blockingLevel == _filter)
+                    .toList(growable: false);
+            if (filtered.isEmpty) {
+              return FilterNoMatch(
+                message: l10n.availableValidationFilterNoMatch,
+              );
+            }
+            return _GroupedList(entries: filtered, projectId: selectedId);
           },
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
@@ -67,6 +109,17 @@ class AvailableValidationView extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  void _onFilter(String projectId, BlockingLevel? v) {
+    setState(() => _filter = v);
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          projectId: projectId,
+          value: ListSortFilterState(
+            filters: {if (v != null) 'blocking_level': v.wireValue},
+          ),
+        );
   }
 }
 

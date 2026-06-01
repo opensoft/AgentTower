@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/pane.dart';
 import '../../../routing/route_paths.dart';
+import '../../../ui/widgets/list_controls.dart';
 import '../providers.dart';
 import 'adopt_flow.dart';
 
@@ -18,33 +20,78 @@ import 'adopt_flow.dart';
 ///   - discovered-and-registered  → "Open agent" (jumps to Agents view)
 ///   - inactive/stale             → "Re-probe" (kicks `app.scan.panes`)
 ///   - discovery-degraded         → "Re-probe" + inline reason
-class PanesView extends ConsumerWidget {
+///
+/// FR-078 (T180): persisted pane-state filter, global scope.
+class PanesView extends ConsumerStatefulWidget {
   const PanesView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PanesView> createState() => _PanesViewState();
+}
+
+class _PanesViewState extends ConsumerState<PanesView> {
+  static const _viewId = 'agent_ops/panes';
+  PaneState? _filter;
+  bool _loaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) {
+      _loaded = true;
+      final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
+      _filter = filterValueFromWire(
+          p.filters['state'], PaneState.values, (s) => s.wireValue);
+    }
     final panes = ref.watch(paneListProvider);
     return panes.when(
-      data: (rows) => rows.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'No tmux panes discovered yet.\n\nStart an agent in a tmux pane inside any '
-                  'discovered container — it will appear here as '
-                  '"discovered-and-unmanaged".',
-                  textAlign: TextAlign.center,
+      data: (rows) {
+        final filtered = _filter == null
+            ? rows
+            : rows.where((p) => p.state == _filter).toList(growable: false);
+        return Column(
+          children: [
+            ListControlsBar(
+              controls: [
+                EnumFilterMenu<PaneState>(
+                  tooltip: 'Filter by state',
+                  allLabel: 'All states',
+                  value: _filter,
+                  options: PaneState.values,
+                  labelOf: (s) => s.wireValue,
+                  onSelected: _onFilter,
                 ),
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: () async => ref.invalidate(paneListProvider),
-              child: ListView.separated(
-                itemCount: rows.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) => _PaneTile(pane: rows[i]),
-              ),
+              ],
             ),
+            Expanded(
+              child: rows.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text(
+                          'No tmux panes discovered yet.\n\nStart an agent in a tmux pane inside any '
+                          'discovered container — it will appear here as '
+                          '"discovered-and-unmanaged".',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: () async => ref.invalidate(paneListProvider),
+                      child: filtered.isEmpty
+                          ? const FilterNoMatch(
+                              message: 'No panes match the current filter.')
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (_, i) =>
+                                  _PaneTile(pane: filtered[i]),
+                            ),
+                    ),
+            ),
+          ],
+        );
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
         child: Column(
@@ -60,6 +107,16 @@ class PanesView extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  void _onFilter(PaneState? v) {
+    setState(() => _filter = v);
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          value: ListSortFilterState(
+            filters: {if (v != null) 'state': v.wireValue},
+          ),
+        );
   }
 }
 

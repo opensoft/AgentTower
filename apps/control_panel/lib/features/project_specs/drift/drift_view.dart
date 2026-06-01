@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/persistence/sort_filter_state.dart';
+import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/drift_signal.dart';
 import '../../../domain/models/drift_supporting.dart';
@@ -25,13 +27,29 @@ class DriftView extends ConsumerStatefulWidget {
 }
 
 class _DriftViewState extends ConsumerState<DriftView> {
+  /// FR-078 view id (per-project scope) — see `contracts/ux-state.md` §1.
+  static const String _viewId = 'project_specs/drift';
+
   DriftStatus? _statusFilter;
   DriftSeverity? _severityFilter;
+  String? _loadedForProject;
 
   @override
   Widget build(BuildContext context) {
     final selectedId = ref.watch(project_providers.selectedProjectIdProvider);
     if (selectedId == null) return const _NoProjectSelected();
+    // FR-078: restore the operator's persisted sort/filter the first time we
+    // render for a given project (and again whenever the active project
+    // changes). Synchronous read of the in-memory UX state — safe to assign
+    // the local fields directly inside build since it feeds this same frame.
+    if (selectedId != _loadedForProject) {
+      _loadedForProject = selectedId;
+      final persisted = ref
+          .read(sortFilterRepositoryProvider)
+          .load(viewId: _viewId, projectId: selectedId);
+      _statusFilter = _decodeStatus(persisted.filters['status']);
+      _severityFilter = _decodeSeverity(persisted.filters['severity']);
+    }
     final l10n = AppLocalizations.of(context);
     final query = DriftListQuery(
       projectId: selectedId,
@@ -46,7 +64,10 @@ class _DriftViewState extends ConsumerState<DriftView> {
           PopupMenuButton<DriftStatus?>(
             tooltip: l10n.driftFilterStatusTooltip,
             icon: const Icon(Icons.filter_alt),
-            onSelected: (v) => setState(() => _statusFilter = v),
+            onSelected: (v) {
+              setState(() => _statusFilter = v);
+              _persist(selectedId);
+            },
             itemBuilder: (_) => [
               PopupMenuItem(value: null, child: Text(l10n.driftFilterAllStatuses)),
               for (final s in DriftStatus.values)
@@ -56,7 +77,10 @@ class _DriftViewState extends ConsumerState<DriftView> {
           PopupMenuButton<DriftSeverity?>(
             tooltip: l10n.driftFilterSeverityTooltip,
             icon: const Icon(Icons.priority_high),
-            onSelected: (v) => setState(() => _severityFilter = v),
+            onSelected: (v) {
+              setState(() => _severityFilter = v);
+              _persist(selectedId);
+            },
             itemBuilder: (_) => [
               PopupMenuItem(value: null, child: Text(l10n.driftFilterAllSeverities)),
               for (final s in DriftSeverity.values)
@@ -102,6 +126,36 @@ class _DriftViewState extends ConsumerState<DriftView> {
         ),
       ),
     );
+  }
+
+  /// FR-078 — persist the current filter selection for this project. An
+  /// all-cleared selection prunes the entry (see [SortFilterRepository.save]).
+  void _persist(String projectId) {
+    final filters = <String, dynamic>{
+      if (_statusFilter != null) 'status': _statusFilter!.wireValue,
+      if (_severityFilter != null) 'severity': _severityFilter!.wireValue,
+    };
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          projectId: projectId,
+          value: ListSortFilterState(filters: filters),
+        );
+  }
+
+  static DriftStatus? _decodeStatus(Object? v) {
+    if (v is! String) return null;
+    for (final s in DriftStatus.values) {
+      if (s.wireValue == v) return s;
+    }
+    return null;
+  }
+
+  static DriftSeverity? _decodeSeverity(Object? v) {
+    if (v is! String) return null;
+    for (final s in DriftSeverity.values) {
+      if (s.wireValue == v) return s;
+    }
+    return null;
   }
 }
 

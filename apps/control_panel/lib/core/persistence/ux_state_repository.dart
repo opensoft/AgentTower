@@ -17,7 +17,22 @@ import 'paths.dart';
 /// This is the ONLY file the desktop app writes (per FR-005, FR-069). The
 /// session token (FR-003) and all daemon-owned domain data are NEVER
 /// persisted by this repository.
-class UxStateRepository {
+///
+/// Minimal read/write surface of the persisted `ux_state` map. Feature
+/// repositories that own a slice of the shared file (e.g.
+/// `SortFilterRepository`, T179) depend on this interface rather than the
+/// concrete [UxStateRepository] so they can be unit-tested against an
+/// in-memory double without a real on-disk file. [UxStateRepository]
+/// implements it directly.
+abstract interface class UxStateStore {
+  /// In-memory snapshot of the `ux_state` payload, or `null` before load.
+  Map<String, dynamic>? get current;
+
+  /// Replaces the in-memory state and schedules a debounced atomic flush.
+  void update(Map<String, dynamic> newState);
+}
+
+class UxStateRepository implements UxStateStore {
   UxStateRepository({
     required this.paths,
     required this.compatibility,
@@ -110,9 +125,11 @@ class UxStateRepository {
   }
 
   /// In-memory state accessor.
+  @override
   Map<String, dynamic>? get current => _state;
 
   /// Updates the in-memory state and schedules a debounced flush.
+  @override
   void update(Map<String, dynamic> newState) {
     _state = newState;
     _hasUnflushed = true;

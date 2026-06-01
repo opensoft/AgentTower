@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/route.dart' as model;
+import '../../../ui/widgets/list_controls.dart';
 import '../providers.dart';
 import 'add_route_flow.dart';
 
@@ -13,32 +15,81 @@ import 'add_route_flow.dart';
 /// state, and (when applicable) `recentSkipExplanation` — the
 /// explainability surface per FR-059. Enable/disable + remove
 /// available inline. Add via [AddRouteFlow].
-class RoutesView extends ConsumerWidget {
+///
+/// FR-078 (T180): persisted enabled/disabled filter, global scope.
+class RoutesView extends ConsumerStatefulWidget {
   const RoutesView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RoutesView> createState() => _RoutesViewState();
+}
+
+class _RoutesViewState extends ConsumerState<RoutesView> {
+  static const _viewId = 'agent_ops/routes';
+  bool? _enabledFilter;
+  bool _loaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) {
+      _loaded = true;
+      final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
+      _enabledFilter = filterValueFromWire(
+          p.filters['enabled'], const [true, false], (b) => b.toString());
+    }
     final routes = ref.watch(routeListProvider);
     return Scaffold(
       body: routes.when(
-        data: (rows) => rows.isEmpty
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Text(
-                    'No routes defined.\n\nTap + to add a route that wires events from a source agent to a target.',
-                    textAlign: TextAlign.center,
+        data: (rows) {
+          final filtered = _enabledFilter == null
+              ? rows
+              : rows
+                  .where((r) => r.enabled == _enabledFilter)
+                  .toList(growable: false);
+          return Column(
+            children: [
+              ListControlsBar(
+                controls: [
+                  EnumFilterMenu<bool>(
+                    tooltip: 'Filter by enabled state',
+                    allLabel: 'All routes',
+                    value: _enabledFilter,
+                    options: const [true, false],
+                    labelOf: (b) => b ? 'Enabled' : 'Disabled',
+                    onSelected: _onFilter,
                   ),
-                ),
-              )
-            : RefreshIndicator(
-                onRefresh: () async => ref.invalidate(routeListProvider),
-                child: ListView.separated(
-                  itemCount: rows.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) => _RouteTile(route: rows[i]),
-                ),
+                ],
               ),
+              Expanded(
+                child: rows.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(32),
+                          child: Text(
+                            'No routes defined.\n\nTap + to add a route that wires events from a source agent to a target.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: () async =>
+                            ref.invalidate(routeListProvider),
+                        child: filtered.isEmpty
+                            ? const FilterNoMatch(
+                                message:
+                                    'No routes match the current filter.')
+                            : ListView.separated(
+                                itemCount: filtered.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (_, i) =>
+                                    _RouteTile(route: filtered[i]),
+                              ),
+                      ),
+              ),
+            ],
+          );
+        },
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Could not load routes: $e')),
       ),
@@ -48,6 +99,16 @@ class RoutesView extends ConsumerWidget {
         onPressed: () => AddRouteFlow.show(context),
       ),
     );
+  }
+
+  void _onFilter(bool? v) {
+    setState(() => _enabledFilter = v);
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          value: ListSortFilterState(
+            filters: {if (v != null) 'enabled': v},
+          ),
+        );
   }
 }
 

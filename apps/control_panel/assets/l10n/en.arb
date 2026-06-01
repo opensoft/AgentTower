@@ -285,6 +285,18 @@
   "@projectsViewTitle": {
     "description": "From T165 i18n sweep (source: project_specs.json)."
   },
+  "projectsSortTooltip": "Sort projects",
+  "@projectsSortTooltip": {
+    "description": "T180 FR-078 projects sort control tooltip."
+  },
+  "projectsSortByName": "Name (A–Z)",
+  "@projectsSortByName": {
+    "description": "T180 FR-078 projects sort option: by label ascending."
+  },
+  "projectsSortByRecent": "Recent activity",
+  "@projectsSortByRecent": {
+    "description": "T180 FR-078 projects sort option: by last activity descending."
+  },
   "projectsAddProjectTooltip": "Add project",
   "@projectsAddProjectTooltip": {
     "description": "From T165 i18n sweep (source: project_specs.json)."
@@ -1830,6 +1842,18 @@
   "availableValidationTitle": "Available Validation",
   "@availableValidationTitle": {
     "description": "From T165 i18n sweep (source: testing_demo_and_markdown.json)."
+  },
+  "availableValidationFilterTooltip": "Filter by blocking level",
+  "@availableValidationFilterTooltip": {
+    "description": "T180 FR-078 available-validation blocking-level filter tooltip."
+  },
+  "availableValidationFilterAll": "All blocking levels",
+  "@availableValidationFilterAll": {
+    "description": "T180 FR-078 available-validation filter: no blocking-level filter."
+  },
+  "availableValidationFilterNoMatch": "No entrypoints match the current filter.",
+  "@availableValidationFilterNoMatch": {
+    "description": "T180 FR-078 available-validation no-match placeholder."
   },
   "availableValidationEmptyState": "No validation entrypoints registered for this project.",
   "@availableValidationEmptyState": {

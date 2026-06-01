@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/persistence/sort_filter_state.dart';
+import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/project.dart';
 import '../../../routing/route_paths.dart';
@@ -23,13 +25,37 @@ import 'remove_project.dart';
 /// Selecting a card sets [selectedProjectIdProvider] and navigates
 /// the operator to Current Work for that project (the canonical
 /// "I picked a project, now show me what's happening" jump).
-class ProjectsView extends ConsumerWidget {
+///
+/// FR-078 (T180): persisted card sort (name / recent activity), global
+/// scope (Projects is not a project-scoped view).
+class ProjectsView extends ConsumerStatefulWidget {
   const ProjectsView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProjectsView> createState() => _ProjectsViewState();
+}
+
+class _ProjectsViewState extends ConsumerState<ProjectsView> {
+  static const _viewId = 'project_specs/projects';
+
+  /// `'name'` | `'recent'` | `null` (daemon order).
+  String? _sort;
+  bool _loaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) {
+      _loaded = true;
+      final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
+      _sort = switch (p.sortField) {
+        'label' => 'name',
+        'last_activity' => 'recent',
+        _ => null,
+      };
+    }
     final list = ref.watch(projectListProvider);
     final l10n = AppLocalizations.of(context);
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.projectsViewTitle),
@@ -37,12 +63,29 @@ class ProjectsView extends ConsumerWidget {
           // FR-002 mutation gate (swarm-review CR-7): Add stays visible
           // but disables-with-tooltip on contract-incompatible / unreachable.
           ContractCheckedButton(
-            onPressed: () => _onAdd(context, ref),
+            onPressed: () => _onAdd(context),
             builder: (ctx, onPressed, reason) => IconButton(
               tooltip: reason ?? l10n.projectsAddProjectTooltip,
               icon: const Icon(Icons.add),
               onPressed: onPressed,
             ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: l10n.projectsSortTooltip,
+            icon: Icon(Icons.sort, color: _sort != null ? scheme.primary : null),
+            onSelected: _onSort,
+            itemBuilder: (_) => [
+              CheckedPopupMenuItem<String>(
+                value: 'name',
+                checked: _sort == 'name',
+                child: Text(l10n.projectsSortByName),
+              ),
+              CheckedPopupMenuItem<String>(
+                value: 'recent',
+                checked: _sort == 'recent',
+                child: Text(l10n.projectsSortByRecent),
+              ),
+            ],
           ),
           IconButton(
             tooltip: l10n.projectsRefreshTooltip,
@@ -71,7 +114,7 @@ class ProjectsView extends ConsumerWidget {
               ? HealthyEmptyStateView(
                   message: l10n.projectsEmptyMessage,
                 )
-              : _ProjectsGrid(projects: projects),
+              : _ProjectsGrid(projects: _sorted(projects)),
           loading: () => const LoadingStateView(),
           error: (err, _) => ErrorStateView(
             error: err,
@@ -83,7 +126,33 @@ class ProjectsView extends ConsumerWidget {
     );
   }
 
-  Future<void> _onAdd(BuildContext context, WidgetRef ref) async {
+  List<Project> _sorted(List<Project> projects) {
+    switch (_sort) {
+      case 'name':
+        return [...projects]..sort(
+            (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+      case 'recent':
+        return [...projects]
+          ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+      default:
+        return projects;
+    }
+  }
+
+  void _onSort(String key) {
+    setState(() => _sort = key);
+    final sortField = key == 'name' ? 'label' : 'last_activity';
+    final dir = key == 'name' ? SortDirection.asc : SortDirection.desc;
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          value: ListSortFilterState(
+            sortField: sortField,
+            sortDirection: dir,
+          ),
+        );
+  }
+
+  Future<void> _onAdd(BuildContext context) async {
     final added = await showDialog<bool>(
       context: context,
       builder: (_) => const AddProjectDialog(),

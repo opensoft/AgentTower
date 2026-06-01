@@ -2,6 +2,8 @@ import '../../../core/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/persistence/sort_filter_state.dart';
+import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/validation_run.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
@@ -21,12 +23,25 @@ class RunsView extends ConsumerStatefulWidget {
 }
 
 class _RunsViewState extends ConsumerState<RunsView> {
+  /// FR-078 view id (per-project scope) — see `contracts/ux-state.md` §1.
+  static const String _viewId = 'testing_demo/runs';
+
   RunState? _stateFilter;
+  String? _loadedForProject;
 
   @override
   Widget build(BuildContext context) {
     final selectedId = ref.watch(project_providers.selectedProjectIdProvider);
     if (selectedId == null) return const _NoProjectSelected();
+    // FR-078: restore the persisted state filter on first render for a
+    // project (and on project change). Synchronous in-memory read.
+    if (selectedId != _loadedForProject) {
+      _loadedForProject = selectedId;
+      final persisted = ref
+          .read(sortFilterRepositoryProvider)
+          .load(viewId: _viewId, projectId: selectedId);
+      _stateFilter = _decodeState(persisted.filters['state']);
+    }
     final query = RunListQuery(
       projectId: selectedId,
       state: _stateFilter?.wireValue,
@@ -40,7 +55,10 @@ class _RunsViewState extends ConsumerState<RunsView> {
           PopupMenuButton<RunState?>(
             tooltip: l10n.runsViewFilterTooltip,
             icon: const Icon(Icons.filter_alt),
-            onSelected: (v) => setState(() => _stateFilter = v),
+            onSelected: (v) {
+              setState(() => _stateFilter = v);
+              _persist(selectedId);
+            },
             itemBuilder: (_) => [
               PopupMenuItem(value: null, child: Text(l10n.runsViewFilterAllStates)),
               for (final s in RunState.values)
@@ -81,6 +99,27 @@ class _RunsViewState extends ConsumerState<RunsView> {
         ),
       ),
     );
+  }
+
+  /// FR-078 — persist the current state filter for this project. An empty
+  /// selection prunes the entry (see [SortFilterRepository.save]).
+  void _persist(String projectId) {
+    final filters = <String, dynamic>{
+      if (_stateFilter != null) 'state': _stateFilter!.wireValue,
+    };
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          projectId: projectId,
+          value: ListSortFilterState(filters: filters),
+        );
+  }
+
+  static RunState? _decodeState(Object? v) {
+    if (v is! String) return null;
+    for (final s in RunState.values) {
+      if (s.wireValue == v) return s;
+    }
+    return null;
   }
 }
 

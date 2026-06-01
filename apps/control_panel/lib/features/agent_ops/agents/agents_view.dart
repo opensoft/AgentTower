@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/persistence/sort_filter_state.dart';
+import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
+import '../../../domain/models/common_enums.dart';
+import '../../../ui/widgets/list_controls.dart';
 import '../providers.dart';
 import 'direct_send.dart';
 import 'edit_agent.dart';
@@ -17,31 +21,77 @@ import 'log_attach_affordance.dart';
 /// Each row exposes:
 ///   - Direct Send (FR-018) → [DirectSendDialog]
 ///   - Log attach/detach (FR-017) → [LogAttachAffordance]
-class AgentsView extends ConsumerWidget {
+///
+/// FR-078 (T180): persisted agent-state filter, global scope. Filtering
+/// is applied per row; a matched child whose parent is filtered out is
+/// still shown (the tree indent simply has no visible parent row).
+class AgentsView extends ConsumerStatefulWidget {
   const AgentsView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AgentsView> createState() => _AgentsViewState();
+}
+
+class _AgentsViewState extends ConsumerState<AgentsView> {
+  static const _viewId = 'agent_ops/agents';
+  AgentState? _filter;
+  bool _loaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) {
+      _loaded = true;
+      final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
+      _filter = filterValueFromWire(
+          p.filters['state'], AgentState.values, (s) => s.wireValue);
+    }
     final agents = ref.watch(agentListProvider);
     return agents.when(
-      data: (rows) => rows.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'No adopted agents yet.\n\n'
-                  'Adopt a pane from the Panes view to see it appear here as a registered agent.',
-                  textAlign: TextAlign.center,
+      data: (rows) {
+        final filtered = _filter == null
+            ? rows
+            : rows.where((a) => a.state == _filter).toList(growable: false);
+        return Column(
+          children: [
+            ListControlsBar(
+              controls: [
+                EnumFilterMenu<AgentState>(
+                  tooltip: 'Filter by state',
+                  allLabel: 'All states',
+                  value: _filter,
+                  options: AgentState.values,
+                  labelOf: (s) => s.wireValue,
+                  onSelected: _onFilter,
                 ),
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: () async => ref.invalidate(agentListProvider),
-              child: ListView.builder(
-                itemCount: rows.length,
-                itemBuilder: (_, i) => _AgentTile(agent: rows[i]),
-              ),
+              ],
             ),
+            Expanded(
+              child: rows.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text(
+                          'No adopted agents yet.\n\n'
+                          'Adopt a pane from the Panes view to see it appear here as a registered agent.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: () async => ref.invalidate(agentListProvider),
+                      child: filtered.isEmpty
+                          ? const FilterNoMatch(
+                              message: 'No agents match the current filter.')
+                          : ListView.builder(
+                              itemCount: filtered.length,
+                              itemBuilder: (_, i) =>
+                                  _AgentTile(agent: filtered[i]),
+                            ),
+                    ),
+            ),
+          ],
+        );
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
         child: Column(
@@ -57,6 +107,16 @@ class AgentsView extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  void _onFilter(AgentState? v) {
+    setState(() => _filter = v);
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          value: ListSortFilterState(
+            filters: {if (v != null) 'state': v.wireValue},
+          ),
+        );
   }
 }
 

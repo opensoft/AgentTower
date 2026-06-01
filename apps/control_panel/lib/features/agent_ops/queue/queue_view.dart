@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/queue_row.dart';
+import '../../../ui/widgets/list_controls.dart';
 import '../providers.dart';
 
 /// Agent Operations → Queue. T073 (Phase 3 US1) + FR-020 + FR-080.
@@ -16,34 +18,89 @@ import '../providers.dart';
 ///
 /// Mutations route through `app.queue.approve` / `.delay` / `.cancel`
 /// with auto-stamped idempotency_key (Round-3 R-28).
-class QueueView extends ConsumerWidget {
+///
+/// FR-078 (T180): persisted queue-state filter, global scope.
+class QueueView extends ConsumerStatefulWidget {
   const QueueView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<QueueView> createState() => _QueueViewState();
+}
+
+class _QueueViewState extends ConsumerState<QueueView> {
+  static const _viewId = 'agent_ops/queue';
+  QueueRowState? _filter;
+  bool _loaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) {
+      _loaded = true;
+      final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
+      _filter = filterValueFromWire(
+          p.filters['state'], QueueRowState.values, (s) => s.wireValue);
+    }
     final queue = ref.watch(queueListProvider);
     return queue.when(
-      data: (rows) => rows.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'Queue is empty.\n\nMessages waiting for routing or operator approval will appear here.',
-                  textAlign: TextAlign.center,
+      data: (rows) {
+        final filtered = _filter == null
+            ? rows
+            : rows.where((r) => r.state == _filter).toList(growable: false);
+        return Column(
+          children: [
+            ListControlsBar(
+              controls: [
+                EnumFilterMenu<QueueRowState>(
+                  tooltip: 'Filter by state',
+                  allLabel: 'All states',
+                  value: _filter,
+                  options: QueueRowState.values,
+                  labelOf: (s) => s.wireValue,
+                  onSelected: _onFilter,
                 ),
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: () async => ref.invalidate(queueListProvider),
-              child: ListView.separated(
-                itemCount: rows.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) => _QueueTile(row: rows[i]),
-              ),
+              ],
             ),
+            Expanded(
+              child: rows.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text(
+                          'Queue is empty.\n\nMessages waiting for routing or operator approval will appear here.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: () async => ref.invalidate(queueListProvider),
+                      child: filtered.isEmpty
+                          ? const FilterNoMatch(
+                              message: 'No queue rows match the current filter.')
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (_, i) =>
+                                  _QueueTile(row: filtered[i]),
+                            ),
+                    ),
+            ),
+          ],
+        );
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('Could not load queue: $e')),
     );
+  }
+
+  void _onFilter(QueueRowState? v) {
+    setState(() => _filter = v);
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          value: ListSortFilterState(
+            filters: {if (v != null) 'state': v.wireValue},
+          ),
+        );
   }
 }
 

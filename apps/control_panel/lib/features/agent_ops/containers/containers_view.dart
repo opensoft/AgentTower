@@ -1,43 +1,102 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/persistence/sort_filter_state.dart';
+import '../../../core/providers.dart';
+import '../../../domain/models/common_enums.dart';
+import '../../../ui/widgets/list_controls.dart';
 import '../providers.dart';
 
 /// Agent Operations → Containers. T066 (Phase 3 US1) + FR-013.
 /// Shows label, discovered status, project path per container.
-class ContainersView extends ConsumerWidget {
+/// FR-078 (T180): persisted state filter, global scope.
+class ContainersView extends ConsumerStatefulWidget {
   const ContainersView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ContainersView> createState() => _ContainersViewState();
+}
+
+class _ContainersViewState extends ConsumerState<ContainersView> {
+  static const _viewId = 'agent_ops/containers';
+  ContainerState? _filter;
+  bool _loaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) {
+      _loaded = true;
+      final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
+      _filter = filterValueFromWire(
+          p.filters['state'], ContainerState.values, (s) => s.wireValue);
+    }
     final containers = ref.watch(containerListProvider);
     return containers.when(
-      data: (rows) => rows.isEmpty
-          ? const _Empty()
-          : RefreshIndicator(
-              onRefresh: () async => ref.invalidate(containerListProvider),
-              child: ListView.builder(
-                itemCount: rows.length,
-                itemBuilder: (_, i) {
-                  final c = rows[i];
-                  return ListTile(
-                    leading: Icon(_iconFor(c.state.wireValue)),
-                    title: Text(c.name),
-                    subtitle: Text('${c.projectPath} · ${c.state.wireValue}'),
-                    trailing: Text(
-                      c.containerId,
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
-                  );
-                },
-              ),
+      data: (rows) {
+        final filtered = _filter == null
+            ? rows
+            : rows.where((c) => c.state == _filter).toList(growable: false);
+        return Column(
+          children: [
+            ListControlsBar(
+              controls: [
+                EnumFilterMenu<ContainerState>(
+                  tooltip: 'Filter by state',
+                  allLabel: 'All states',
+                  value: _filter,
+                  options: ContainerState.values,
+                  labelOf: (s) => s.wireValue,
+                  onSelected: _onFilter,
+                ),
+              ],
             ),
+            Expanded(
+              child: rows.isEmpty
+                  ? const _Empty()
+                  : RefreshIndicator(
+                      onRefresh: () async =>
+                          ref.invalidate(containerListProvider),
+                      child: filtered.isEmpty
+                          ? const FilterNoMatch(
+                              message: 'No containers match the current filter.')
+                          : ListView.builder(
+                              itemCount: filtered.length,
+                              itemBuilder: (_, i) {
+                                final c = filtered[i];
+                                return ListTile(
+                                  leading: Icon(_iconFor(c.state.wireValue)),
+                                  title: Text(c.name),
+                                  subtitle: Text(
+                                      '${c.projectPath} · ${c.state.wireValue}'),
+                                  trailing: Text(
+                                    c.containerId,
+                                    style:
+                                        Theme.of(context).textTheme.labelSmall,
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+            ),
+          ],
+        );
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => _ErrorState(
         error: e,
         onRetry: () => ref.invalidate(containerListProvider),
       ),
     );
+  }
+
+  void _onFilter(ContainerState? v) {
+    setState(() => _filter = v);
+    ref.read(sortFilterRepositoryProvider).save(
+          viewId: _viewId,
+          value: ListSortFilterState(
+            filters: {if (v != null) 'state': v.wireValue},
+          ),
+        );
   }
 
   static IconData _iconFor(String state) {

@@ -6,6 +6,7 @@ import 'daemon/session.dart';
 import 'daemon/socket_client.dart';
 import 'logging/rotating_file_logger.dart';
 import 'notifications/os_native_dispatcher.dart';
+import 'persistence/sort_filter_repository.dart';
 import 'persistence/ux_state_repository.dart';
 import 'persistence/paths.dart';
 
@@ -36,6 +37,37 @@ final loggerProvider =
 /// Single owner of `ux-state.json`. Built in `main.dart`.
 final uxStateRepositoryProvider =
     Provider<UxStateRepository>((ref) => _unwired('uxStateRepository'));
+
+/// FR-078 — per-view sort/filter persistence (T179 / Phase 9). Reads/writes
+/// the `list_sort_filter_*` slices of the shared UX-state file via the
+/// [uxStateRepositoryProvider].
+///
+/// Degrades gracefully: when the UX-state repository isn't wired (e.g. a
+/// perf/security harness that pumps a single list view with a minimal
+/// override set), it falls back to an ephemeral in-memory store so the view
+/// still renders. Sort/filter persistence is a non-critical enhancement —
+/// unlike the socket/session/appClient providers, its absence must never
+/// throw out of a view's build.
+final sortFilterRepositoryProvider = Provider<SortFilterRepository>((ref) {
+  UxStateStore store;
+  try {
+    store = ref.watch(uxStateRepositoryProvider);
+  } on UnimplementedError {
+    store = _EphemeralUxStateStore();
+  }
+  return SortFilterRepository(uxState: store);
+});
+
+/// In-memory [UxStateStore] used only when [uxStateRepositoryProvider] is
+/// unwired. Reads start empty; writes are kept for the lifetime of the
+/// provider but never reach disk.
+class _EphemeralUxStateStore implements UxStateStore {
+  Map<String, dynamic>? _state = <String, dynamic>{};
+  @override
+  Map<String, dynamic>? get current => _state;
+  @override
+  void update(Map<String, dynamic> newState) => _state = newState;
+}
 
 /// Unix-socket client for the FEAT-011 daemon. Built per-session lifecycle
 /// in `main.dart` from the configured socket path.
