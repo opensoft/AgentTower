@@ -1,6 +1,6 @@
 # Clarification Questions — FEAT-014 App Dashboard Extensions — Round 1 (post-impl-design)
 
-**Path (canonical, top)**: `/workspace/projects/AgentTower-worktrees/014-app-dashboard-extensions/specs/014-app-dashboard-extensions/clarify-questions-r1.md`
+**Path (canonical, top)**: `specs/014-app-dashboard-extensions/clarify-questions-r1.md`
 
 **Session date**: 2026-05-24
 **Spec under clarification**: `specs/014-app-dashboard-extensions/spec.md`
@@ -305,6 +305,6 @@ Is there ever a case where v1.0 fields are suppressed per-caller (e.g., a less-p
 
 ---
 
-**Path (canonical, bottom)**: `/workspace/projects/AgentTower-worktrees/014-app-dashboard-extensions/specs/014-app-dashboard-extensions/clarify-questions-r1.md`
+**Path (canonical, bottom)**: `specs/014-app-dashboard-extensions/clarify-questions-r1.md`
 
 **Awaiting answers above under `## Answers`.** Once filled in, re-invoke `/speckit-clarify` (or just ping the next session) and I'll fold these into `spec.md` as a new `### Session 2026-05-24-r1` block under the existing `## Clarifications` section, then update the affected FRs / contracts / data-model accordingly.

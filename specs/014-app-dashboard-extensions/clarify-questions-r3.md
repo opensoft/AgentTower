@@ -1,6 +1,6 @@
 # Clarification Questions — FEAT-014 App Dashboard Extensions — Round 3 (post-MVP-impl)
 
-**Path (canonical, top)**: `/workspace/projects/AgentTower-worktrees/014-app-dashboard-extensions/specs/014-app-dashboard-extensions/clarify-questions-r3.md`
+**Path (canonical, top)**: `specs/014-app-dashboard-extensions/clarify-questions-r3.md`
 
 **Session date**: 2026-05-25
 **Spec under clarification**: `specs/014-app-dashboard-extensions/spec.md`
@@ -76,6 +76,6 @@ The MVP implementation (commit `dbd1f3e`) follows Research §PB priority — a r
 
 ---
 
-**Path (canonical, bottom)**: `/workspace/projects/AgentTower-worktrees/014-app-dashboard-extensions/specs/014-app-dashboard-extensions/clarify-questions-r3.md`
+**Path (canonical, bottom)**: `specs/014-app-dashboard-extensions/clarify-questions-r3.md`
 
 **Awaiting answer above under `## Answers`.** Once filled in, I'll fold R3 into `spec.md` as `### Session 2026-05-25-r3` under `## Clarifications`, apply the affected-artifact edits, bundle with the 3 MEDIUM remediation fixes (D-DRIFT-1 + D-DRIFT-2 + PROCESS-1) into one commit, push, and re-run `/speckit-analyze` to verify back to 0/0/0/0.

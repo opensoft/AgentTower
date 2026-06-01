@@ -1,6 +1,6 @@
 # Clarification Questions — FEAT-014 App Dashboard Extensions — Round 2 (post-impl-design)
 
-**Path (canonical, top)**: `/workspace/projects/AgentTower-worktrees/014-app-dashboard-extensions/specs/014-app-dashboard-extensions/clarify-questions-r2.md`
+**Path (canonical, top)**: `specs/014-app-dashboard-extensions/clarify-questions-r2.md`
 
 **Session date**: 2026-05-24
 **Spec under clarification**: `specs/014-app-dashboard-extensions/spec.md`
@@ -160,6 +160,6 @@ The spec already says `recently_skipped_count` is "telemetry, not durable audit 
 
 ---
 
-**Path (canonical, bottom)**: `/workspace/projects/AgentTower-worktrees/014-app-dashboard-extensions/specs/014-app-dashboard-extensions/clarify-questions-r2.md`
+**Path (canonical, bottom)**: `specs/014-app-dashboard-extensions/clarify-questions-r2.md`
 
 **Awaiting answers above under `## Answers`.** Once filled in, ping me (or re-invoke `/speckit-clarify`) and I'll fold these into `spec.md` as a new `### Session 2026-05-24-r2` block under the existing `## Clarifications` section, then update the affected FRs / contracts / data-model accordingly, and tick off the 7 R2 items in the checklists.

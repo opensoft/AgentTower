@@ -5,7 +5,7 @@
 **Base contract**: FEAT-011 `specs/011-app-backend-contract/contracts/app-methods.md` — `app.dashboard` v1.0.
 **Closed sets**: [closed-sets-v1_1.md](./closed-sets-v1_1.md)
 
-This document specifies *only* the v1.1 additions to the existing `app.dashboard` success envelope. The v1.0 fields (`counts.panes.{total,registered,unregistered}`, `recents`, `hints[]`) are bit-identical (FR-014). Error envelope, request shape, host-only gate, session token, and pagination are unchanged.
+This document specifies *only* the v1.1 additions to the existing `app.dashboard` success envelope. Every v1.0 field — `counts.containers.{active,inactive,degraded_scan}`, `counts.panes.{total,registered,unregistered}`, `counts.agents.{total,by_role}`, `counts.log_attachments.{active,degraded,none}`, `counts.events.total`, `counts.queue.{queued,blocked,delivered,canceled,failed}`, `counts.routes.{enabled,disabled}`, the top-level `recent` object (`{events,queue,routes}`), and `hints[]` — is bit-identical to FEAT-011 v1.0 (FR-014). Error envelope, request shape, host-only gate, session token, and pagination are unchanged.
 
 ## Request
 
@@ -21,6 +21,11 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
   "app_contract_version": "1.1",
   "result": {
     "counts": {
+      "containers": {
+        "active":        "<int>",
+        "inactive":      "<int>",
+        "degraded_scan": "<int>"
+      },
       "panes": {
         "total": "<int>",
         "registered": "<int>",
@@ -34,6 +39,14 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
       },
       "agents": {
         "total": "<int>",
+        "by_role": {
+          "master":      "<int>",
+          "slave":       "<int>",
+          "swarm":       "<int>",
+          "test-runner": "<int>",
+          "shell":       "<int>",
+          "unknown":     "<int>"
+        },
         "by_state": {
           "active":               "<int ≥ 0>",
           "inactive":             "<int ≥ 0>",
@@ -42,20 +55,27 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
           "log-detached":         "<int ≥ 0>"
         }
       },
+      "log_attachments": { "active": "<int>", "degraded": "<int>", "none": "<int>" },
+      "events": { "total": "<int>" },
+      "queue": {
+        "queued":    "<int>",
+        "blocked":   "<int>",
+        "delivered": "<int>",
+        "canceled":  "<int>",
+        "failed":    "<int>"
+      },
       "routes": {
-        "total": "<int>",
+        "enabled":  "<int>",
+        "disabled": "<int>",
         "recently_skipped_count":     "<int ≥ 0>",
         "recently_skipped_window_ms": 300000
-      },
-      "containers": {
-        "total":    "<int>",
-        "active":   "<int>",
-        "inactive": "<int>"
-      },
-      "queue":  { "pending": "<int>", "blocked": "<int>" },
-      "events": { "last_24h": "<int>" }
+      }
     },
-    "recents": [],
+    "recent": {
+      "events": [],
+      "queue":  [],
+      "routes": []
+    },
     "hints":   [],
     "recommended_next_action": {
       "code":   "<closed_set_string>",
@@ -71,8 +91,8 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
 **How to read this sketch:**
 
 - Angle-bracket placeholders inside quotes (`"<int>"`, `"<int ≥ 0>"`, `"<closed_set_string>"`, etc.) are stand-ins for concrete wire values; the surrounding double-quotes are only there to keep the sketch as valid JSON. On the wire, `<int>` is a JSON integer literal (not a string), `<int ≥ 0>` is a non-negative JSON integer literal, and `<closed_set_string>` is a JSON string drawn from the closed sets documented in `closed-sets-v1_1.md`.
-- **v1.0 carry-over (unchanged from FEAT-011):** `counts.panes.{total, registered, unregistered}`, `counts.agents.total`, `counts.routes.total`, `counts.containers.{total, active, inactive}`, `counts.queue.{pending, blocked}`, `counts.events.last_24h`, `recents[]`, `hints[]`. FR-014 forbids changing any v1.0 field's type, range, or semantics.
-- **v1.1 additions (this feature):** `counts.panes.by_state` (4 keys), `counts.agents.by_state` (5 keys), `counts.routes.recently_skipped_count`, `counts.routes.recently_skipped_window_ms`, `recommended_next_action`, `recommended_next_action_refreshed_at`.
+- **v1.0 carry-over (unchanged from FEAT-011, verbatim field names):** `counts.containers.{active, inactive, degraded_scan}`, `counts.panes.{total, registered, unregistered}`, `counts.agents.{total, by_role}`, `counts.log_attachments.{active, degraded, none}`, `counts.events.total`, `counts.queue.{queued, blocked, delivered, canceled, failed}`, `counts.routes.{enabled, disabled}`, the top-level `recent` object (`{events, queue, routes}` arrays), and `hints[]`. FR-014 forbids changing any v1.0 field's name, type, range, or semantics.
+- **v1.1 additions (this feature):** `counts.panes.by_state` (4 keys), `counts.agents.by_state` (5 keys), `counts.routes.recently_skipped_count`, `counts.routes.recently_skipped_window_ms`, `recommended_next_action`, `recommended_next_action_refreshed_at`. These are the **only** new keys; v1.1 adds nothing to `containers`, `log_attachments`, `events`, `queue`, or `recent`.
 - **Nullability:** the sketch above shows the populated/happy-path case. `recommended_next_action` and `recommended_next_action_refreshed_at` MAY both be `null` together on recommendation compute failure (FR-021 — see §Field-by-Field for the paired-null invariant). `recommended_next_action.detail` MAY be `null`. `recommended_next_action.target` MAY be `null`. The §Field-by-Field section below is authoritative on these union types.
 
 ## Field-by-Field Specification
@@ -135,4 +155,6 @@ The full v1.1 success envelope shape (valid JSON, v1.0 carry-over and v1.1 addit
 
 ## Latency Budget
 
-- The FEAT-011 dashboard latency budget (SC-002 cold-start-to-dashboard ≤ 500 ms; warm < 100 ms target) MUST still hold with all v1.1 fields populated against the FEAT-011 fixture scale (Research §CO).
+- FEAT-014's binding dashboard-latency criterion is **SC-006** (spec.md), not FEAT-011's SC-002. SC-006 reframes the budget as **p95 ≤ 500 ms** at the documented FEAT-011 fixture scale (no-cache, ≥ 1 container, ≥ 1 agent; caps ≤ 10 containers / ≤ 200 agents / ≤ 100 routes — Clarifications R1 Q9) and MUST hold with all v1.1 fields populated. Expected additive cost of the four new aggregations plus the recommendation call is < 5 ms at fixture scale (Research §CO).
+- The budget is **waived during `subsystem_degraded` states** (Clarifications R1 Q11): slowness during degradation is an expected symptom and the recommendation engine already signals it.
+- On overrun, the daemon returns the response **best-effort** with every field it could compute and logs a WARN (`app_dashboard_latency_exceeded`) with the measured latency — it does **not** convert the call into an error envelope (FR-027, Clarifications R1 Q10).

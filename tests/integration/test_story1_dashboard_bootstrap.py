@@ -673,26 +673,38 @@ def test_t018_us3_acceptance_recommendation_precedence_over_socket(
     # Paired-null invariant (FR-021 / Research §FE).
     assert (rec is None) == (ts is None)
 
+    # On this non-failure path against a freshly-started daemon the engine
+    # MUST emit a recommendation (compute_recommendation never returns None
+    # — `all_clear` is the floor). A null here means the FR-021 compute-
+    # failure branch in dashboard.py fired and nulled the envelope — exactly
+    # the regression class this test exists to catch. Guarding the field
+    # assertions behind `if rec is not None:` would turn that regression into
+    # a silent green pass, so assert presence unconditionally.
+    assert rec is not None, (
+        "recommended_next_action was null on a healthy empty daemon; the "
+        "recommendation-compute path likely failed (check the daemon log "
+        "for app_dashboard_recommendation_compute_failed)"
+    )
+    assert ts is not None
     # On a non-failure path the daemon emits a code from the 7-value
     # closed set; empty daemon → no_containers (precedence floor for the
     # empty-state branch).
-    if rec is not None:
-        valid_codes = {
-            "subsystem_degraded", "no_containers", "no_panes_discovered",
-            "unadopted_panes_present", "blocked_queue_drain",
-            "no_routes_configured", "all_clear",
-        }
-        assert rec["code"] in valid_codes
-        # Empty daemon → no_containers (or subsystem_degraded if any
-        # readiness probe is unwired in this test env; both are valid
-        # precedence-floor outcomes against a freshly-started daemon).
-        assert rec["code"] in {"no_containers", "subsystem_degraded"}
-        # Closed-shape object.
-        assert set(rec.keys()) == {"code", "title", "detail", "target"}
-        # Title and detail size caps (FR-011).
-        assert isinstance(rec["title"], str) and 0 < len(rec["title"]) <= 128
-        if rec["detail"] is not None:
-            assert len(rec["detail"]) <= 512
+    valid_codes = {
+        "subsystem_degraded", "no_containers", "no_panes_discovered",
+        "unadopted_panes_present", "blocked_queue_drain",
+        "no_routes_configured", "all_clear",
+    }
+    assert rec["code"] in valid_codes
+    # Empty daemon → no_containers (or subsystem_degraded if any
+    # readiness probe is unwired in this test env; both are valid
+    # precedence-floor outcomes against a freshly-started daemon).
+    assert rec["code"] in {"no_containers", "subsystem_degraded"}
+    # Closed-shape object.
+    assert set(rec.keys()) == {"code", "title", "detail", "target"}
+    # Title and detail size caps (FR-011).
+    assert isinstance(rec["title"], str) and 0 < len(rec["title"]) <= 128
+    if rec["detail"] is not None:
+        assert len(rec["detail"]) <= 512
 
 
 # ═════════════════════════════════════════════════════════════════════════

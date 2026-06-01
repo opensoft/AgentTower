@@ -1415,22 +1415,36 @@ def test_dashboard_v1_1_target_id_opacity_no_display_chars(
     """FR-011 / FR-024 + Clarifications R1 Q14: when ``target`` is non-null,
     ``target.id`` is an opaque internal identifier. It MUST NOT contain
     operator-readable display characters like spaces, slashes, or
-    container-label punctuation that would suggest a human-readable name."""
+    container-label punctuation that would suggest a human-readable name.
+
+    Seed an active container with a display-char-laden ``name`` but an
+    opaque ``container_id`` and NO panes — that drives the recommendation
+    engine to ``no_panes_discovered`` with ``target={"kind":"container",
+    "id": <container_id>}`` (recommendations.py), so the opacity assertions
+    below actually execute against a non-null target. Calling against an
+    empty daemon would yield ``no_containers`` (target=None) and skip every
+    assertion, making the test vacuous."""
     host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    # name carries display chars (space + slash); container_id stays opaque.
+    _seed_container(conn, container_id="ctr-opaque-1", name="bench 1/dev", active=True)
     env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     rec = env["result"]["recommended_next_action"]
 
-    if rec is not None and rec["target"] is not None:
-        target_id = rec["target"]["id"]
-        assert " " not in target_id, (
-            f"target.id leaks display character (space): {target_id!r}"
-        )
-        assert "/" not in target_id, (
-            f"target.id leaks display character (slash): {target_id!r}"
-        )
-        assert "\\" not in target_id, (
-            f"target.id leaks display character (backslash): {target_id!r}"
-        )
+    assert rec is not None and rec["target"] is not None, (
+        "fixture must drive a non-null recommendation target so the opacity "
+        f"assertions are actually exercised; got rec={rec!r}"
+    )
+    target_id = rec["target"]["id"]
+    assert " " not in target_id, (
+        f"target.id leaks display character (space): {target_id!r}"
+    )
+    assert "/" not in target_id, (
+        f"target.id leaks display character (slash): {target_id!r}"
+    )
+    assert "\\" not in target_id, (
+        f"target.id leaks display character (backslash): {target_id!r}"
+    )
 
 
 @pytest.mark.v1_1
