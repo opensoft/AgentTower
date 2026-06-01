@@ -42,7 +42,11 @@ import os
 import sys
 from pathlib import Path
 
-REQUEST_CAP = 1024 * 1024
+# 64 KiB — the FEAT-002 effective cap (MAX_REQUEST_BYTES, real daemon
+# src/agenttower/socket_api/server.py:30) that binds BEFORE FR-003a's 1 MiB
+# contractual ceiling. The harness exists for contract fidelity, so it must
+# reject at the same threshold the real daemon does (swarm-review pass B).
+REQUEST_CAP = 65536
 RESPONSE_CAP = 8 * 1024 * 1024
 APP_CONTRACT_VERSION_DEFAULT = "1.0"
 
@@ -201,7 +205,6 @@ async def handle_client(reader, writer, fixture):
                 continue
 
             method = req.get("method", "")
-            req_id = req.get("id")
 
             # Look up fixture response; fall back to unknown_method per FR-034b.
             response_template = fixture.get("responses", {}).get(method)
@@ -235,8 +238,11 @@ async def handle_client(reader, writer, fixture):
                     ),
                 )
 
-            if req_id is not None:
-                response["id"] = req_id
+            # NB: the real FEAT-011 daemon envelope is exactly
+            # {ok, app_contract_version, result|error} — it carries NO
+            # top-level `id`. The harness must NOT fabricate one; echoing an
+            # `id` masked a fatal client bug (the client correlated responses
+            # by an `id` the real daemon never sends). Removed per swarm-review.
 
             # Special-case app.hello to inject the full FEAT-011 success shape.
             if method == "app.hello" and response.get("ok"):
@@ -292,6 +298,12 @@ async def serve(socket_path: str, fixture: dict):
     server = await asyncio.start_unix_server(
         lambda r, w: handle_client(r, w, fixture),
         path=socket_path,
+        # Raise the stream buffer above REQUEST_CAP so an over-cap line is
+        # RETURNED by readline() and routed to the `payload_too_large`
+        # envelope, instead of raising ValueError at the default 64 KiB limit
+        # (which would crash the connection and make the cap path unreachable)
+        # — swarm-review pass B.
+        limit=REQUEST_CAP + 4096,
     )
     print(f"[mock_daemon] listening at {socket_path}", file=sys.stderr)
     async with server:

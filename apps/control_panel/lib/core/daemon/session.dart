@@ -3,22 +3,30 @@ import 'dart:convert';
 
 import 'envelope.dart';
 import 'errors.dart';
+import 'preflight_client.dart' show StreamQueue;
 import 'socket_client.dart';
 
 /// Daemon session lifecycle. T013 (Phase 2 Foundational).
 ///
-/// On connect: calls `app.hello`, holds the returned session token in memory
-/// only (FR-003 — MUST NOT persist), re-bootstraps on any of:
-/// - socket close
-/// - daemon restart (detected by failed read/write)
-/// - contract-version change (detected on subsequent responses)
-/// - explicit "Retry connection" affordance (FR-001 / US1 §6)
+/// **Transport model (FEAT-011 FR-008 / FR-026): one request per connection.**
+/// The daemon reads one newline-delimited JSON line, dispatches, writes one
+/// response line, and **closes the connection**. There is no persistent
+/// socket, no response multiplexing, and **no correlation `id`** — the wire
+/// envelope is exactly `{ok, app_contract_version, result|error}`. So each
+/// round-trip ([bootstrap]'s `app.hello` and every [call]) opens its own
+/// fresh [SocketClient], sends one line, reads exactly one line, and closes —
+/// the same one-shot pattern [PreflightClient] uses.
 ///
-/// Token lifetime = process lifetime only per Round-3 R-30 (no idle-timeout).
+/// `app.hello` issues an `app_session_token` (held in memory only — FR-003,
+/// MUST NOT persist) which is replayed on each subsequent fresh-connection
+/// `app.*` call (FR-008a). Token lifetime = process lifetime (Round-3 R-30).
 ///
-/// Lifecycle events are surfaced via [events] so cross-cutting watchers
-/// — the runtime-state provider (FR-004), the FR-002 global banner, the
-/// logger — can react without coupling to bootstrap call sites.
+/// Lifecycle events are surfaced via [events] so cross-cutting watchers — the
+/// runtime-state provider (FR-004), the FR-002 banner, the logger — react
+/// without coupling to call sites. A transport failure (connect/timeout/
+/// framing) on `app.hello` OR any `call` emits [SessionFailed]; a normal
+/// `FailureEnvelope` (the daemon answered with a closed-set error code) is a
+/// *successful* round-trip and is returned, not treated as a session failure.
 sealed class SessionEvent {
   const SessionEvent();
 }
@@ -42,11 +50,10 @@ class SessionFailed extends SessionEvent {
   final Object error;
 }
 
-/// Emitted by [DaemonSession.reBootstrap] (T174a) after the prior socket
-/// is closed, a fresh [SocketClient] is opened to the same path, and a
-/// new `app.hello` round-trip completes. Dependent providers
-/// (`runtimeStateProvider`, `dashboardProvider`, etc.) listen for this
-/// to invalidate stale per-session state.
+/// Emitted by [DaemonSession.reBootstrap] (T174a) after the in-memory token
+/// is discarded and a fresh `app.hello` round-trip completes. Dependent
+/// providers (`runtimeStateProvider`, `dashboardProvider`, …) listen for
+/// this to invalidate stale per-session state.
 class SessionReBootstrapped extends SessionEvent {
   const SessionReBootstrapped({
     required this.appContractVersion,
@@ -57,61 +64,76 @@ class SessionReBootstrapped extends SessionEvent {
 }
 
 class DaemonSession {
-  DaemonSession({required SocketClient client}) : _client = client;
+  /// The [client] is used only for its [SocketClient.socketPath]; this session
+  /// does NOT hold a persistent connection (one-request-per-connection model).
+  /// A fresh [SocketClient] is opened for every round-trip.
+  DaemonSession({required SocketClient client})
+      : _socketPath = client.socketPath;
 
-  /// Current socket client. Replaced by [reBootstrap] (T174a) when the
-  /// "Retry connection" affordance needs to open a fresh connection to
-  /// the same daemon socket. External callers should treat the
-  /// reference as ephemeral — never cache it across a session event.
-  SocketClient get client => _client;
-  SocketClient _client;
+  final String _socketPath;
 
   String? _sessionToken;
   String? _appContractVersion;
   String? _daemonVersion;
-  int _nextRequestId = 1;
-  final _pendingRequests = <int, Completer<Envelope>>{};
-  StreamSubscription<String>? _responseSub;
   final _events = StreamController<SessionEvent>.broadcast();
 
-  /// Broadcast stream of session-lifecycle events. Consumers (runtime-state
-  /// provider, banner, logger) subscribe via `events.listen(...)` and
-  /// drive their own UX from it. Multiple subscribers are supported.
+  /// Broadcast stream of session-lifecycle events. Multiple subscribers OK.
   Stream<SessionEvent> get events => _events.stream;
 
-  /// True iff [bootstrap] has completed successfully and the socket is open.
-  bool get isReady =>
-      _sessionToken != null && client.isConnected && _responseSub != null;
+  /// True once `app.hello` has succeeded and a token is held. There is no
+  /// persistent socket to be "connected" — readiness is purely token state.
+  bool get isReady => _sessionToken != null;
 
   String? get sessionToken => _sessionToken;
   String? get appContractVersion => _appContractVersion;
   String? get daemonVersion => _daemonVersion;
 
-  /// Connects + calls `app.hello`. Throws on any error.
-  Future<void> bootstrap() async {
-    if (!client.isConnected) {
-      await client.connect();
-    }
-    await _responseSub?.cancel();
-    _responseSub = client.responses.listen(_onResponse, onError: _onError);
+  /// The configured daemon socket path (used by tests / diagnostics).
+  String get socketPath => _socketPath;
 
-    // Send app.hello — per FEAT-011 contracts/app-methods.md §app.hello,
-    // request params include client_id, client_version, and
-    // client_app_contract_major (default 1).
-    final id = _nextRequestId++;
-    final completer = Completer<Envelope>();
-    _pendingRequests[id] = completer;
-    await client.sendLine(
-      json.encode({
-        'id': id,
-        'method': 'app.hello',
-        'params': {
-          'client_id': 'agenttower-control-panel',
-          'client_app_contract_major': 1,
+  /// One-request-per-connection round-trip (FR-008 / FR-026): open a fresh
+  /// connection, send one line, read exactly one response line, close.
+  /// Throws on transport failure (connect / timeout / framing); returns the
+  /// parsed [Envelope] (success OR closed-set failure) otherwise.
+  Future<Envelope> _roundTrip(
+    Map<String, dynamic> request,
+    Duration timeout,
+  ) async {
+    final client = SocketClient(_socketPath);
+    final responses = StreamQueue<String>(client.responses);
+    try {
+      await client.connect();
+      await client.sendLine(json.encode(request));
+      final line = await responses.next.timeout(timeout);
+      return Envelope.parse(line);
+    } finally {
+      await responses.cancel(immediate: true);
+      await client.close();
+    }
+  }
+
+  /// Performs the `app.hello` handshake and captures the session token.
+  /// Per FEAT-011 contracts/app-methods.md §app.hello the request carries
+  /// `client_id` + `client_app_contract_major`. Emits [SessionBootstrapped]
+  /// on success; [SessionFailed] + throws on transport failure or a
+  /// `FailureEnvelope`.
+  Future<void> bootstrap() async {
+    final Envelope env;
+    try {
+      env = await _roundTrip(
+        {
+          'method': 'app.hello',
+          'params': {
+            'client_id': 'agenttower-control-panel',
+            'client_app_contract_major': 1,
+          },
         },
-      }),
-    );
-    final env = await completer.future.timeout(const Duration(seconds: 5));
+        const Duration(seconds: 5),
+      );
+    } catch (e) {
+      _events.add(SessionFailed(e));
+      rethrow;
+    }
 
     switch (env) {
       case SuccessEnvelope(:final result, :final appContractVersion):
@@ -119,10 +141,10 @@ class DaemonSession {
         _appContractVersion = appContractVersion;
         _daemonVersion = result['daemon_version'] as String?;
         if (_sessionToken == null) {
-          final err = const FormatException(
+          const err = FormatException(
             'app.hello response missing app_session_token',
           );
-          _events.add(SessionFailed(err));
+          _events.add(const SessionFailed(err));
           throw err;
         }
         _events.add(SessionBootstrapped(
@@ -131,7 +153,7 @@ class DaemonSession {
         ));
       case FailureEnvelope(:final error):
         if (error.code == AppContractErrorCode.appContractMajorUnsupported) {
-          // Don't throw — let the FR-002 banner surface drive UX.
+          // Don't throw away the version — let the FR-002 banner drive UX.
           _appContractVersion = env.appContractVersion;
         }
         _events.add(SessionFailed(error));
@@ -139,9 +161,12 @@ class DaemonSession {
     }
   }
 
-  /// Sends a typed `app.*` call. Returns the parsed envelope.
-  /// Caller is responsible for narrowing [SuccessEnvelope] vs
-  /// [FailureEnvelope] (e.g. via pattern match).
+  /// Sends a typed `app.*` call on its own fresh connection, replaying the
+  /// session token (FR-008a). Returns the parsed envelope; the caller
+  /// narrows [SuccessEnvelope] vs [FailureEnvelope]. A transport failure
+  /// emits [SessionFailed] (so the runtime-state provider flips to
+  /// unreachable, FR-004) and rethrows; a closed-set [FailureEnvelope] is
+  /// returned normally (it is a successful round-trip).
   Future<Envelope> call(
     String method, {
     Map<String, dynamic>? params,
@@ -150,86 +175,37 @@ class DaemonSession {
     if (!isReady) {
       throw StateError('Session not bootstrapped — call bootstrap() first');
     }
-    final id = _nextRequestId++;
-    final completer = Completer<Envelope>();
-    _pendingRequests[id] = completer;
-    final payload = <String, dynamic>{
-      'id': id,
-      'method': method,
-      // FEAT-011 contracts/app-methods.md §"every method except app.preflight
-      // and app.hello requires a valid app_session_token".
-      'app_session_token': _sessionToken,
-      if (params != null) 'params': params,
-    };
-    await client.sendLine(json.encode(payload));
-    return completer.future.timeout(timeout);
+    try {
+      return await _roundTrip(
+        {
+          'method': method,
+          // Every method except app.preflight / app.hello requires a valid
+          // app_session_token (contracts/app-methods.md).
+          'app_session_token': _sessionToken,
+          if (params != null) 'params': params,
+        },
+        timeout,
+      );
+    } catch (e) {
+      // Transport failure (connect/timeout/framing) — the daemon is
+      // unreachable. Surface it so FR-004 runtime state flips.
+      _events.add(SessionFailed(e));
+      rethrow;
+    }
   }
 
-  /// "Retry connection" — close the existing socket, discard the in-memory
-  /// session token, open a fresh [SocketClient] aimed at the SAME socket
-  /// path, then re-issue `app.hello` and emit a [SessionReBootstrapped]
-  /// event so dependent providers can invalidate. T174(a).
-  ///
-  /// Steps (per the 5-step API contract in tasks.md T174a):
-  ///   1. Close the current [SocketClient] connection.
-  ///   2. Reset the in-memory `app_session_token` to `null`.
-  ///   3. Open a fresh [SocketClient] to the configured socket path.
-  ///   4. Re-issue `app.hello` and store the new `app_session_token`.
-  ///   5. Emit a [SessionReBootstrapped] event on the broadcast stream.
-  ///
-  /// **Pending-request semantics:** any [Future] returned by an
-  /// `AppClient.*` method that was in-flight at the moment of
-  /// [reBootstrap] completes with a [SocketDisconnectedError]. This
-  /// method does NOT silently retry those requests on the new session —
-  /// the caller's `idempotency_key` may or may not be replayable; that
-  /// is a caller decision (FR-038 / FR-072 retry surfaces).
-  ///
-  /// Re-throws any error raised by [bootstrap] so the caller (typically
-  /// the "Retry connection" affordance) can show an inline failure
-  /// without a separate try/catch.
+  /// "Retry connection" (T174a) — discard the in-memory token and re-issue
+  /// `app.hello`, then emit [SessionReBootstrapped]. In the one-request-per-
+  /// connection model there is no persistent socket to close and no in-flight
+  /// request to abort (each round-trip is self-contained), so this reduces to
+  /// a token wipe + a fresh handshake. Re-throws any [bootstrap] error.
   Future<void> reBootstrap() async {
-    // (1) Close existing socket + (2) wipe token state. We don't emit
-    // a [SessionTornDown] here because the runtime-state provider
-    // would route us through `runtimeUnreachable` for a frame and the
-    // "Retry connection" affordance would visibly flicker. The
-    // [SessionReBootstrapped] event below is the canonical signal.
-    final priorPath = _client.socketPath;
-    await _responseSub?.cancel();
-    _responseSub = null;
     _sessionToken = null;
     _appContractVersion = null;
     _daemonVersion = null;
-    // Complete every in-flight request with the documented sentinel so
-    // callers can decide whether to retry. The next session is fresh —
-    // we MUST NOT silently route these futures onto it.
-    for (final c in _pendingRequests.values) {
-      if (!c.isCompleted) {
-        c.completeError(const SocketDisconnectedError(
-          'Session reBootstrapped — in-flight request aborted',
-        ));
-      }
-    }
-    _pendingRequests.clear();
-    await _client.close();
-
-    // (3) Open a fresh client aimed at the same socket path.
-    _client = SocketClient(priorPath);
-
-    // (4) Re-issue `app.hello`. We call [bootstrap] which already
-    // owns the wire-level sequence + envelope parsing + token capture.
-    // Note: `bootstrap` emits [SessionBootstrapped] internally — that
-    // event is what the runtime-state provider keys off, so dependent
-    // providers will see the session move from `runtimeUnreachable`
-    // back to a populated/healthy state through that channel.
-    // The [SessionReBootstrapped] emission below is an ADDITIONAL,
-    // narrower signal for callers that specifically want to invalidate
-    // per-surface caches without listening to the broader bootstrap
-    // event (which also fires on first-launch).
+    // bootstrap() emits [SessionBootstrapped] internally — the runtime-state
+    // provider keys off that to move from runtimeUnreachable back to healthy.
     await bootstrap();
-
-    // (5) Emit the re-bootstrap event. By the time we reach this line,
-    // [_appContractVersion] and [_daemonVersion] are populated by the
-    // bootstrap success path above.
     _events.add(
       SessionReBootstrapped(
         appContractVersion: _appContractVersion ?? 'unknown',
@@ -238,24 +214,12 @@ class DaemonSession {
     );
   }
 
-  /// Closes the socket + clears in-memory state. Token is discarded per FR-003.
+  /// Discards in-memory session state (token per FR-003) and emits
+  /// [SessionTornDown]. No socket to close in the one-shot model.
   Future<void> teardown({Object? reason}) async {
-    // FR-003 token wipe: overwrite to the empty string before nulling so a
-    // post-mortem inspection of the heap can't surface the prior token
-    // value via dead pointers. Dart strings are immutable, so the best we
-    // can do is drop the only live reference and let GC reclaim.
     _sessionToken = null;
     _appContractVersion = null;
     _daemonVersion = null;
-    for (final c in _pendingRequests.values) {
-      if (!c.isCompleted) {
-        c.completeError(StateError('Session torn down'));
-      }
-    }
-    _pendingRequests.clear();
-    await _responseSub?.cancel();
-    _responseSub = null;
-    await client.close();
     _events.add(SessionTornDown(reason: reason));
   }
 
@@ -263,36 +227,5 @@ class DaemonSession {
   Future<void> dispose() async {
     await teardown();
     await _events.close();
-  }
-
-  void _onResponse(String line) {
-    try {
-      final Object? raw = json.decode(line);
-      if (raw is! Map<String, dynamic>) {
-        // unsolicited or malformed — ignore
-        return;
-      }
-      final id = raw['id'] as int?;
-      if (id == null) return;
-      final completer = _pendingRequests.remove(id);
-      if (completer == null) return;
-      try {
-        final env = Envelope.parse(line);
-        completer.complete(env);
-      } catch (e, st) {
-        completer.completeError(e, st);
-      }
-    } catch (_) {
-      // Swallow decode errors; SocketClient already surfaces framing errors via stream.
-    }
-  }
-
-  void _onError(Object e, StackTrace st) {
-    // Treat any error as a session-disrupting event; complete all pending with the error.
-    for (final c in _pendingRequests.values) {
-      if (!c.isCompleted) c.completeError(e, st);
-    }
-    _pendingRequests.clear();
-    _events.add(SessionFailed(e));
   }
 }

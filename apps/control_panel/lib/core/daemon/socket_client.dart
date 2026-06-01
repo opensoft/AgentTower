@@ -88,9 +88,12 @@ class SocketClient {
     if (jsonLine.contains('\n') ||
         jsonLine.contains('\r') ||
         jsonLine.contains('\x00')) {
-      throw FormatException(
+      // NB: never include `jsonLine` as the FormatException source — request
+      // payloads carry the `app_session_token` and operator-notes/prompt
+      // bodies, which FR-074 forbids leaking into logs/error strings
+      // (swarm-review: token leak via FormatException.toString()).
+      throw const FormatException(
         'Request payload contains forbidden control characters (FR-003b)',
-        jsonLine,
       );
     }
     final bytes = utf8.encode(jsonLine);
@@ -98,7 +101,6 @@ class SocketClient {
       throw FormatException(
         'Request exceeds FEAT-011 FR-003a 1 MiB per-line cap '
         '(${bytes.length} bytes)',
-        jsonLine,
       );
     }
     // Single-write framing (review fix M-S1): emit `<json>\n` as one
