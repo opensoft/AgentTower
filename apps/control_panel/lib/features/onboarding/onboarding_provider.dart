@@ -1,7 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../../domain/models/adopted_agent.dart';
 import '../../domain/models/common_enums.dart';
+import '../../domain/models/container.dart' as model;
+import '../../domain/models/pane.dart';
+import '../../domain/models/queue_row.dart';
+import '../../domain/models/route.dart' as model;
 import '../../features/shell/runtime_state_provider.dart';
 import '../agent_ops/providers.dart';
 
@@ -10,9 +15,11 @@ import '../agent_ops/providers.dart';
 ///
 /// The 8 milestones in [OnboardingMilestone] each have an
 /// automatically-detectable completion criterion (per FR-010 + F11).
-/// This Notifier `ref.watch`es every provider it depends on; whenever
-/// any watched provider re-emits, [build] recomputes which milestones
-/// are now satisfied and merges them into the persisted set.
+/// This Notifier subscribes to every provider it depends on (`ref.watch`
+/// for the keep-alive runtime provider, `ref.listen` for the autoDispose
+/// list providers — see [_detect]); whenever any dependency re-emits,
+/// [build] recomputes which milestones are now satisfied and merges them
+/// into the persisted set.
 ///
 /// Auto-detection rules:
 ///
@@ -64,9 +71,9 @@ class OnboardingProgressNotifier
     };
     _persistedSnapshot = Set.of(persisted);
 
-    // Watch every provider that drives a milestone. Each `ref.watch` here
-    // re-runs `build` whenever the watched value changes — the union of
-    // persisted milestones + freshly-detected ones is what we expose. The
+    // Subscribe to every provider that drives a milestone (see [_detect]).
+    // A change in any dependency re-runs `build` — the union of persisted
+    // milestones + freshly-detected ones is what we expose. The
     // freshly-detected delta is persisted in a microtask so reentrancy
     // during `build` doesn't trigger a second rebuild.
     final autoDetected = _detect();
@@ -106,10 +113,24 @@ class OnboardingProgressNotifier
     _persistIfChanged(next);
   }
 
-  /// Computes the currently-satisfied milestones from the watched
-  /// providers. Each provider is read via `ref.read` after `ref.watch`
-  /// subscribed in `build`; the cached AsyncValue is consulted so we
-  /// never block the milestone update on an in-flight fetch.
+  /// Computes the currently-satisfied milestones from the dependency
+  /// providers.
+  ///
+  /// `runtimeStateProvider` is a keep-alive `NotifierProvider`, so it is
+  /// `ref.watch`ed normally — re-emits re-run `build`.
+  ///
+  /// The five `*ListProvider`s are `FutureProvider.autoDispose` (see
+  /// `agent_ops/providers.dart`) and are deliberately autoDispose so
+  /// sub-views re-fetch on screen re-entry. Because this Notifier is
+  /// itself keep-alive, `ref.watch`ing them would permanently pin those
+  /// autoDispose providers and defeat the re-fetch-on-reentry contract
+  /// (review fix: keep-alive onboarding Notifier pinning autoDispose
+  /// lists). Instead we drive re-detection via `ref.listen` with
+  /// `fireImmediately`, which subscribes for change notifications
+  /// without registering a lifetime dependency — the autoDispose lists
+  /// stay free to dispose when no real consumer is mounted. The listener
+  /// captures the latest cached `AsyncValue` into a local and calls
+  /// `ref.invalidateSelf()` on subsequent emits so `build` recomputes.
   Set<OnboardingMilestone> _detect() {
     final detected = <OnboardingMilestone>{};
 
@@ -120,13 +141,57 @@ class OnboardingProgressNotifier
       detected.add(OnboardingMilestone.daemonReachable);
     }
 
-    final containers = ref.watch(containerListProvider);
-    if (containers.asData?.value.isNotEmpty ?? false) {
+    // `fireImmediately: true` runs the callback synchronously during this
+    // `_detect()` call with the current cached value, so the `_latest*`
+    // locals are populated before they are read below. Later emits arrive
+    // asynchronously and trigger `invalidateSelf` to re-run detection.
+    AsyncValue<List<model.Container>> latestContainers =
+        const AsyncValue.loading();
+    AsyncValue<List<Pane>> latestPanes = const AsyncValue.loading();
+    AsyncValue<List<AdoptedAgent>> latestAgents = const AsyncValue.loading();
+    AsyncValue<List<QueueRow>> latestQueue = const AsyncValue.loading();
+    AsyncValue<List<model.Route>> latestRoutes = const AsyncValue.loading();
+    var firing = true;
+
+    void onChange(void Function() apply) {
+      apply();
+      // Re-detect on asynchronous re-emits (not the synchronous initial
+      // fire, which `_detect()` already accounts for inline).
+      if (!firing && !_disposed) ref.invalidateSelf();
+    }
+
+    ref.listen<AsyncValue<List<model.Container>>>(
+      containerListProvider,
+      (_, next) => onChange(() => latestContainers = next),
+      fireImmediately: true,
+    );
+    ref.listen<AsyncValue<List<Pane>>>(
+      paneListProvider,
+      (_, next) => onChange(() => latestPanes = next),
+      fireImmediately: true,
+    );
+    ref.listen<AsyncValue<List<AdoptedAgent>>>(
+      agentListProvider,
+      (_, next) => onChange(() => latestAgents = next),
+      fireImmediately: true,
+    );
+    ref.listen<AsyncValue<List<QueueRow>>>(
+      queueListProvider,
+      (_, next) => onChange(() => latestQueue = next),
+      fireImmediately: true,
+    );
+    ref.listen<AsyncValue<List<model.Route>>>(
+      routeListProvider,
+      (_, next) => onChange(() => latestRoutes = next),
+      fireImmediately: true,
+    );
+    firing = false;
+
+    if (latestContainers.asData?.value.isNotEmpty ?? false) {
       detected.add(OnboardingMilestone.benchContainerCheck);
     }
 
-    final panes = ref.watch(paneListProvider);
-    final paneRows = panes.asData?.value ?? const [];
+    final paneRows = latestPanes.asData?.value ?? const [];
     if (paneRows.isNotEmpty) {
       detected.add(OnboardingMilestone.paneDiscoveryCheck);
     }
@@ -134,8 +199,7 @@ class OnboardingProgressNotifier
       detected.add(OnboardingMilestone.firstPaneAdoption);
     }
 
-    final agents = ref.watch(agentListProvider);
-    final agentRows = agents.asData?.value ?? const [];
+    final agentRows = latestAgents.asData?.value ?? const [];
     if (agentRows.isNotEmpty) {
       detected.add(OnboardingMilestone.firstAgentRegistration);
     }
@@ -143,13 +207,11 @@ class OnboardingProgressNotifier
       detected.add(OnboardingMilestone.firstLogAttachment);
     }
 
-    final queue = ref.watch(queueListProvider);
-    if (queue.asData?.value.isNotEmpty ?? false) {
+    if (latestQueue.asData?.value.isNotEmpty ?? false) {
       detected.add(OnboardingMilestone.firstDirectSend);
     }
 
-    final routes = ref.watch(routeListProvider);
-    if (routes.asData?.value.isNotEmpty ?? false) {
+    if (latestRoutes.asData?.value.isNotEmpty ?? false) {
       detected.add(OnboardingMilestone.firstRouteCreation);
     }
 

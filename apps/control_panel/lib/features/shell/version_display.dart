@@ -24,15 +24,42 @@ final packageInfoProvider = FutureProvider<PackageInfo>((ref) async {
 /// Triggers the FR-068 release-feed check exactly once per launch.
 /// The provider's cached result is consumed by both the Dashboard
 /// badge and the Settings tile, ensuring the at-most-once invariant.
+///
+/// Routes through [releaseFeedCheckerProvider] (the documented
+/// test-override seam) rather than constructing [ReleaseFeedChecker]
+/// directly, so widget tests can stub the feed and never hit the
+/// real network.
 final releaseFeedCheckProvider =
     FutureProvider<ReleaseFeed?>((ref) async {
   try {
-    return await ReleaseFeedChecker().fetch();
+    return await ref.watch(releaseFeedCheckerProvider).fetch();
   } catch (_) {
     // Silent failure per R-12: the release-feed is informational.
     return null;
   }
 });
+
+/// Returns true when `advertised` is strictly newer than `installed`.
+///
+/// FR-068 defines "update available" as the feed-advertised version
+/// being *strictly greater* than the installed version, not merely
+/// different. Mirrors `UpdateInfoNotifier._isNewer` (release_feed_check
+/// .dart) — a naive numeric-segment comparison sufficient for the MVP,
+/// where both strings satisfy the same version regex. A non-newer feed
+/// (older, equal, or a build/suffix-only difference) must NOT flag an
+/// update, so a `0.0.0-dev` dev build vs a `0.1.0` feed is handled
+/// correctly while an older advertised version is not falsely flagged.
+bool _isUpdateAvailable(String advertised, String installed) {
+  final a = advertised.split('.').map(int.tryParse).toList();
+  final b = installed.split('.').map(int.tryParse).toList();
+  for (var i = 0; i < a.length && i < b.length; i++) {
+    final av = a[i] ?? 0;
+    final bv = b[i] ?? 0;
+    if (av > bv) return true;
+    if (av < bv) return false;
+  }
+  return a.length > b.length;
+}
 
 /// Compact AppBar badge — "v0.1.0" + an exclamation icon if a
 /// newer release is advertised. Rendered globally on the AppShell
@@ -50,7 +77,8 @@ class VersionBadge extends ConsumerWidget {
       data: (info) {
         final theme = Theme.of(context);
         final updateAvailable = feed.maybeWhen(
-          data: (f) => f != null && f.version != info.version,
+          data: (f) =>
+              f != null && _isUpdateAvailable(f.version, info.version),
           orElse: () => false,
         );
         final remoteVersion = feed.maybeWhen(
@@ -102,8 +130,8 @@ class VersionDisplayTile extends ConsumerWidget {
           data: (f) => f,
           orElse: () => null,
         );
-        final updateAvailable =
-            remote != null && remote.version != info.version;
+        final updateAvailable = remote != null &&
+            _isUpdateAvailable(remote.version, info.version);
         return ListTile(
           leading: Icon(
             updateAvailable

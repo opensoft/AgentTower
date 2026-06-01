@@ -34,16 +34,32 @@ class AppRouter {
   /// name into a [RoutePath] and renders [AppShell] with it.
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     final route = RoutePath.parse(settings.name);
-    return MaterialPageRoute<void>(
+    // Use a zero-duration PageRouteBuilder rather than MaterialPageRoute so
+    // that switching sub-views within a workspace (via
+    // `Navigator.pushReplacementNamed`, which rebuilds the whole shell route)
+    // does not play a slide page-transition on every chip tap.
+    return PageRouteBuilder<void>(
       settings: RouteSettings(
         name: route.toRouteString(),
         arguments: settings.arguments,
       ),
-      builder: (_) => AppShell(route: route),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (_, __, ___) => AppShell(route: route),
     );
   }
 
-  /// Initial route used by `MaterialApp.onGenerateInitialRoutes` (and by
+  /// Builds a single-entry initial stack so a multi-segment initial route
+  /// like `/agent_ops/dashboard` does NOT expand into phantom prefix routes.
+  ///
+  /// Wire this into `MaterialApp.onGenerateInitialRoutes`; without it the
+  /// Navigator's default treats a slash-containing initial route as a *path*
+  /// and pushes one [AppShell] per prefix (`/`, `/agent_ops`,
+  /// `/agent_ops/dashboard`), leaving phantom shells behind the landing route.
+  static List<Route<dynamic>> onGenerateInitialRoutes(String initialRoute) =>
+      [onGenerateRoute(RouteSettings(name: initialRoute))];
+
+  /// Initial route assigned to `MaterialApp.initialRoute` (and reusable by
   /// the deep-link handler when it lands).
   static String get initialRouteName => RoutePath.home.toRouteString();
 }

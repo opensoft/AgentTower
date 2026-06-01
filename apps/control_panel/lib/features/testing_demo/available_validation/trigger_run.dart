@@ -94,9 +94,7 @@ class _TriggerRunButtonState extends ConsumerState<TriggerRunButton> {
       // Re-fetch the runs list for this project so the new run shows
       // up in the Runs view + the SC-006 running-state transition is
       // observable on the next pump.
-      ref.invalidate(
-        validationRunListProvider(RunListQuery(projectId: widget.projectId)),
-      );
+      ref.invalidate(validationRunListProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

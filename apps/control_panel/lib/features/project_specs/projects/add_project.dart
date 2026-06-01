@@ -120,6 +120,7 @@ class _AddProjectDialogState extends ConsumerState<AddProjectDialog> {
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _submitting = false;
         _error = e.toString();

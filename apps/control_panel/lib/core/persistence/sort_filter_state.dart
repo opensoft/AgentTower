@@ -1,3 +1,5 @@
+import 'package:collection/collection.dart';
+
 import '../../domain/models/common_enums.dart';
 
 /// `ListSortFilterState` — the persisted per-view sort + filter slice
@@ -83,29 +85,19 @@ class ListSortFilterState {
         filters: filters ?? this.filters,
       );
 
+  static const _eq = DeepCollectionEquality();
+
   @override
   bool operator ==(Object other) =>
       other is ListSortFilterState &&
       other.sortField == sortField &&
       other.sortDirection == sortDirection &&
-      _mapEquals(other.filters, filters);
+      _eq.equals(other.filters, filters);
 
   @override
   int get hashCode => Object.hash(
         sortField,
         sortDirection,
-        Object.hashAllUnordered(
-          filters.entries.map((e) => Object.hash(e.key, e.value)),
-        ),
+        _eq.hash(filters),
       );
-
-  static bool _mapEquals(Map<String, dynamic> a, Map<String, dynamic> b) {
-    if (a.length != b.length) return false;
-    for (final entry in a.entries) {
-      if (!b.containsKey(entry.key) || b[entry.key] != entry.value) {
-        return false;
-      }
-    }
-    return true;
-  }
 }

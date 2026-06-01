@@ -102,6 +102,25 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    // Swarm-review (range catalog): keep the feature/change catalog provider
+    // alive so its autoDispose cache is not torn down, and re-resolve the
+    // range once the daemon round-trip completes. Without this watch the
+    // provider has no live listener, never refreshes, and legitimate range
+    // ids wrongly resolve as `(excluded: deferred — not found in feature
+    // catalog)` (H-B11 regression). `ref.watch` rebuilds this widget when
+    // the future resolves; `ref.listen` re-runs `_resolveRange` on that
+    // transition so `_resolved` (and the generated prompt body) stays correct.
+    ref.watch(
+      project_providers.featureChangeListProvider(widget.project.projectId),
+    );
+    ref.listen(
+      project_providers.featureChangeListProvider(widget.project.projectId),
+      (previous, next) {
+        if (next.hasValue && _workItemExpr.isNotEmpty) {
+          _resolveRange();
+        }
+      },
+    );
     final stepWidgets = <Widget>[
       _step1MasterPicked(),
       _step2ProjectPicked(),
@@ -275,8 +294,9 @@ class _HandoffFlowState extends ConsumerState<HandoffFlow> {
       // isn't cached yet, we still allow the resolver to run but the
       // operator sees `(excluded: deferred — not found in feature
       // catalog)` rather than fake-deferred legitimate ids; the
-      // pre-resolved list refreshes once the daemon round-trip
-      // completes via the existing rebuild path.
+      // pre-resolved list is re-resolved once the daemon round-trip
+      // completes, driven by the `ref.watch` + `ref.listen` on
+      // `featureChangeListProvider` in `build()`.
       final cached = ref
               .read(project_providers
                   .featureChangeListProvider(widget.project.projectId))

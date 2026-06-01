@@ -142,7 +142,8 @@ class _EventsViewState extends ConsumerState<EventsView> {
   }
 
   static String _timeLabel(DateTime ts) {
-    final delta = DateTime.now().toUtc().difference(ts.toUtc());
+    final raw = DateTime.now().toUtc().difference(ts.toUtc());
+    final delta = raw.isNegative ? Duration.zero : raw;
     if (delta.inSeconds < 60) return '${delta.inSeconds}s';
     if (delta.inMinutes < 60) return '${delta.inMinutes}m';
     if (delta.inHours < 24) return '${delta.inHours}h';

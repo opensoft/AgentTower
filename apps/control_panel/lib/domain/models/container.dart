@@ -17,6 +17,7 @@ class Container with _$Container {
   const factory Container({
     required String containerId,
     required String name,
+    @JsonKey(unknownEnumValue: ContainerState.unknown)
     required ContainerState state,
     required String projectPath,
     required DateTime discoveredAt,

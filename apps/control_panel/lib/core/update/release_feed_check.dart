@@ -1,14 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Release-feed check + UpdateState provider. T036 + research R-12 + Round-3 R-42.
+/// Release-feed check. T036 + research R-12 + Round-3 R-42.
 ///
 /// Fetches `https://releases.opensoft.one/agenttower/control-panel/latest.json`
-/// once per app launch. On success, exposes whether an update is available
-/// (i.e. feed-advertised version is greater than installed version).
-/// On failure, stays silent (UpdateState.unknown). Per R-42, failure
+/// once per app launch. On success, returns the parsed feed so the caller
+/// can compare the advertised version against the installed version.
+/// On failure, stays silent (returns null). Per R-42, the failure
 /// outcome is surfaced via Settings → Doctor only.
 ///
 /// The HTTPS GET is the ONLY outbound network call the app makes
@@ -57,7 +58,19 @@ class ReleaseFeedChecker {
       req.headers.set(HttpHeaders.userAgentHeader, _userAgent);
       final resp = await req.close().timeout(_timeout);
       if (resp.statusCode != 200) return null;
-      final body = await resp.transform(utf8.decoder).join();
+      // Bound the untrusted read: a valid latest.json is < ~4 KB. Reject an
+      // oversized payload (declared or streamed) to avoid a client-side OOM
+      // on this defensive, untrusted-input path.
+      const maxBytes = 64 * 1024;
+      if (resp.contentLength > maxBytes) return null;
+      final builder = BytesBuilder(copy: false);
+      var total = 0;
+      await for (final chunk in resp) {
+        total += chunk.length;
+        if (total > maxBytes) return null;
+        builder.add(chunk);
+      }
+      final body = utf8.decode(builder.takeBytes());
       final Object? decoded = json.decode(body);
       if (decoded is! Map<String, dynamic>) return null;
       return ReleaseFeed.fromJson(decoded);
@@ -114,112 +127,26 @@ class ReleaseFeed {
   final String minSupportedVersion;
 }
 
-/// Update state exposed to UI.
-enum UpdateState {
-  unknown, // pre-check OR fetch failed
-  upToDate,
-  updateAvailable,
-}
-
-class UpdateInfo {
-  const UpdateInfo({
-    required this.state,
-    required this.installedVersion,
-    this.feed,
-    this.lastCheckedAt,
-  });
-  final UpdateState state;
-  final String installedVersion;
-  final ReleaseFeed? feed;
-  final DateTime? lastCheckedAt;
-}
-
 /// Provider for the installed app version. Override in `main.dart` from
 /// `package_info_plus`'s `PackageInfo.version`. Defaults to `'0.0.0-dev'`
 /// for widget tests.
 final installedAppVersionProvider =
     Provider<String>((ref) => '0.0.0-dev');
 
-/// Provider for the [ReleaseFeedChecker] instance. Test overrides supply
-/// a stub checker so the network is never hit in unit/widget tests.
+/// Provider for the [ReleaseFeedChecker] instance — the documented
+/// test-override seam. Consumed by `releaseFeedCheckProvider` in
+/// `lib/features/shell/version_display.dart`, which is the live FR-068
+/// one-per-launch path (its cached `FutureProvider` result is shared by
+/// the Dashboard badge and the Settings tile). Test overrides supply a
+/// stub checker so the network is never hit in unit/widget tests.
 final releaseFeedCheckerProvider =
     Provider<ReleaseFeedChecker>((ref) => ReleaseFeedChecker());
 
-/// Provider — call `ref.read(updateInfoProvider.notifier).runOnce()` from
-/// `main.dart` after bootstrap to fire the FR-068 one-per-launch check.
-///
-/// The Notifier subclass takes a no-arg constructor (review fix M-A5) and
-/// pulls its dependencies through [ref] so feature widgets that want to
-/// stub the release feed for testing only need to override
-/// `releaseFeedCheckerProvider`.
-class UpdateInfoNotifier extends Notifier<UpdateInfo> {
-  late final String _installedVersion;
-  late final ReleaseFeedChecker _checker;
-  bool _hasRun = false;
-
-  String get installedVersion => _installedVersion;
-
-  @override
-  UpdateInfo build() {
-    _installedVersion = ref.watch(installedAppVersionProvider);
-    _checker = ref.watch(releaseFeedCheckerProvider);
-    return UpdateInfo(
-      state: UpdateState.unknown,
-      installedVersion: _installedVersion,
-    );
-  }
-
-  /// Idempotent — calling more than once per process lifetime is a no-op
-  /// per FR-068 "at most once per app launch".
-  Future<void> runOnce() async {
-    if (_hasRun) return;
-    _hasRun = true;
-    final feed = await _checker.fetch();
-    final now = DateTime.now().toUtc();
-    if (feed == null) {
-      state = UpdateInfo(
-        state: UpdateState.unknown,
-        installedVersion: _installedVersion,
-        lastCheckedAt: now,
-      );
-      return;
-    }
-    final available = _isNewer(feed.version, _installedVersion);
-    state = UpdateInfo(
-      state: available ? UpdateState.updateAvailable : UpdateState.upToDate,
-      installedVersion: _installedVersion,
-      feed: feed,
-      lastCheckedAt: now,
-    );
-  }
-
-  /// Returns true when `advertised` is strictly newer than `installed`.
-  /// Naive numeric-segment comparison ("1.2.3" > "1.2.2") — sufficient for
-  /// the MVP since the release-feed schema enforces the same regex used
-  /// by [ReleaseFeed.fromJson].
-  static bool _isNewer(String advertised, String installed) {
-    final a = advertised.split('.').map(int.tryParse).toList();
-    final b = installed.split('.').map(int.tryParse).toList();
-    for (var i = 0; i < a.length && i < b.length; i++) {
-      final av = a[i] ?? 0;
-      final bv = b[i] ?? 0;
-      if (av > bv) return true;
-      if (av < bv) return false;
-    }
-    return a.length > b.length;
-  }
-}
-
-/// FR-068 — single shared UpdateInfoNotifier instance.
-///
-/// **Round-3 analyze D1 (2026-05-24)**: the `UpdateInfoNotifier`
-/// class was defined in T036 but its `NotifierProvider` was never
-/// declared — only referenced in the docstring at line 148. This
-/// gap meant Phase-9 `VersionBadge` had to invent its own
-/// release-feed provider, duplicating the FR-068 "at most once per
-/// launch" path. The provider declaration here is the single source
-/// of truth for `state` + `runOnce()`.
-final updateInfoProvider =
-    NotifierProvider<UpdateInfoNotifier, UpdateInfo>(
-  UpdateInfoNotifier.new,
-);
+// NOTE: an earlier `UpdateInfoNotifier` / `updateInfoProvider` cluster was
+// intended as a shared "single source of truth" for update state but was
+// never wired into `main.dart` or any widget — its `runOnce()` was never
+// called, so it sat at `UpdateState.unknown` forever. It (and the
+// `UpdateInfo`/`UpdateState` types + `_isNewer` comparator it owned) has
+// been removed so the live `releaseFeedCheckProvider` path is the only
+// FR-068 path, rather than leaving dead code behind a misleading
+// "single source of truth" docstring.

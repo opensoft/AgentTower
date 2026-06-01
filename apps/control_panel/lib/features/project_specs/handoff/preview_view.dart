@@ -144,7 +144,10 @@ class _HandoffPreviewViewState extends ConsumerState<HandoffPreviewView> {
       final handoff = await submitHandoff(
         appClient: ref.read(appClientProvider),
         operatorLabel: Platform.environment['USER'] ?? 'operator',
-        selectedWorkItems: [widget.primary],
+        selectedWorkItems: [
+          for (final r in widget.resolved)
+            WorkItemRef(displayId: r.displayId, kind: r.kind),
+        ],
         linkedFeatureIds: [
           for (final r in widget.resolved)
             if (r.exclusion == null && r.kind == WorkItemKind.feature)

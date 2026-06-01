@@ -59,15 +59,44 @@ class RotatingFileLogger {
 
   /// Compiled regex set for the string-scrub pass. Pre-built once because
   /// `RegExp` construction is heavier than a per-call lookup.
+  ///
+  /// Each pattern has TWO alternatives so the scrub catches the secret in
+  /// both forms it can appear in on disk (swarm-review MED finding):
+  ///   raw     : `"key":"value"`            (delimiter `"`)
+  ///   escaped : `\"key\":\"value\"`        (delimiter `\"`)
+  /// The escaped form is the one that actually occurs via the documented
+  /// `log(Level.error, 'bad envelope: $line')` leak path, because `log()`
+  /// routes every message through `json.encode`, which escapes the inner
+  /// quotes of any stringified envelope. The previous single-alternative
+  /// pattern anchored on a literal `"` and therefore never matched the
+  /// escaped form, letting `app_session_token`/`prompt`/`payload` be
+  /// written in clear text. Capture groups: group(1) = raw key prefix,
+  /// group(2) = escaped key prefix; the matched arm picks the replacement
+  /// that re-emits the correct (raw vs escaped) delimiters so the line
+  /// stays valid JSON-lines.
   static final List<RegExp> _stringRedactPatterns = [
     for (final key in _redactedKeys)
-      RegExp('("' + RegExp.escape(key) + r'"\s*:\s*)"[^"\\]*(?:\\.[^"\\]*)*"'),
+      RegExp(
+        // raw: "key":"<json-string-body>"
+        '("' + RegExp.escape(key) + r'"\s*:\s*)"(?:[^"\\]|\\.)*"'
+            '|'
+            // escaped: \"key\":\"<body, inner escapes doubled>\"
+            r'(\\"' +
+            RegExp.escape(key) +
+            r'\\"\s*:\s*)\\"(?:\\\\.|(?!\\").)*\\"',
+      ),
   ];
 
   IOSink? _sink;
   int _bytesWritten = 0;
   Logger? _logger;
   Future<void> _writeChain = Future.value();
+
+  /// Set once [close] begins. Gates [_writeRaw] so records logged
+  /// concurrently with shutdown are cleanly refused instead of being
+  /// enqueued against a sink that `close()` is about to null out (which
+  /// would drop them silently).
+  bool _closed = false;
 
   /// Initializes the logger. Idempotent. Call before any [log] call.
   Future<void> initialize() async {
@@ -112,11 +141,29 @@ class RotatingFileLogger {
 
   /// Closes the current file sink, awaiting any pending writes first so
   /// FR-082 close-handler integration sees a flushed file.
+  ///
+  /// Terminal: after [close] the logger refuses further writes. Setting
+  /// `_closed` before awaiting the chain makes any `log()` that races the
+  /// shutdown window a clean no-op in [_writeRaw], rather than appending a
+  /// new future the original single `await` would not have waited for (and
+  /// whose bytes would then hit an already-nulled sink and vanish). We
+  /// loop-await the chain until it stops growing so already-enqueued
+  /// writes still flush. `_logger` is nulled so post-close `log()` calls
+  /// short-circuit and state stays consistent.
   Future<void> close() async {
-    await _writeChain;
+    _closed = true;
+    // Drain: keep awaiting until no new future was appended while we waited.
+    var chain = _writeChain;
+    do {
+      await chain;
+      final next = _writeChain;
+      if (identical(next, chain)) break;
+      chain = next;
+    } while (true);
     await _sink?.flush();
     await _sink?.close();
     _sink = null;
+    _logger = null;
   }
 
   // ---- internal ----
@@ -142,7 +189,13 @@ class RotatingFileLogger {
   String _scrubLine(String line) {
     var out = line;
     for (final pat in _stringRedactPatterns) {
-      out = out.replaceAllMapped(pat, (m) => '${m.group(1)}"[REDACTED]"');
+      out = out.replaceAllMapped(pat, (m) {
+        // group(1) set => raw form matched; group(2) => escaped form.
+        // Re-emit the redacted value with the same delimiter escaping the
+        // match used, so the surrounding JSON-lines record stays valid.
+        if (m.group(1) != null) return '${m.group(1)}"[REDACTED]"';
+        return '${m.group(2)}\\"[REDACTED]\\"';
+      });
     }
     return out;
   }
@@ -154,9 +207,17 @@ class RotatingFileLogger {
     if (current.existsSync()) {
       final stat = await current.stat();
       if (stat.size >= _maxBytesPerFile) {
+        // `_rotate()` renames control-panel.log.0 away, so re-stat-ing the
+        // `current` handle would hit a now-missing path and (per async
+        // File.stat semantics) yield size == -1, clobbering the 0 that
+        // `_rotate()` just set and leaving the counter 1 byte below the
+        // true size for the life of this sink. Use the known-fresh value
+        // instead: a rotated file starts empty.
         await _rotate();
+        _bytesWritten = 0;
+      } else {
+        _bytesWritten = stat.size;
       }
-      _bytesWritten = (await current.stat()).size;
     } else {
       _bytesWritten = 0;
     }
@@ -186,6 +247,9 @@ class RotatingFileLogger {
   /// don't interleave bytes inside a single line (review fix M-S4).
   Future<void> _writeRaw(String jsonLine) {
     return _writeChain = _writeChain.then((_) async {
+      // Refuse writes once close() has begun: the sink is being torn down
+      // and any bytes added here would hit a nulled sink and be lost.
+      if (_closed) return;
       final scrubbed = _scrubLine(jsonLine);
       final bytes = utf8.encode('$scrubbed\n');
       if (_bytesWritten + bytes.length > _maxBytesPerFile) {
@@ -197,9 +261,22 @@ class RotatingFileLogger {
       }
       _sink?.add(bytes);
       _bytesWritten += bytes.length;
-    }).catchError((Object _) {
+    }).catchError((Object _) async {
       // Swallow per-write failures so a failed rotation doesn't bring
-      // down the whole future chain.
+      // down the whole future chain. A throw inside the rotation branch
+      // can leave `_sink == null` and `_bytesWritten` still above the cap
+      // — which would re-trigger rotation on EVERY subsequent line, a
+      // storm that churns/deletes the rotated files. Reset the counter so
+      // the cap check passes, and best-effort reopen the sink so writes
+      // resume instead of being silently dropped forever.
+      _bytesWritten = 0;
+      if (_closed) return;
+      try {
+        if (_sink == null) await _openCurrentFile();
+      } catch (_) {
+        // Stay degraded (sink null) until a later write can reopen; no
+        // rotation storm because the counter is now reset.
+      }
     });
   }
 

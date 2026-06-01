@@ -11,6 +11,7 @@ import '../../../domain/models/master_summary.dart';
 import '../../../domain/models/project.dart';
 import '../../../ui/widgets/runtime_state_views.dart';
 import '../../../ui/widgets/safe_url_launcher.dart';
+import '../../agent_ops/providers.dart' as agent_providers;
 import '../providers.dart' as project_providers;
 import 'drift_repair_handoff_launch.dart';
 import 'drift_transition.dart';
@@ -193,23 +194,44 @@ class _Body extends ConsumerWidget {
     if (driverId == null) return null;
     final envelope =
         await ref.read(masterClassCapabilitiesProvider.future);
-    // Synthesize a minimal MasterSummary via the FR-071 gate
-    // (MasterSummary.tryFromAgent). When the daemon's capability
-    // registry is unreachable (envelope.degraded) we fall back to
-    // the first known master-class capability or 'claude' so the
+    // Resolve the driver's real capability via agentDetailProvider so
+    // the synthesized MasterSummary is labeled with the agent's actual
+    // capability rather than an arbitrary member of the master-class
+    // capability set. If the agent detail is unreachable we fall back
+    // to the first known master-class capability or 'claude' so the
     // drift-repair launch isn't completely blocked, while the
-    // ContextBundle the daemon assembles at submit time will use
-    // the real capability of the resolved agent.
+    // ContextBundle the daemon assembles at submit time will use the
+    // real capability of the resolved agent.
+    String? driverCapability;
+    try {
+      final driver =
+          await ref.read(agent_providers.agentDetailProvider(driverId).future);
+      driverCapability = driver.capability;
+    } catch (_) {
+      driverCapability = null;
+    }
+    final capability = driverCapability ??
+        (envelope.capabilities.isNotEmpty
+            ? envelope.capabilities.first
+            : 'claude');
+    // The FR-071 gate (MasterSummary.tryFromAgent) requires the
+    // capability to be a member of the master-class set. Seed the set
+    // from the daemon's envelope ('claude' when empty/degraded) and
+    // include the driver's resolved capability so a legitimately-
+    // driving master isn't blocked when the registry lags the agent;
+    // the daemon re-resolves the real capability at submit time.
+    final masterClassCapabilities = {
+      ...(envelope.capabilities.isEmpty ? const {'claude'} : envelope.capabilities),
+      capability,
+    };
+    // Synthesize a minimal MasterSummary via the FR-071 gate
+    // (MasterSummary.tryFromAgent).
     return MasterSummary.tryFromAgent(
           agentId: driverId,
           label: driverId,
-          capability: envelope.capabilities.isNotEmpty
-              ? envelope.capabilities.first
-              : 'claude',
+          capability: capability,
           role: AgentRole.master,
-          masterClassCapabilities: envelope.capabilities.isEmpty
-              ? const {'claude'}
-              : envelope.capabilities,
+          masterClassCapabilities: masterClassCapabilities,
           assignedProjectId: project.projectId,
           activeBadge: const ActiveInactiveBadge(active: true),
           currentStatus: MasterStatus.active,

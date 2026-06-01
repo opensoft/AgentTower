@@ -34,6 +34,7 @@ enum DriftScopeKind {
 @freezed
 class DriftScope with _$DriftScope {
   const factory DriftScope({
+    @JsonKey(unknownEnumValue: DriftScopeKind.global)
     required DriftScopeKind type,
     String? id,
     String? label,
@@ -75,6 +76,7 @@ enum DriftEvidenceKind {
 @freezed
 class DriftEvidence with _$DriftEvidence {
   const factory DriftEvidence({
+    @JsonKey(unknownEnumValue: DriftEvidenceKind.other)
     required DriftEvidenceKind kind,
     required String summary,
     String? text,

@@ -72,7 +72,8 @@ class _ProjectsViewState extends ConsumerState<ProjectsView> {
           ),
           PopupMenuButton<String>(
             tooltip: l10n.projectsSortTooltip,
-            icon: Icon(Icons.sort, color: _sort != null ? scheme.primary : null),
+            icon:
+                Icon(Icons.sort, color: _sort != null ? scheme.primary : null),
             onSelected: _onSort,
             itemBuilder: (_) => [
               CheckedPopupMenuItem<String>(
@@ -185,6 +186,8 @@ class _ProjectsGrid extends ConsumerWidget {
                     onOpenProject: () => _onOpen(context, ref, p.projectId),
                     onOpenCurrentWork: () =>
                         _onOpenCurrentWork(context, ref, p.projectId),
+                    onOpenMaster: () =>
+                        _onOpenMaster(context, ref, p.projectId),
                     onOpenSpecs: () => _onOpenSpecs(context, ref, p.projectId),
                     onOpenDrift: () => _onOpenDrift(context, ref, p.projectId),
                     onRemove: () => _onRemove(context, ref, p),
@@ -208,6 +211,13 @@ class _ProjectsGrid extends ConsumerWidget {
   }
 
   void _onOpenCurrentWork(BuildContext c, WidgetRef r, String id) =>
+      _onOpen(c, r, id);
+
+  // The project's current driving master is surfaced by the Current Work
+  // view (see CurrentWorkView._resolveDrivingMaster), so "Open driving
+  // master" selects the project and jumps to Current Work — the canonical
+  // place to drill into the driver — keeping the menu entry honest.
+  void _onOpenMaster(BuildContext c, WidgetRef r, String id) =>
       _onOpen(c, r, id);
 
   void _onOpenSpecs(BuildContext context, WidgetRef ref, String projectId) {
@@ -250,4 +260,3 @@ class _ProjectsGrid extends ConsumerWidget {
 // replaced with the shared widgets in ui/widgets/runtime_state_views.dart
 // so every Phase 4-6 surface presents the FR-004 5-state vocabulary
 // identically.
-

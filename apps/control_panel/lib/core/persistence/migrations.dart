@@ -3,8 +3,11 @@
 /// Per research R-21: migrations are an ordered list of [Migration]
 /// `{fromVersion, toVersion, transform}`. On launch, if the persisted
 /// state's `schema_version` is older than the app's current version, the
-/// migrations are applied in order. If newer, the state is treated as
-/// incompatible per FR-070 and dropped.
+/// migrations are applied in order. If newer, `applyMigrations` throws and
+/// the caller routes to the corruption-recovery path: the file is
+/// quarantined (renamed aside) and the app resets to fresh defaults. This
+/// is distinct from the FR-070 app/contract major mismatch, which drops
+/// persisted UX state without quarantining.
 ///
 /// MVP ships at schema_version = 1 with NO migrations registered. The
 /// framework is in place so adding a v2 migration is a one-line drop.

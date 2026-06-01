@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 // Hide Material's ThemeMode to disambiguate from our wire-aligned
@@ -192,7 +193,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     );
     final preview = await bundle.buildPreview();
     if (!context.mounted) return;
-    final previewText = preview.toString();
+    final previewText = _renderBundlePreview(preview);
     await showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
@@ -241,7 +242,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           width: 560,
           child: SingleChildScrollView(
             child: Text(
-              report.toString(),
+              const JsonEncoder.withIndent('  ').convert(report.toJson()),
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
             ),
           ),
@@ -260,9 +261,54 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     return Doctor(
       paths: paths,
       settingsRepo: ref.read(settingsRepositoryProvider),
-      runtimeCompat: null,
+      runtimeCompat: ref.read(runtimeStateProvider).contractCompat,
       osNotificationsEnabled: ref.read(settingsProvider).osNativeNotifications,
     ).run();
+  }
+
+  /// Formats a [BundlePreview] into the human-readable inventory the
+  /// preview dialog + clipboard payload are meant to show: the manifest
+  /// fields the operator is about to send out (privacy-review gate per
+  /// R-31), the per-file inventory with sizes, the cap/clipboard flags,
+  /// and each log's first/last-20-line snippets. Done at the call site
+  /// because BundlePreview has no toString()/renderText() of its own.
+  /// NEEDS: add renderText() formatter to BundlePreview in
+  /// lib/features/settings/diagnostics_bundle.dart (this is presentation
+  /// logic that arguably belongs on the model).
+  String _renderBundlePreview(BundlePreview preview) {
+    final buf = StringBuffer();
+
+    buf.writeln('=== Manifest (host metadata to be sent) ===');
+    buf.writeln(const JsonEncoder.withIndent('  ').convert(preview.manifest));
+    buf.writeln();
+
+    buf.writeln('=== Bundle size ===');
+    buf.writeln('Total: ${preview.totalBytes} bytes');
+    buf.writeln('Manifest: ${preview.manifestSizeBytes} bytes');
+    buf.writeln('Exceeds 50 MiB cap: ${preview.exceedsCap}');
+    buf.writeln('Small enough for clipboard: ${preview.smallEnoughForClipboard}');
+    buf.writeln();
+
+    buf.writeln('=== File inventory (${preview.entries.length} file(s)) ===');
+    if (preview.entries.isEmpty) {
+      buf.writeln('(no log files found)');
+    }
+    for (final entry in preview.entries) {
+      buf.writeln();
+      buf.writeln('${entry.path} (${entry.sizeBytes} bytes)');
+      buf.writeln('--- first ${entry.first20Lines.length} line(s) ---');
+      for (final line in entry.first20Lines) {
+        buf.writeln(line);
+      }
+      if (entry.last20Lines.isNotEmpty) {
+        buf.writeln('--- last ${entry.last20Lines.length} line(s) ---');
+        for (final line in entry.last20Lines) {
+          buf.writeln(line);
+        }
+      }
+    }
+
+    return buf.toString();
   }
 }
 

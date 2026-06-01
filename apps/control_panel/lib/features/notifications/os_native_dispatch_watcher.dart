@@ -26,13 +26,29 @@ import 'providers.dart';
 /// `build` callback registers `ref.listen` and returns. It must be
 /// kept alive by at least one `ref.watch` from a long-lived widget
 /// (wired in `app.dart`).
+///
+/// **Refresh producer** — `notificationListProvider` is a plain
+/// `FutureProvider.autoDispose.family` that resolves once and never
+/// re-fetches on its own, so `ref.listen` would only ever emit the
+/// launch-time backlog (which the first-tick branch absorbs). To make
+/// the polling-diff strategy actually observe *newly-arrived*
+/// notifications, this provider drives its own periodic refresh: a
+/// `Timer.periodic` invalidates the **exact** unscoped `incoming`
+/// family key it subscribes to, forcing a re-fetch whose result the
+/// `ref.listen` diff then compares against `seen`. The timer is torn
+/// down via `ref.onDispose` when the watcher is no longer kept alive.
+const _refreshInterval = Duration(seconds: 5);
+
 final osNativeDispatchWatcherProvider = Provider<void>((ref) {
   final seen = <String>{};
 
+  // The single family key this watcher subscribes to *and* refreshes.
+  // Both the `ref.listen` below and the periodic invalidate must use
+  // this identical (unscoped, `incoming`) key or the diff never runs.
+  const query = NotificationListQuery(lifecycle: 'incoming');
+
   ref.listen(
-    notificationListProvider(
-      const NotificationListQuery(lifecycle: 'incoming'),
-    ),
+    notificationListProvider(query),
     (previous, next) {
       final notifications = next.valueOrNull;
       if (notifications == null) return;
@@ -42,6 +58,16 @@ final osNativeDispatchWatcherProvider = Provider<void>((ref) {
     // of `incoming` notifications after app launch isn't skipped.
     fireImmediately: true,
   );
+
+  // Periodically re-fetch the subscribed key so newly-arrived
+  // notifications are detected. Without this producer the `ref.listen`
+  // above only ever emits the launch-time backlog (FR-058 would never
+  // dispatch). Replace with the streaming subscription once FEAT-011
+  // v1.x exposes it (see T167).
+  final timer = Timer.periodic(_refreshInterval, (_) {
+    ref.invalidate(notificationListProvider(query));
+  });
+  ref.onDispose(timer.cancel);
 });
 
 /// Computes the diff against [seen], mutates [seen] to the current
@@ -85,9 +111,16 @@ void _dispatchNewlyArrived(
   final enabled = settings.osNativeNotifications;
 
   for (final n in newlyArrived) {
-    // Fire-and-forget; the integration handles permission/dispatch
-    // errors internally (per OsNativeIntegration doc-comment).
-    unawaited(integration.consider(n, enabled: enabled));
+    // Fire-and-forget; the integration handles *permission/dispatch*
+    // errors internally (per OsNativeIntegration doc-comment), but the
+    // dispatcher's lazy `initialize()` runs UNGUARDED ahead of that
+    // try/catch — a `local_notifier` setup failure (e.g. Windows
+    // shortcut-creation) would otherwise escape into the zone as an
+    // unhandled async error. Defensively swallow here so one bad
+    // dispatch can't crash the watcher.
+    unawaited(
+      integration.consider(n, enabled: enabled).catchError((Object _) {}),
+    );
   }
 }
 

@@ -53,14 +53,23 @@ class _AttentionQueueViewState extends ConsumerState<AttentionQueueView> {
     final list = ref.watch(attentionListProvider(query));
 
     // Push provider data into the stability controller. Items are
-    // sorted severity-then-age (FR-052 default).
+    // sorted severity-then-age (FR-052 default). The push is deferred
+    // to a post-frame callback so mutating the controller (which the
+    // child [_StableListView] listens to) never calls notifyListeners()
+    // synchronously during build — that would trigger
+    // "setState()/markNeedsBuild() called during build". FR-053
+    // stability behavior is unchanged: acceptIncoming still honors the
+    // interaction window.
     list.whenData((rows) {
       final sorted = [...rows]..sort((a, b) {
           final s = _severityRank(b.severity) - _severityRank(a.severity);
           if (s != 0) return s;
           return a.ageStartedAt.compareTo(b.ageStartedAt);
         });
-      _stability.acceptIncoming(sorted);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _stability.acceptIncoming(sorted);
+      });
     });
 
     final l10n = AppLocalizations.of(context);

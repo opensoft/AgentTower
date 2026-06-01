@@ -94,6 +94,12 @@ class DriftTransitionAction extends ConsumerWidget {
             operatorNote: note.isEmpty ? null : note,
           );
       ref.invalidate(driftDetailProvider(drift.findingId));
+      // Swarm-review low-1: the list page stays mounted beneath the pushed
+      // detail route, so its autoDispose driftListProvider is never evicted.
+      // Invalidate the whole family (active query key is not known here) so
+      // returning to the list reflects the new status instead of the stale
+      // cached row.
+      ref.invalidate(driftListProvider);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -111,40 +117,44 @@ class DriftTransitionAction extends ConsumerWidget {
     DriftStatus to,
   ) async {
     final controller = TextEditingController();
-    return showDialog<String?>(
-      context: context,
-      builder: (dialogContext) {
-        final l10n = AppLocalizations.of(dialogContext);
-        return AlertDialog(
-          title: Text(
-            l10n.driftTransitionDialogTitle(from.wireValue, to.wireValue),
-          ),
-          content: SizedBox(
-            width: 460,
-            child: TextField(
-              controller: controller,
-              autofocus: true,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: l10n.driftTransitionNoteLabel,
-                helperText: l10n.driftTransitionNoteHelper,
+    try {
+      return await showDialog<String?>(
+        context: context,
+        builder: (dialogContext) {
+          final l10n = AppLocalizations.of(dialogContext);
+          return AlertDialog(
+            title: Text(
+              l10n.driftTransitionDialogTitle(from.wireValue, to.wireValue),
+            ),
+            content: SizedBox(
+              width: 460,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: l10n.driftTransitionNoteLabel,
+                  helperText: l10n.driftTransitionNoteHelper,
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(null),
-              child: Text(l10n.driftTransitionDialogCancel),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(controller.text.trim()),
-              child: Text(l10n.driftTransitionDialogConfirm),
-            ),
-          ],
-        );
-      },
-    );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(null),
+                child: Text(l10n.driftTransitionDialogCancel),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(controller.text.trim()),
+                child: Text(l10n.driftTransitionDialogConfirm),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   /// Returns the subset of [DriftStatus] values reachable from

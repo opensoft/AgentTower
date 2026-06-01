@@ -32,6 +32,7 @@ class Pane with _$Pane {
     required int tmuxPaneIndex,
     required PaneState state,
     String? registeredAgentId,
+    @JsonKey(unknownEnumValue: PaneDiscoveredClass.unknown)
     PaneDiscoveredClass? discoveredClass,
     DateTime? lastSeenAt,
     required DateTime asOf,

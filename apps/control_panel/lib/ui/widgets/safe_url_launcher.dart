@@ -72,7 +72,12 @@ class SafeUrlLauncher {
 
   static Future<bool> _doLaunch(BuildContext context, Uri uri) async {
     final l10n = AppLocalizations.of(context);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    bool ok;
+    try {
+      ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      ok = false;
+    }
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.safeUrlOsCouldNotOpen(_summarize(uri)))),

@@ -26,7 +26,12 @@ class ContractVersion {
     if (parts.length != 2) {
       throw FormatException('Invalid app_contract_version: $wireValue');
     }
-    return ContractVersion(int.parse(parts[0]), int.parse(parts[1]));
+    final major = int.tryParse(parts[0]);
+    final minor = int.tryParse(parts[1]);
+    if (major == null || minor == null) {
+      throw FormatException('Invalid app_contract_version: $wireValue');
+    }
+    return ContractVersion(major, minor);
   }
 
   final int major;
@@ -152,7 +157,12 @@ class ContractCompat {
 
   bool get majorIncompatible => daemonVersion.major != appMinimum.major;
 
-  /// Five-state runtime classification per FR-004.
+  /// Contract-derived runtime classification per FR-004. Only resolves
+  /// the contract-gated subset: `contractVersionIncompatible`,
+  /// `runtimeDegraded`, or `runtimeHealthyPopulated`. The remaining
+  /// FR-004 states — `runtimeUnreachable` (connection layer) and
+  /// `runtimeHealthyEmpty` (data-presence layer) — are decided by the
+  /// caller, not here.
   RuntimeStateKind get runtimeStateKind {
     if (majorIncompatible) {
       return RuntimeStateKind.contractVersionIncompatible;

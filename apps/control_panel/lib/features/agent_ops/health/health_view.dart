@@ -41,9 +41,10 @@ class HealthView extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
               for (final raw in subsystems)
-                _SubsystemTile(
-                  data: (raw as Map).cast<String, dynamic>(),
-                ),
+                if (raw is Map)
+                  _SubsystemTile(
+                    data: raw.cast<String, dynamic>(),
+                  ),
               if (hints.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Text(l10n.healthHints,

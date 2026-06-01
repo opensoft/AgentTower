@@ -2,6 +2,7 @@ import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/demo_readiness_summary.dart';
 import '../../../domain/models/validation_entrypoint.dart';
 import '../../../domain/models/validation_run.dart';
+import '../../../domain/models/validation_supporting.dart';
 
 /// FR-050 invariant enforcement — local rendering helper. T129
 /// (Phase 7 US5).
@@ -54,8 +55,19 @@ ReadinessRenderResult enforceRequiredInvariant({
   if (requiredEntrypoints.isEmpty) {
     return ReadinessRenderResult(effectiveState: summary.overallState);
   }
+  // The runs handed to this helper are already branch-scoped by the
+  // daemon (the caller passes `RunListQuery(branch: summary.branch)`),
+  // so any run here ran on the current branch. A run's `target.id`
+  // only equals the branch name when `target.kind` is `branch`; for
+  // other kinds (e.g. `project`, used by the Available Validation
+  // surface) `target.id` is a project/feature/change id, not a branch.
+  // Match on kind so those daemon-branch-scoped runs are not falsely
+  // discarded, which would otherwise leave `missing` non-empty and
+  // wrongly downgrade a `ready` overall state to `at_risk`.
   final runsOnBranch = recentRuns
-      .where((r) => r.target.id == summary.branch)
+      .where((r) =>
+          r.target.kind != ValidationTargetKind.branch ||
+          r.target.id == summary.branch)
       .toList(growable: false);
   final entrypointIdsThatRan =
       runsOnBranch.map((r) => r.entrypointId).toSet();

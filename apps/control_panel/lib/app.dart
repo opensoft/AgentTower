@@ -20,10 +20,10 @@ import 'ui/theme/color_tokens.dart';
 /// builder Column forced every route to live inside an extra Column,
 /// which broke widgets that expected to fill the full canvas.
 ///
-/// The actual `AppLocalizations.delegate` import is conditional on
-/// `flutter gen-l10n` having run (post-T009). The import line is commented
-/// out until then; uncomment AND add `AppLocalizations.delegate` to the
-/// delegates list when the codegen output exists.
+/// `flutter gen-l10n` has run (post-T009): the generated
+/// `core/l10n/app_localizations.dart` exists on disk, so the
+/// `AppLocalizations.delegate` import (line 4) is active and the delegate
+/// is wired into [localizationsDelegates] below.
 class AgentTowerControlPanel extends ConsumerWidget {
   const AgentTowerControlPanel({super.key});
 
@@ -54,6 +54,13 @@ class AgentTowerControlPanel extends ConsumerWidget {
         AppLocalizations.delegate,
       ],
       supportedLocales: supportedLocales,
+      // Wire a single-route initial generator so exactly one shell is
+      // created. The default generator splits `initialRoute` on slashes
+      // and pushes one route per accumulating prefix, which (because
+      // `RoutePath.parse` is tolerant) builds a 3-deep stack of duplicate
+      // `AppShell` pages.
+      onGenerateInitialRoutes: (initial) =>
+          [AppRouter.onGenerateRoute(RouteSettings(name: initial))],
       initialRoute: AppRouter.initialRouteName,
       onGenerateRoute: AppRouter.onGenerateRoute,
     );

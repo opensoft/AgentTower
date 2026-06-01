@@ -71,7 +71,21 @@ class RuntimeStateNotifier extends Notifier<RuntimeState> {
   void _onEvent(SessionEvent event) {
     switch (event) {
       case SessionBootstrapped(:final daemonVersion, :final appContractVersion):
-        final daemonV = ContractVersion.parse(appContractVersion);
+        // Guard the parse: the daemon-supplied version string is only
+        // validated as a String upstream (envelope.dart), never as the
+        // MAJOR.MINOR shape, so a malformed value would throw out of this
+        // listener and freeze runtime state. Degrade to runtime-unreachable
+        // with the error recorded instead.
+        final ContractVersion daemonV;
+        try {
+          daemonV = ContractVersion.parse(appContractVersion);
+        } on FormatException catch (e) {
+          state = state.copyWith(
+            kind: RuntimeStateKind.runtimeUnreachable,
+            lastError: e,
+          );
+          return;
+        }
         final compat = ContractCompat.compute(daemonV);
         state = state.copyWith(
           kind: compat.runtimeStateKind,
@@ -89,7 +103,17 @@ class RuntimeStateNotifier extends Notifier<RuntimeState> {
         // contract-compat computation here so this case is non-empty
         // and the switch stays exhaustive without falling through to
         // unintended behavior if the bootstrap event semantics change.
-        final daemonV = ContractVersion.parse(appContractVersion);
+        // Same parse guard as SessionBootstrapped above.
+        final ContractVersion daemonV;
+        try {
+          daemonV = ContractVersion.parse(appContractVersion);
+        } on FormatException catch (e) {
+          state = state.copyWith(
+            kind: RuntimeStateKind.runtimeUnreachable,
+            lastError: e,
+          );
+          return;
+        }
         final compat = ContractCompat.compute(daemonV);
         state = state.copyWith(
           kind: compat.runtimeStateKind,

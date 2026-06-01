@@ -24,20 +24,6 @@ class RoutePath {
   static const RoutePath home =
       RoutePath(workspace: Workspace.agentOps, subViewId: 'dashboard');
 
-  static const Map<String, Workspace> _wireToWorkspace = {
-    'agent_ops': Workspace.agentOps,
-    'project_specs': Workspace.projectSpecs,
-    'testing_demo': Workspace.testingDemo,
-    'settings': Workspace.settings,
-  };
-
-  static String _wireFor(Workspace w) => switch (w) {
-        Workspace.agentOps => 'agent_ops',
-        Workspace.projectSpecs => 'project_specs',
-        Workspace.testingDemo => 'testing_demo',
-        Workspace.settings => 'settings',
-      };
-
   /// Per-workspace sub-view ordering per Round-3 R-39 (fixed at MVP).
   static const Map<Workspace, List<String>> subViewsByWorkspace = {
     Workspace.agentOps: [
@@ -76,7 +62,8 @@ class RoutePath {
   /// Parses a string route into a [RoutePath]. Tolerant of:
   ///   - missing leading slash
   ///   - trailing slash
-  ///   - unknown workspace (falls back to home)
+  ///   - unknown workspace (falls back to [Workspace.agentOps], sub-view
+  ///     preserved if valid)
   ///   - unknown subview within a known workspace (falls back to first)
   factory RoutePath.parse(String? raw) {
     final input = (raw ?? '/').trim();
@@ -86,7 +73,10 @@ class RoutePath {
         .where((s) => s.isNotEmpty)
         .toList(growable: false);
     if (segments.isEmpty) return home;
-    final workspace = _wireToWorkspace[segments[0]] ?? Workspace.agentOps;
+    final workspace = Workspace.values.firstWhere(
+      (w) => w.wireValue == segments[0],
+      orElse: () => Workspace.agentOps,
+    );
     final defaultSubView = subViewsFor(workspace).first;
     final candidateSubView = segments.length > 1 ? segments[1] : defaultSubView;
     final subView = subViewsFor(workspace).contains(candidateSubView)
@@ -96,7 +86,7 @@ class RoutePath {
   }
 
   /// Serializes back to `/workspace/subview` form.
-  String toRouteString() => '/${_wireFor(workspace)}/$subViewId';
+  String toRouteString() => '/${workspace.wireValue}/$subViewId';
 
   @override
   String toString() => 'RoutePath(${toRouteString()})';

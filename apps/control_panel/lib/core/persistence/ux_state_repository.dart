@@ -41,11 +41,6 @@ class UxStateRepository implements UxStateStore {
   })  : _debounceWindow = debounceWindow,
         _closeFlushCap = closeFlushCap;
 
-  static const int _currentAppMajor = 0; // bumped to 1 at first stable release
-  // Tracks the app's compiled-in `app_contract_version` major (FEAT-011 1.x).
-  // Matches `ContractCompatMap.appMinimum.major`.
-  static const int _currentContractMajor = 1;
-
   final AppPaths paths;
   final LaunchCompatibility compatibility;
   final Duration _debounceWindow;
@@ -73,7 +68,7 @@ class UxStateRepository implements UxStateStore {
     try {
       contents = await file.readAsString();
     } catch (_) {
-      await CorruptionQuarantine(paths: paths).quarantineCurrent();
+      await _tryQuarantine();
       return null;
     }
 
@@ -83,7 +78,7 @@ class UxStateRepository implements UxStateStore {
       if (decoded is! Map<String, dynamic>) throw const FormatException();
       root = decoded;
     } catch (_) {
-      await CorruptionQuarantine(paths: paths).quarantineCurrent();
+      await _tryQuarantine();
       return null;
     }
 
@@ -92,7 +87,7 @@ class UxStateRepository implements UxStateStore {
     final uxState = root['ux_state'] as Map<String, dynamic>?;
 
     if (schemaVersion == null || lastWrittenBy == null || uxState == null) {
-      await CorruptionQuarantine(paths: paths).quarantineCurrent();
+      await _tryQuarantine();
       return null;
     }
 
@@ -101,7 +96,7 @@ class UxStateRepository implements UxStateStore {
         lastWrittenBy['contract_major'] as int?;
 
     if (persistedAppMajor == null || persistedContractMajor == null) {
-      await CorruptionQuarantine(paths: paths).quarantineCurrent();
+      await _tryQuarantine();
       return null;
     }
 
@@ -118,10 +113,23 @@ class UxStateRepository implements UxStateStore {
       _state = MigrationRegistry.applyMigrations(uxState, schemaVersion);
     } on StateError catch (_) {
       // Forward-only schema check or migration gap — quarantine + fresh.
-      await CorruptionQuarantine(paths: paths).quarantineCurrent();
+      await _tryQuarantine();
       return null;
     }
     return _state;
+  }
+
+  /// Best-effort corruption quarantine. A failure to quarantine (e.g. a
+  /// TOCTOU race where the file vanishes, or an IO/permission error on
+  /// rename — plausible on Windows where the file may be held) must NOT
+  /// escape as an unhandled launch crash. Callers degrade to fresh defaults
+  /// (`return null`) regardless of whether the quarantine itself succeeded.
+  Future<void> _tryQuarantine() async {
+    try {
+      await CorruptionQuarantine(paths: paths).quarantineCurrent();
+    } catch (_) {
+      // best-effort; fall through to fresh defaults
+    }
   }
 
   /// In-memory state accessor.
@@ -171,16 +179,17 @@ class UxStateRepository implements UxStateStore {
   }
 
   Future<void> _flush() async {
-    if (!_hasUnflushed) return;
-    final state = _state;
-    if (state == null) return;
-
     await _writeLock.synchronized(() async {
+      // Snapshot state + dirty check atomically inside the lock so a flush
+      // that queued behind the lock writes the latest `_state`, not a value
+      // captured before it waited.
+      final state = _state;
+      if (!_hasUnflushed || state == null) return;
       final payload = <String, dynamic>{
         'schema_version': MigrationRegistry.currentSchemaVersion,
         'last_written_by': {
-          'app_major': _currentAppMajor,
-          'contract_major': _currentContractMajor,
+          'app_major': compatibility.currentAppMajor,
+          'contract_major': compatibility.currentContractMajor,
         },
         'ux_state': state,
       };
@@ -196,7 +205,10 @@ class UxStateRepository implements UxStateStore {
         // File.rename falls back to MoveFileEx with MOVEFILE_REPLACE_EXISTING
         // semantics, so the atomicity property holds there too.
         await tmp.rename(dst.path);
-        _hasUnflushed = false;
+        // Only mark clean if no newer update() replaced _state during the
+        // in-flight async write; otherwise leave _hasUnflushed = true so the
+        // newer state is not silently dropped.
+        if (identical(_state, state)) _hasUnflushed = false;
       } catch (_) {
         // Leave _hasUnflushed = true so next change retries. Best-effort
         // cleanup of the staging file so a half-written .tmp doesn't

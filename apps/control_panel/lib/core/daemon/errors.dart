@@ -116,9 +116,13 @@ class AppContractError implements Exception {
   });
 
   factory AppContractError.fromJson(Map<String, dynamic> json) {
-    final codeStr = json['code'] as String? ?? 'internal_error';
-    final message = json['message'] as String? ?? '';
-    final details = (json['details'] as Map<String, dynamic>?) ?? const {};
+    final codeRaw = json['code'];
+    final codeStr = codeRaw is String ? codeRaw : 'internal_error';
+    final msgRaw = json['message'];
+    final message = msgRaw is String ? msgRaw : '';
+    final detailsRaw = json['details'];
+    final details =
+        detailsRaw is Map<String, dynamic> ? detailsRaw : const <String, dynamic>{};
     return AppContractError(
       code: AppContractErrorCode.fromWire(codeStr),
       message: message,

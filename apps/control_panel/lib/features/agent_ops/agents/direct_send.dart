@@ -14,9 +14,13 @@ import '../providers.dart';
 ///   - Inline daemon response (success snack OR inline error)
 ///   - No silent retry on failure — operator decides whether to resend
 ///
-/// The send routes through `app.send_input` which auto-stamps
-/// `idempotency_key` (Round-3 R-28), so a re-send of the same dialog
-/// body without dismissing the dialog won't double-deliver.
+/// The send routes through `app.send_input`, which auto-stamps a fresh
+/// `idempotency_key` (`MutationKeys.fresh()`) on every call since this
+/// dialog passes none (Round-3 R-28). Each send therefore carries a
+/// distinct key and the daemon's same-key dedup does NOT collapse a
+/// manual re-send — every press of Send delivers. This is intentional:
+/// the on-success path pops the dialog, so a re-send only happens after a
+/// failure, where the operator explicitly decides to resend (see above).
 class DirectSendDialog extends ConsumerStatefulWidget {
   const DirectSendDialog({super.key, required this.agent});
 

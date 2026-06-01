@@ -14,8 +14,13 @@ sealed class Envelope {
   const Envelope({required this.appContractVersion});
   final String appContractVersion;
 
-  static Envelope parse(String jsonLine) {
-    final Object? raw = json.decode(jsonLine);
+  static Envelope parse(String jsonLine) => fromDecoded(json.decode(jsonLine));
+
+  /// Builds an [Envelope] from an already-decoded JSON value, avoiding a
+  /// redundant `json.decode` when the caller has already parsed the line
+  /// (e.g. the response dispatcher that decodes once to extract the
+  /// correlation `id`). [parse] delegates here.
+  static Envelope fromDecoded(Object? raw) {
     if (raw is! Map<String, dynamic>) {
       throw const FormatException('Envelope is not a JSON object');
     }
@@ -27,6 +32,18 @@ sealed class Envelope {
     if (acv is! String) {
       throw const FormatException(
         'Envelope missing or non-string "app_contract_version"',
+      );
+    }
+    // FR-033 fixes the documented "<major>.<minor>" shape (e.g. "1.0"). Validate
+    // it here, at the envelope boundary, so a malformed value surfaces as a
+    // FormatException alongside other envelope-shape failures rather than as an
+    // uncaught throw later in ContractVersion.parse inside an event listener.
+    final parts = acv.split('.');
+    if (parts.length != 2 ||
+        int.tryParse(parts[0]) == null ||
+        int.tryParse(parts[1]) == null) {
+      throw const FormatException(
+        'Envelope "app_contract_version" is not "<major>.<minor>"',
       );
     }
     if (ok) {

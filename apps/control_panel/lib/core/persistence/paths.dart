@@ -50,8 +50,10 @@ class AppPaths {
       '${appDataDir.path}${Platform.pathSeparator}$name';
 
   /// Quarantine path for corrupted ux-state (R-20 / contracts/ux-state.md §2).
-  File uxStateQuarantine(DateTime ts) =>
-      File(_join('ux-state.json.corrupt-${ts.toUtc().toIso8601String()}'));
+  File uxStateQuarantine(DateTime ts) => File(_join(
+        'ux-state.json.corrupt-'
+        '${ts.toUtc().toIso8601String().replaceAll(RegExp(r'[:.]'), '-')}',
+      ));
 
   /// Test-only override.
   static void resetForTesting() => _instance = null;

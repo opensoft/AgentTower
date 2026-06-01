@@ -245,9 +245,10 @@ class AppClient {
 
   // -------- handoff (T101 — Phase 5 US3)
   //
-  // Per contracts/app-methods-consumed.md §4 these are anticipated v1.x
-  // additions to FEAT-011. If absent at runtime, calls surface as
-  // FailureEnvelope and the handoff surfaces degrade per FR-002.
+  // Per contracts/app-methods-consumed.md §3 (handoff read surfaces;
+  // related mutations in §5) these are anticipated v1.x additions to
+  // FEAT-011. If absent at runtime, calls surface as FailureEnvelope
+  // and the handoff surfaces degrade per FR-002.
 
   Future<PagedResult> handoffList({
     String? cursorNext,
@@ -925,7 +926,8 @@ class AppClient {
       },
     );
     final raw = _unwrapResult(env);
-    final rows = (raw['rows'] as List?) ?? const <dynamic>[];
+    final rawRows = raw['rows'];
+    final rows = rawRows is List ? rawRows : const <dynamic>[];
     return PagedResult(
       items: rows.whereType<Map<String, dynamic>>().toList(growable: false),
       cursorNext: raw['cursor_next'] as String?,
