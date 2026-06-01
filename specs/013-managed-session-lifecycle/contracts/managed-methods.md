@@ -18,10 +18,10 @@ All examples use NDJSON over the local Unix socket. Field types follow FEAT-011 
 
 Inherits FEAT-011 verbatim:
 
-- Success: `{"ok": true, "app_contract_version": "1.0", "result": {...}}`
-- Failure: `{"ok": true, "app_contract_version": "1.0", "error": {"code": "<closed-set>", "message": "...", "details": {...}}}`
+- Success: `{"ok": true, "app_contract_version": "1.1", "result": {...}}`
+- Failure: `{"ok": true, "app_contract_version": "1.1", "error": {"code": "<closed-set>", "message": "...", "details": {...}}}`
 
-(Note: legacy `managed.*` methods use FEAT-002's existing envelope, which is the same shape minus `app_contract_version`.)
+(Note: legacy `managed.*` methods use FEAT-002's existing envelope, which is the same shape minus `app_contract_version`. The `app_contract_version` shown is whatever the daemon currently advertises — it advanced from `1.0` to `1.1` with FEAT-014 (App Dashboard Extensions); FEAT-013's `app.managed_*` handlers inherit it unchanged via the shared envelope.)
 
 ---
 
@@ -297,4 +297,4 @@ Per research §R12:
 
 ## Versioning
 
-FEAT-013 is additive within FEAT-011's `app_contract_version = "1.0"`. No major bump; clients that ignore unknown methods (per FEAT-011's compat rule) treat FEAT-013 as a no-op until they update. The `app.managed_*` methods are **required FEAT-013 surfaces, not optional capabilities**. They are NOT advertised in the `app.hello` response's `capability_flags`, which remains `{}` at v1.0 per FEAT-011 (`capability_flags` is reserved for gating *optional* methods in a future minor bump; required methods of any FEAT shipped at the current `app_contract_version` are discovered via the version itself, not via the flag map). FEAT-013 makes no change to `app.hello` semantics.
+FEAT-013 was authored as additive within FEAT-011's `app_contract_version = "1.0"` (no major bump; clients that ignore unknown methods per FEAT-011's compat rule treat FEAT-013 as a no-op until they update). The envelope version subsequently advanced to `"1.1"` with FEAT-014 (App Dashboard Extensions, additive minor); FEAT-013's `app.managed_*` handlers emit whatever the daemon currently advertises (now `1.1`) via the shared envelope and are unchanged by that bump. The `app.managed_*` methods are **required FEAT-013 surfaces, not optional capabilities**. They are NOT advertised in the `app.hello` response's `capability_flags`, which remains `{}` at v1.0 per FEAT-011 (`capability_flags` is reserved for gating *optional* methods in a future minor bump; required methods of any FEAT shipped at the current `app_contract_version` are discovered via the version itself, not via the flag map). FEAT-013 makes no change to `app.hello` semantics.
