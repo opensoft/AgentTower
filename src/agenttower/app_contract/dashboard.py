@@ -283,9 +283,14 @@ def _queue_counts(ctx: "DaemonContext") -> dict[str, int]:
     return by_state
 
 
-def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
+def _route_counts(
+    ctx: "DaemonContext", failed_subsystems: set[str] | None = None
+) -> dict[str, int]:
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
+        # Startup-window (no state_conn) is a daemon bring-up signal already
+        # covered by FEAT-011 probe_sqlite — NOT a runtime read failure, so
+        # do not flag (parallels the bucket aggregators' conn-is-None guard).
         return {"enabled": 0, "disabled": 0}
     try:
         enabled = int(
@@ -298,7 +303,15 @@ def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
                 "SELECT COUNT(*) FROM routes WHERE enabled = 0"
             ).fetchone()[0]
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — FR-025 fail-soft + second-half signal
+        # A swallowed routes-read failure (missing table / schema drift) would
+        # otherwise present as {enabled:0,disabled:0} and drive a spurious
+        # ``no_routes_configured`` recommendation while probe_sqlite still
+        # passes. Signal it so the caller folds ``sqlite`` into
+        # ``degraded_subsystems`` and ``subsystem_degraded`` wins instead
+        # (codex P2).
+        if failed_subsystems is not None:
+            failed_subsystems.add("sqlite")
         return {"enabled": 0, "disabled": 0}
     return {"enabled": enabled, "disabled": disabled}
 
@@ -791,6 +804,16 @@ def _app_dashboard_body(
         return err
     assert recent_limit is not None  # narrowed by _coerce_recent_limit
 
+    # FEAT-014 FR-025 second-half (codex P2): the v1.1 bucket aggregators AND
+    # the route-count helper signal a swallowed SQLite-side failure into this
+    # set so the recommendation engine sees ``sqlite`` in
+    # ``degraded_subsystems`` and emits ``subsystem_degraded``. Without it a
+    # fail-soft accessor (zero-filled buckets, or {enabled:0,disabled:0} from a
+    # failed routes read) would let the recommendation fall through to a
+    # healthy-looking code — e.g. ``no_routes_configured`` on a routes-table
+    # read failure while ``probe_sqlite`` still passes (FR-025 spec gap).
+    _aggregator_failed: set[str] = set()
+
     # Counts across all 7 surfaces. FR-018: read sequentially with no
     # global lock; slight inter-surface inconsistency is acceptable.
     container_counts = _container_counts(ctx)
@@ -798,7 +821,7 @@ def _app_dashboard_body(
     agent_counts = _agent_counts(ctx)
     log_attachment_counts = _log_attachment_counts(ctx)
     queue_counts = _queue_counts(ctx)
-    route_counts = _route_counts(ctx)
+    route_counts = _route_counts(ctx, _aggregator_failed)
     event_total = _event_count(ctx)
     # FEAT-014 v1.1 — additive PaneState / AgentState buckets (FR-001, FR-004).
     # by_state lives alongside the v1.0 counts dicts, not replacing them.
@@ -806,13 +829,6 @@ def _app_dashboard_body(
     # set the env var to force the dashboard past the SC-006 budget. No-op
     # in production (env var is never set in release builds).
     _maybe_test_only_inject_latency()
-    # FEAT-014 FR-025 second-half (codex P2 #3298870845): aggregators
-    # signal SQLite-side failure into this set so the recommendation
-    # engine sees ``sqlite`` in ``degraded_subsystems`` and emits
-    # ``subsystem_degraded``. Without this collector, an aggregator
-    # exception only produced zero-filled buckets — the recommendation
-    # would fall through to a healthy-looking code (FR-025 spec gap).
-    _aggregator_failed: set[str] = set()
     pane_state_buckets = _compute_pane_state_buckets(ctx, _aggregator_failed)
     agent_state_buckets = _compute_agent_state_buckets(ctx, _aggregator_failed)
 
@@ -888,13 +904,17 @@ def _app_dashboard_body(
         first_active_container_id=_first_active_container_id(ctx),
         pane_count=pane_counts["total"],
         first_unadopted_pane_id=_first_unadopted_pane_id(ctx),
-        # Use the active-unmanaged bucket (dau), NOT the v1.0 `unregistered`
-        # count (codex P2). `unregistered` includes inactive-or-stale panes
-        # (p.active=0 / inactive container); counting those would let a dead
-        # pane trigger `unadopted_panes_present` and mask a lower-priority
-        # actionable state. This keeps the recommendation consistent with
-        # `counts.panes.by_state["discovered-and-unmanaged"]` by construction.
-        unadopted_pane_count=pane_state_buckets["discovered-and-unmanaged"],
+        # `unadopted_pane_count` is the v1.0 `counts.panes.unregistered` total,
+        # per the contract (closed-sets-v1_1.md §Per-code Templates +
+        # data-model.md §RecommendationState). It deliberately differs from
+        # the `discovered-and-unmanaged` by_state bucket, which §PB priority
+        # can route stale/inactive unregistered panes out of. The *count* is
+        # the v1.0 total (so the wire number matches counts.panes.unregistered
+        # exactly); the *target* (`first_unadopted_pane_id`) is independently
+        # restricted to an adoptable ACTIVE pane and is null when only
+        # stale/inactive unregistered panes exist — so the recommendation
+        # never points an operator at a dead pane (codex P2).
+        unadopted_pane_count=pane_counts["unregistered"],
         oldest_blocked_message_id=_oldest_blocked_message_id(ctx),
         blocked_queue_count=queue_counts.get("blocked", 0),
         route_count=route_counts["enabled"] + route_counts["disabled"],

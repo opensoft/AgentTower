@@ -36,10 +36,12 @@ Lifecycle:
   ``deque(maxlen=MAXLEN)``).
 * Read: filter ``entry_ms > now_ms - WINDOW_MS`` (strict ``>``; an entry
   at exactly the edge is **excluded** per Research §CW).
-* Reset: implicit on daemon process exit. No public reset path (FR-008
-  daemon-restart-resets-to-zero is achieved by process restart, not by an
-  in-process API; see T010's
-  ``test_construction_returns_zero_count``).
+* Reset: implicit on daemon process exit. No *production* reset path —
+  FR-008 daemon-restart-resets-to-zero is achieved by process restart, not
+  by an in-process API (see T010's ``test_construction_returns_zero_count``).
+  A test-only ``reset_default()`` (and ``SkipCounter.reset()``) hook exists
+  for in-process test isolation (an autouse fixture in ``tests/conftest.py``
+  calls it between tests); it is NOT a production mechanism.
 
 FR-008 worker-stall decoupling (Clarifications R1 Q2): the counter is
 structurally independent of FEAT-010 routing-worker liveness. If

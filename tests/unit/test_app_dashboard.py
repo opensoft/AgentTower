@@ -1491,6 +1491,29 @@ def test_dashboard_v1_1_fr026_non_suppression_during_subsystem_degraded(
 
 
 @pytest.mark.v1_1
+def test_route_counts_failure_flags_sqlite_not_silent_no_routes() -> None:
+    """codex P2: a swallowed routes-read failure (missing table / schema
+    drift) must signal ``sqlite`` into ``failed_subsystems`` so the
+    recommendation surfaces ``subsystem_degraded`` rather than a spurious
+    ``no_routes_configured`` from a fail-soft ``{enabled:0,disabled:0}``.
+    A missing ``state_conn`` (bring-up) must NOT flag (probe_sqlite owns it)."""
+    from types import SimpleNamespace as _NS
+
+    class _BrokenConn:
+        def execute(self, *_a: object, **_k: object) -> object:
+            raise RuntimeError("simulated routes-table read failure")
+
+    failed: set[str] = set()
+    result = dashboard_mod._route_counts(_NS(state_conn=_BrokenConn()), failed)
+    assert result == {"enabled": 0, "disabled": 0}
+    assert failed == {"sqlite"}
+
+    bringup: set[str] = set()
+    dashboard_mod._route_counts(_NS(), bringup)
+    assert bringup == set(), "no state_conn is a bring-up signal, must not flag"
+
+
+@pytest.mark.v1_1
 def test_dashboard_v1_1_fr021_compute_failure_leaves_other_v1_1_fields_intact(
     daemon_ctx_with_db, host_session, monkeypatch
 ) -> None:

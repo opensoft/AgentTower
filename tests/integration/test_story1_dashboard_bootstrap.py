@@ -554,7 +554,7 @@ def _seed_state_db_for_t006(state_db: Path, home: Path) -> None:
                 "container_user, pane_pid, pane_tty, pane_current_command, "
                 "pane_current_path, pane_title, pane_active, active, first_seen_at, "
                 "last_scanned_at) VALUES (?, '/tmp/tmux.sock', 'sess', 0, ?, ?, ?, "
-                "'brett', ?, '/dev/pts/0', 'bash', '/workspace', '', 1, 1, ?, ?)",
+                "'bench', ?, '/dev/pts/0', 'bash', '/srv/work', '', 1, 1, ?, ?)",
                 ("c1", idx, f"%{idx}", "container-c1", 1234 + idx,
                  _ISO_TS_FIXTURE, _ISO_TS_FIXTURE),
             )
