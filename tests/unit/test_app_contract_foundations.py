@@ -466,7 +466,10 @@ def test_t098_make_unknown_method_envelope_shape() -> None:
 
     env = make_unknown_method_envelope("app.foo.bar")
     assert env["ok"] is False
-    assert env["app_contract_version"] == "1.0"
+    # FEAT-014 v1.1 bump: assert against the current advertised version
+    # rather than hardcoded "1.0" so this v1.0-baseline test survives
+    # additive-minor evolution (FR-014).
+    assert env["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert env["error"]["code"] == "unknown_method"
     assert env["error"]["details"] == {}
     assert "app.foo.bar" in env["error"]["message"]
@@ -756,10 +759,11 @@ def test_dashboard_envelope_shape(
     assert set(r["counts"]["containers"].keys()) == {
         "active", "inactive", "degraded_scan"
     }
-    # Pane counts have the FR-016 buckets.
-    assert set(r["counts"]["panes"].keys()) == {
-        "total", "registered", "unregistered"
-    }
+    # Pane counts have the FR-016 buckets (v1.0). FEAT-014 v1.1 adds
+    # `by_state` to the panes dict; the v1.0-baseline assertion is now a
+    # subset check rather than strict-equality so it survives additive
+    # evolution (FR-014).
+    assert {"total", "registered", "unregistered"} <= set(r["counts"]["panes"].keys())
     # Agent counts include the FEAT-006 closed role set.
     assert "by_role" in r["counts"]["agents"]
     assert set(r["counts"]["agents"]["by_role"].keys()) == set(
@@ -767,8 +771,10 @@ def test_dashboard_envelope_shape(
     )
     # Queue counts cover the full FEAT-009 closed state set.
     assert set(r["counts"]["queue"].keys()) == set(versioning.QUEUE_STATES)
-    # Route counts: enabled + disabled.
-    assert set(r["counts"]["routes"].keys()) == {"enabled", "disabled"}
+    # Route counts: v1.0 has {enabled, disabled}. FEAT-014 v1.1 adds
+    # `recently_skipped_count` and `recently_skipped_window_ms`. Subset
+    # check survives additive evolution (FR-014).
+    assert {"enabled", "disabled"} <= set(r["counts"]["routes"].keys())
     # Recents present for events/queue/routes (FR-017).
     assert set(r["recent"].keys()) == {"events", "queue", "routes"}
     for surface in ("events", "queue", "routes"):
@@ -791,7 +797,13 @@ def test_dashboard_empty_system_returns_zero_counts(
     assert r["counts"]["events"]["total"] == 0
     for state in versioning.QUEUE_STATES:
         assert r["counts"]["queue"][state] == 0
-    assert r["counts"]["routes"] == {"enabled": 0, "disabled": 0}
+    # FEAT-014 v1.1 additive: routes gains `recently_skipped_count` and
+    # `recently_skipped_window_ms`. v1.0-baseline assertion is field-by-
+    # field rather than strict-eq dict comparison (same pattern applied
+    # in test_app_dashboard.py during M1-M5 + T015; survives FR-014
+    # additive evolution).
+    assert r["counts"]["routes"]["enabled"] == 0
+    assert r["counts"]["routes"]["disabled"] == 0
     assert r["recent"]["events"] == []
     assert r["recent"]["queue"] == []
     assert r["recent"]["routes"] == []

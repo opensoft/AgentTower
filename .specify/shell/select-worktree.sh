@@ -112,7 +112,6 @@ resolve_main_repo_root() {
     printf '%s\n' "$repo_root"
 }
 
-
 worktree_root_has_entries() {
     local candidate="$1"
     local first
@@ -141,7 +140,6 @@ resolve_worktree_root() {
     candidate=$(resolve_path_from_root "$main_root" "$raw_root")
     printf '%s\n' "$candidate"
 }
-
 
 MODE="prompt"
 if [ "${1:-}" = "--path" ]; then

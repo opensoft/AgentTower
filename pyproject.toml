@@ -52,6 +52,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "perf: marks performance / SLA-budget tests (FEAT-013 T054/T055/T056). Run all by default; filter with `-m 'not perf'` to skip wall-clock-sensitive tests in CI lanes that can't guarantee timing.",
+    "v1_1: FEAT-014 v1.1-additive assertion. Deselected by T023's SC-004 v1.0-compat regression via `pytest -m 'not v1_1'`. See tasks.md §Notes 'v1.1 marker rule'.",
 ]
 
 [tool.coverage.run]

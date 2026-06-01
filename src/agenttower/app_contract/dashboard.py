@@ -22,9 +22,16 @@ slight inter-surface inconsistency is acceptable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import dataclasses
+import logging
+import os
+import time
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Final
 
-from . import envelope, view_models
+from agenttower.routing import skip_counter
+
+from . import envelope, recommendations, view_models
 from .errors import VALIDATION_FAILED
 from .readiness import (
     Hint,
@@ -37,6 +44,53 @@ from .readiness import (
     probe_tmux_discovery,
 )
 from .versioning import AGENT_ROLES, QUEUE_STATES
+
+_log = logging.getLogger(__name__)
+
+# FR-027 / SC-006 latency budget. Crossing this triggers a WARN log but
+# the dashboard response is returned best-effort (FR-027 — no error
+# envelope, no missing fields).
+_LATENCY_BUDGET_MS: Final[int] = 500
+
+
+def _test_only_injection_ms() -> int:
+    """Test-only latency-injection hook (FEAT-014 T024 SC-006 / FR-027).
+
+    Returns the millisecond sleep amount when the env var
+    ``AGENTTOWER_TEST_INJECT_LATENCY_MS`` is set to a positive integer;
+    ``0`` (no injection) otherwise.
+
+    Production builds never set this env var — the env-var-gated sleep
+    path is dead code in release. Integration tests use this to force
+    ``app.dashboard`` past the SC-006 budget to exercise the FR-027
+    WARN-log path without needing a real slow daemon.
+    """
+    val = os.environ.get("AGENTTOWER_TEST_INJECT_LATENCY_MS", "")
+    if not val:
+        return 0
+    try:
+        return max(0, int(val))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _test_only_forced_degraded_subsystems() -> set[str]:
+    """Test-only readiness-probe override (FEAT-014 T024 SC-006 degraded
+    waiver).
+
+    Returns the set of subsystem names that should be forced to status
+    ``degraded`` regardless of their actual probe result, parsed from
+    ``AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS`` (comma-separated). Empty
+    set when the env var is unset.
+
+    Production builds never set this env var. Integration tests use this
+    to seed a ``subsystem_degraded`` recommendation without needing a
+    real Docker/tmux failure.
+    """
+    val = os.environ.get("AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS", "")
+    if not val:
+        return set()
+    return {name.strip() for name in val.split(",") if name.strip()}
 
 if TYPE_CHECKING:
     from ..socket_api.methods import DaemonContext
@@ -229,9 +283,14 @@ def _queue_counts(ctx: "DaemonContext") -> dict[str, int]:
     return by_state
 
 
-def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
+def _route_counts(
+    ctx: "DaemonContext", failed_subsystems: set[str] | None = None
+) -> dict[str, int]:
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
+        # Startup-window (no state_conn) is a daemon bring-up signal already
+        # covered by FEAT-011 probe_sqlite — NOT a runtime read failure, so
+        # do not flag (parallels the bucket aggregators' conn-is-None guard).
         return {"enabled": 0, "disabled": 0}
     try:
         enabled = int(
@@ -244,9 +303,364 @@ def _route_counts(ctx: "DaemonContext") -> dict[str, int]:
                 "SELECT COUNT(*) FROM routes WHERE enabled = 0"
             ).fetchone()[0]
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — FR-025 fail-soft + second-half signal
+        # A swallowed routes-read failure (missing table / schema drift) would
+        # otherwise present as {enabled:0,disabled:0} and drive a spurious
+        # ``no_routes_configured`` recommendation while probe_sqlite still
+        # passes. Signal it so the caller folds ``sqlite`` into
+        # ``degraded_subsystems`` and ``subsystem_degraded`` wins instead
+        # (codex P2).
+        if failed_subsystems is not None:
+            failed_subsystems.add("sqlite")
         return {"enabled": 0, "disabled": 0}
     return {"enabled": enabled, "disabled": disabled}
+
+
+# ─── v1.1 "first id" deterministic lookups (FEAT-014 T020) ───────────────
+#
+# T020 / Research §CC determinism: target.id values for the recommendation
+# engine come from these deterministic-first-by-PK queries. Each helper
+# follows FR-025's fail-soft pattern — broad except returns None so the
+# recommendation engine sees the corresponding state field as null and
+# routes around it (e.g., no_panes_discovered emits target=None).
+
+
+def _first_active_container_id(ctx: "DaemonContext") -> str | None:
+    """Deterministic first active container by primary-key order."""
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT container_id FROM containers "
+            "WHERE active = 1 ORDER BY container_id LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — FR-025 fallback
+        return None
+    return row[0] if row else None
+
+
+def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
+    """Deterministic first *adoptable* unadopted pane by primary-key order.
+    A pane is adoptable-unadopted iff it is ACTIVE (``p.active = 1``) on an
+    ACTIVE container (``c.active = 1``) and no active agent row exists for
+    it — i.e. it is in the ``discovered-and-unmanaged`` bucket, NOT
+    ``inactive-or-stale``. This excludes ``p.active = 0`` stale panes
+    (codex P2): the ``unadopted_panes_present`` recommendation must point at
+    a pane an operator can actually adopt, consistent with the v1.1
+    PaneState buckets — never a dead/stale pane.
+
+    Determinism (post-swarm low): ``ORDER BY`` spans the full FEAT-004
+    composite PK (``container_id, tmux_socket_path, tmux_session_name,
+    tmux_window_index, tmux_pane_index, tmux_pane_id``) so the "first"
+    pane is stable across runs; ordering by ``(container_id, tmux_pane_id)``
+    alone left ties under the same container/pane-id nondeterministic.
+
+    Wire-id caveat (post-swarm low, knowingly retained): the emitted
+    ``target.id`` is the bare ``tmux_pane_id`` (``%N``). Per FEAT-004
+    ``data-model.md`` a pane's identity is the 6-column PK and ``%N`` is
+    only a component — reused across sessions — so this value is not a
+    globally unique pane key. It is retained because the v1.1 ``target.id``
+    contract (``contracts/closed-sets-v1_1.md`` §target.id format,
+    ``data-model.md`` §target.id opacity) requires an *opaque* id with no
+    paths / display strings, and FEAT-004 exposes no opaque surrogate pane
+    key — the composite PK contains ``tmux_socket_path`` (a slash-bearing
+    path) and so cannot itself be the opaque id. Clients resolve
+    ``target.id`` via ``app.<entity>.detail``; minting a unique opaque pane
+    identifier is a contract-level decision deferred to a future minor.
+    """
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT p.tmux_pane_id FROM panes p "
+            "JOIN containers c ON c.container_id = p.container_id "
+            "WHERE c.active = 1 AND p.active = 1 "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM agents a "
+            "  WHERE a.container_id = p.container_id "
+            "    AND a.tmux_pane_id = p.tmux_pane_id "
+            "    AND a.active = 1"
+            ") "
+            "ORDER BY p.container_id, p.tmux_socket_path, "
+            "p.tmux_session_name, p.tmux_window_index, "
+            "p.tmux_pane_index, p.tmux_pane_id LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — FR-025 fallback
+        return None
+    return row[0] if row else None
+
+
+def _oldest_blocked_message_id(ctx: "DaemonContext") -> str | None:
+    """Deterministic oldest blocked queue message by ``enqueued_at``.
+
+    Column-name note (post-swarm B1 fix): the FEAT-009 ``message_queue``
+    table uses ``enqueued_at`` (NOT ``created_at``); see ``_recent_queue``
+    nearby for the same convention. The original implementation queried
+    a non-existent column and the FR-025 broad-except silently masked
+    the SQLite OperationalError, permanently returning ``None`` and
+    breaking the ``blocked_queue_drain`` recommendation target.
+    """
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT message_id FROM message_queue "
+            "WHERE state = 'blocked' "
+            "ORDER BY enqueued_at ASC, message_id ASC LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — FR-025 fallback
+        return None
+    return row[0] if row else None
+
+
+# ─── v1.1 PaneState / AgentState aggregators (FEAT-014) ───────────────────
+
+
+PANE_STATE_KEYS: tuple[str, ...] = (
+    "discovered-and-unmanaged",
+    "discovered-and-registered",
+    "inactive-or-stale",
+    "discovery-degraded",
+)
+
+AGENT_STATE_KEYS: tuple[str, ...] = (
+    "active",
+    "inactive",
+    "partially_configured",
+    "log-attached",
+    "log-detached",
+)
+
+
+def _maybe_test_only_inject_latency() -> None:
+    """Sleep for ``_test_only_injection_ms()`` ms if the env var is set.
+
+    No-op in production (env var unset). Integration tests use this to
+    push ``app.dashboard`` past the SC-006 budget for FR-027 testing.
+    """
+    inject_ms = _test_only_injection_ms()
+    if inject_ms > 0:
+        time.sleep(inject_ms / 1000.0)
+
+
+def _compute_pane_state_buckets(
+    ctx: "DaemonContext",
+    failed_subsystems: set[str] | None = None,
+) -> dict[str, int]:
+    """v1.1 — PaneState buckets per data-model.md §PaneState (FEAT-014 FR-001..FR-002).
+
+    4-key closed set with Research §PB priority order
+    (degraded > stale > registered > unmanaged):
+
+    * ``discovery-degraded`` — container in ``degraded_scan`` state. Always
+      ``0`` at v1.1 MVP because FR-016a's ``degraded_scan`` is not yet a
+      persisted column on the ``containers`` row (same caveat as
+      ``_container_counts``). FR-003 mandates the key be present at ``0``.
+    * ``inactive-or-stale`` — pane whose container row has ``active = 0``
+      OR whose own ``active = 0`` (FEAT-004 reconciliation marks a pane
+      inactive when it disappears while its container stays active). The
+      remaining "``last_seen_at`` predates the most recent successful scan"
+      half of the spec's definition (Clarifications Q1) is not implementable
+      until upstream scan-timestamp wiring lands.
+    * ``discovered-and-registered`` — ACTIVE pane (``p.active = 1``) on an
+      active container with an active agent (FR-019 cross-check;
+      partially_configured agents still count here per the FR-019 carve-out
+      — bucket determined by ``agents.active = 1``, not by
+      role/capability/label completeness). ``p.active = 1`` keeps this
+      disjoint from ``inactive-or-stale`` per Research §PB priority.
+    * ``discovered-and-unmanaged`` — remaining panes (active container,
+      no active agent).
+
+    FR-025 fallback: returns all-zero if the SQLite accessor fails.
+
+    FR-025 second-half signal (codex P2 #3298870845): if ``failed_subsystems``
+    is supplied and the SQLite accessor raises, ``"sqlite"`` is added to
+    the set so the caller can propagate it into ``degraded_subsystems``
+    for the recommendation engine. This is what makes
+    ``recommended_next_action.code == "subsystem_degraded"`` fire on raw
+    aggregator failure (the spec's "AND" leg in FR-025). The ``state_conn
+    is None`` startup-window path deliberately does NOT flag — that case
+    is a daemon-bring-up signal already covered by FEAT-011's
+    ``probe_sqlite``, not a runtime aggregator failure.
+
+    FR-019 (post-R3 loosened invariant): ``dar <= v1.0 counts.panes.registered``,
+    with the gap equal to the count of panes whose registered agent is on
+    an inactive or ``degraded_scan`` container. Those panes are routed to
+    ``inactive-or-stale`` / ``discovery-degraded`` by Research §PB priority,
+    not to ``discovered-and-registered``. The US1 acceptance fixture (only
+    active containers) trivially has zero gap, so ``dar == registered``
+    holds there. The contradiction with the previous strict-equality FR-019
+    wording is resolved in Clarifications §Session 2026-05-25-r3 Q1.
+    """
+    zeros = {k: 0 for k in PANE_STATE_KEYS}
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return zeros
+    try:
+        # inactive-or-stale: panes whose container is inactive (c.active=0)
+        # OR whose own active flag is unset (p.active=0). p.active=0 is
+        # honored (codex P2) because FEAT-004 reconciliation marks a pane
+        # inactive when it disappears while its container stays active — a
+        # stale pane, not a discovered-and-unmanaged one. The last_seen_at
+        # half of Clarifications Q1 remains deferred to upstream wiring.
+        ios = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM panes p
+                JOIN containers c ON c.container_id = p.container_id
+                WHERE c.active = 0 OR p.active = 0
+                """
+            ).fetchone()[0]
+        )
+        # discovered-and-registered: ACTIVE pane on an active container with
+        # an active agent. p.active=1 keeps this disjoint from inactive-or-
+        # stale (Research §PB priority: inactive-or-stale outranks registered,
+        # so a p.active=0 pane with an active agent counts as stale, not dar).
+        dar = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM panes p
+                JOIN containers c ON c.container_id = p.container_id
+                WHERE c.active = 1
+                  AND p.active = 1
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.active = 1
+                        AND a.container_id = p.container_id
+                        AND a.tmux_pane_id = p.tmux_pane_id
+                  )
+                """
+            ).fetchone()[0]
+        )
+        total = int(conn.execute("SELECT COUNT(*) FROM panes").fetchone()[0])
+        # discovered-and-unmanaged = remainder (total - ios - dar - dd=0).
+        # Best-effort, NOT transactionally atomic (swarm low): ios/dar/total
+        # are three separate autocommit reads on a WAL connection, so a
+        # concurrent FEAT-004 pane insert/delete between them can skew the
+        # remainder (the max(...,0) clamp hides an under-count). Accepted per
+        # FR-018 ("counts read sequentially with no global lock; slight
+        # inter-surface inconsistency is acceptable") — the dashboard is
+        # best-effort and any skew self-corrects on the next poll. Not pinned
+        # to a single snapshot because the panes/agents/containers writers run
+        # on separate connections that the worker tx-lock doesn't cover.
+        dau = max(total - ios - dar, 0)
+        return {
+            "discovered-and-unmanaged": dau,
+            "discovered-and-registered": dar,
+            "inactive-or-stale": ios,
+            "discovery-degraded": 0,
+        }
+    except Exception:  # noqa: BLE001 — FR-025 aggregator-failure fallback
+        if failed_subsystems is not None:
+            failed_subsystems.add("sqlite")
+        return zeros
+
+
+def _compute_agent_state_buckets(
+    ctx: "DaemonContext",
+    failed_subsystems: set[str] | None = None,
+) -> dict[str, int]:
+    """v1.1 — AgentState buckets per data-model.md §AgentState (FEAT-014 FR-004..FR-006, FR-020).
+
+    5-key set, two orthogonal partitions:
+
+    * **Configuration partition** (strict — FR-020):
+      ``active`` + ``inactive`` + ``partially_configured`` == total agents
+        - ``partially_configured`` — Clarifications Q2 — any of ``role``,
+          ``capability``, ``label`` missing/empty/``unknown``.
+        - ``active`` — fully configured AND container.active=1 AND the
+          agent's own ``active`` flag is set (``a.active = 1``).
+        - ``inactive`` — fully configured but NOT active: container.active=0
+          OR the agent's own ``active`` flag is unset (FEAT-006 cascaded it
+          inactive when its bound pane went inactive). Computed as the
+          ``total - active - partially_configured`` remainder so the
+          partition stays exhaustive.
+    * **Log-state partition** (orthogonal — FR-006):
+      ``log-attached`` + ``log-detached`` == total agents
+        - ``log-attached`` — ``log_attachments.status='active'`` row exists.
+        - ``log-detached`` — no active log attachment.
+
+    Sum of all five MAY exceed total agents (FR-006 documented overlap).
+
+    FR-025 fallback: returns all-zero if the SQLite accessor fails.
+
+    FR-025 second-half signal (codex P2 #3298870845): if ``failed_subsystems``
+    is supplied and the SQLite accessor raises, ``"sqlite"`` is added to
+    the set so the caller propagates it into ``degraded_subsystems``.
+    See ``_compute_pane_state_buckets`` for the full rationale.
+    """
+    zeros = {k: 0 for k in AGENT_STATE_KEYS}
+    conn = getattr(ctx, "state_conn", None)
+    if conn is None:
+        return zeros
+    try:
+        total = int(conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0])
+        # partially_configured (Clarifications Q2 / FR-020): any of
+        # role/capability/label missing/empty/unknown. The agents schema
+        # CHECK-constrains role and capability to closed sets that include
+        # 'unknown' (no empty string possible at the DB level); `label`
+        # defaults to '' and may be empty OR the literal 'unknown' — the
+        # spec lists 'unknown' as a label trigger too (codex P2), so both
+        # the empty string and the literal 'unknown' count here.
+        partially_configured = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agents
+                WHERE role = 'unknown'
+                   OR capability = 'unknown'
+                   OR label = ''
+                   OR label = 'unknown'
+                """
+            ).fetchone()[0]
+        )
+        # active: fully configured AND on active container AND the agent's
+        # own active flag is set. a.active is honored (codex P2) because
+        # FEAT-006 cascade_agents_active_from_pane sets a.active=0 when the
+        # agent's bound pane goes inactive even while the container stays
+        # active — such an agent is deregistered, not active.
+        active = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agents a
+                JOIN containers c ON c.container_id = a.container_id
+                WHERE c.active = 1
+                  AND a.active = 1
+                  AND a.role != 'unknown'
+                  AND a.capability != 'unknown'
+                  AND a.label != ''
+                  AND a.label != 'unknown'
+                """
+            ).fetchone()[0]
+        )
+        # inactive = total - active - partially_configured (strict partition).
+        inactive = max(total - active - partially_configured, 0)
+        # Log-state partition: orthogonal to configuration partition.
+        log_attached = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agents a
+                WHERE EXISTS (
+                    SELECT 1 FROM log_attachments la
+                    WHERE la.agent_id = a.agent_id AND la.status = 'active'
+                )
+                """
+            ).fetchone()[0]
+        )
+        log_detached = max(total - log_attached, 0)
+        return {
+            "active": active,
+            "inactive": inactive,
+            "partially_configured": partially_configured,
+            "log-attached": log_attached,
+            "log-detached": log_detached,
+        }
+    except Exception:  # noqa: BLE001 — FR-025 aggregator-failure fallback
+        if failed_subsystems is not None:
+            failed_subsystems.add("sqlite")
+        return zeros
 
 
 # ─── Recents (FR-017) ─────────────────────────────────────────────────────
@@ -327,9 +741,26 @@ def app_dashboard(
     params: dict[str, Any],
     peer_uid: int = _NO_PEER_UID,
 ) -> dict[str, Any]:
-    """Handler for ``app.dashboard`` (FR-007, FR-015..FR-018, FR-042, FR-045)."""
+    """Handler for ``app.dashboard`` (FR-007, FR-015..FR-018, FR-042, FR-045).
+
+    FEAT-014 FR-027 / SC-006: end-to-end latency is measured around the
+    full handler body. Exceeding ``_LATENCY_BUDGET_MS`` (500 ms) triggers
+    a WARN log with the event name ``app_dashboard_latency_exceeded``
+    and the actual measured latency in milliseconds; the response is
+    still returned best-effort (no error envelope, no missing fields).
+    """
     # FR-042 + FR-007: combined host-only + session-token gate.
     from .sessions import gate_session_required  # lazy (circular avoidance)
+
+    # FR-027 / SC-006 latency measurement. ``_t0`` is captured *before* the
+    # host-only + session-token gate, so for an accepted call the measured
+    # latency includes gate/token-validation time, not just the body.
+    # Rejected calls are excluded not by timer placement but by the early
+    # ``return gate`` below short-circuiting before the ``try/finally`` — so
+    # the ``finally`` (and the WARN emission) never runs on a rejected path.
+    # Wall-clock-equivalent monotonic ms; see Research §TS / §CW for the
+    # clock-source convention.
+    _t0 = time.monotonic_ns()
 
     gate = gate_session_required(params, peer_uid)
     if isinstance(gate, dict):
@@ -337,6 +768,34 @@ def app_dashboard(
     # gate is an AppSession; app.dashboard is side-effect-free (FR-045)
     # so we don't bind it for audit attribution.
 
+    try:
+        return _app_dashboard_body(ctx, params)
+    finally:
+        # FR-027 budget-miss best-effort: emit a single WARN line when the
+        # SC-006 latency budget is exceeded. The response is already on its
+        # way to the caller; this log is purely operator-visible telemetry.
+        # Post-swarm M8 fix: wrap the WARN emission in a defensive
+        # try/except so a logging-handler fault (e.g. log-file I/O failure)
+        # cannot mask the dashboard response by propagating an exception
+        # out of the finally block.
+        try:
+            _latency_ms = (time.monotonic_ns() - _t0) // 1_000_000
+            if _latency_ms > _LATENCY_BUDGET_MS:
+                _log.warning(
+                    "app_dashboard_latency_exceeded latency_ms=%d budget_ms=%d",
+                    _latency_ms,
+                    _LATENCY_BUDGET_MS,
+                )
+        except Exception:  # noqa: BLE001 — FR-027 best-effort: never abort
+            pass
+
+
+def _app_dashboard_body(
+    ctx: "DaemonContext", params: dict[str, Any]
+) -> dict[str, Any]:
+    """Inner body of :func:`app_dashboard`, extracted so the latency
+    measurement in the outer function can use a clean try/finally
+    pattern around the entire response-assembly path."""
     if not isinstance(params, dict):
         params = {}
 
@@ -345,6 +804,16 @@ def app_dashboard(
         return err
     assert recent_limit is not None  # narrowed by _coerce_recent_limit
 
+    # FEAT-014 FR-025 second-half (codex P2): the v1.1 bucket aggregators AND
+    # the route-count helper signal a swallowed SQLite-side failure into this
+    # set so the recommendation engine sees ``sqlite`` in
+    # ``degraded_subsystems`` and emits ``subsystem_degraded``. Without it a
+    # fail-soft accessor (zero-filled buckets, or {enabled:0,disabled:0} from a
+    # failed routes read) would let the recommendation fall through to a
+    # healthy-looking code — e.g. ``no_routes_configured`` on a routes-table
+    # read failure while ``probe_sqlite`` still passes (FR-025 spec gap).
+    _aggregator_failed: set[str] = set()
+
     # Counts across all 7 surfaces. FR-018: read sequentially with no
     # global lock; slight inter-surface inconsistency is acceptable.
     container_counts = _container_counts(ctx)
@@ -352,8 +821,16 @@ def app_dashboard(
     agent_counts = _agent_counts(ctx)
     log_attachment_counts = _log_attachment_counts(ctx)
     queue_counts = _queue_counts(ctx)
-    route_counts = _route_counts(ctx)
+    route_counts = _route_counts(ctx, _aggregator_failed)
     event_total = _event_count(ctx)
+    # FEAT-014 v1.1 — additive PaneState / AgentState buckets (FR-001, FR-004).
+    # by_state lives alongside the v1.0 counts dicts, not replacing them.
+    # FEAT-014 T024 / FR-027 test-only latency injection: integration tests
+    # set the env var to force the dashboard past the SC-006 budget. No-op
+    # in production (env var is never set in release builds).
+    _maybe_test_only_inject_latency()
+    pane_state_buckets = _compute_pane_state_buckets(ctx, _aggregator_failed)
+    agent_state_buckets = _compute_agent_state_buckets(ctx, _aggregator_failed)
 
     # Hints: reuse the readiness emission helper. We probe subsystems
     # again here because the dashboard is independently callable; the
@@ -366,6 +843,18 @@ def app_dashboard(
         probe_routing_worker(ctx),
         probe_log_attachment_workers(ctx),
     ]
+    # FEAT-014 T024 SC-006 degraded waiver — test-only hook for forcing
+    # probes into the degraded state via env var. No-op in production.
+    _forced_degraded = _test_only_forced_degraded_subsystems()
+    if _forced_degraded:
+        subsystem_rows = [
+            dataclasses.replace(
+                row, status="degraded", reason="test-only forced degraded"
+            )
+            if row.name in _forced_degraded
+            else row
+            for row in subsystem_rows
+        ]
     hints = emit_hints(
         ctx,
         subsystem_rows,
@@ -377,6 +866,88 @@ def app_dashboard(
         log_attachment_count=log_attachment_counts["active"],
     )
 
+    # FEAT-014 T020 — v1.1 recommendation engine wiring. Two sub-steps:
+    # (1) Build a RecommendationState from the same row sources the
+    #     count helpers + readiness probes already consumed.
+    # (2) Call recommendations.compute_recommendation inside a try/except
+    #     boundary per FR-021 / Research §FE — on success populate both
+    #     wire fields; on exception set BOTH to None (paired-null) and
+    #     emit a WARN log with the stable event name. The rest of the
+    #     v1.1 payload is unaffected either way.
+    # Merge probe-reported degradation with aggregator-reported failures
+    # (FR-025 second-half — codex P2 #3298870845). Dedupe while preserving
+    # PROBE_ORDER so a probe-reported subsystem doesn't get re-listed by
+    # the aggregator path. The recommendation engine normalizes order
+    # internally via PROBE_ORDER, so caller order isn't load-bearing —
+    # this is purely defensive against double-counting.
+    _probe_degraded = {row.name for row in subsystem_rows if row.status != "ok"}
+    _all_degraded = _probe_degraded | _aggregator_failed
+    # FEAT-010 routing-worker degradation flag (codex P2). probe_routing_worker
+    # only checks delivery-worker *thread liveness*, so a degraded-but-alive
+    # routing worker (transient routing failures flipped
+    # `_SharedRoutingState.routing_worker_degraded`) wouldn't surface. Honor
+    # the flag here so FR-008's `subsystem_degraded` signal fires for a
+    # stalled/degraded routing worker. `routing_worker` is already in
+    # PROBE_ORDER, so the dedupe/order filter below picks it up.
+    _routing_state = getattr(ctx, "routing_shared_state", None)
+    if getattr(_routing_state, "routing_worker_degraded", False):
+        _all_degraded.add("routing_worker")
+    rec_state = recommendations.RecommendationState(
+        degraded_subsystems=tuple(
+            name for name in recommendations.PROBE_ORDER if name in _all_degraded
+        ),
+        container_count=(
+            container_counts["active"]
+            + container_counts["inactive"]
+            + container_counts["degraded_scan"]
+        ),
+        first_active_container_id=_first_active_container_id(ctx),
+        pane_count=pane_counts["total"],
+        first_unadopted_pane_id=_first_unadopted_pane_id(ctx),
+        # `unadopted_pane_count` is the v1.0 `counts.panes.unregistered` total,
+        # per the contract (closed-sets-v1_1.md §Per-code Templates +
+        # data-model.md §RecommendationState). It deliberately differs from
+        # the `discovered-and-unmanaged` by_state bucket, which §PB priority
+        # can route stale/inactive unregistered panes out of. The *count* is
+        # the v1.0 total (so the wire number matches counts.panes.unregistered
+        # exactly); the *target* (`first_unadopted_pane_id`) is independently
+        # restricted to an adoptable ACTIVE pane and is null when only
+        # stale/inactive unregistered panes exist — so the recommendation
+        # never points an operator at a dead pane (codex P2).
+        unadopted_pane_count=pane_counts["unregistered"],
+        oldest_blocked_message_id=_oldest_blocked_message_id(ctx),
+        blocked_queue_count=queue_counts.get("blocked", 0),
+        route_count=route_counts["enabled"] + route_counts["disabled"],
+    )
+    rec_action: dict | None
+    rec_refreshed_at: str | None
+    try:
+        rec = recommendations.compute_recommendation(rec_state)
+        rec_action = {
+            "code": rec.code,
+            "title": rec.title,
+            "detail": rec.detail,
+            "target": rec.target,
+        }
+        # Wall-clock ISO-8601 UTC ms per Research §TS (NOT the monotonic
+        # clock T013's skip counter uses for window arithmetic). Capture
+        # `now` once so the seconds and millisecond components come from
+        # the same point in time (fixes L-T020-CLOCK from the post-T020
+        # analyze: a millisecond-boundary tick between two separate
+        # datetime.now() calls could otherwise mismatch the components).
+        _now = datetime.now(timezone.utc)
+        rec_refreshed_at = (
+            f"{_now.strftime('%Y-%m-%dT%H:%M:%S')}."
+            f"{_now.microsecond // 1000:03d}Z"
+        )
+    except Exception:  # noqa: BLE001 — FR-021 / Research §FE compute-failure isolation
+        _log.warning(
+            "app_dashboard_recommendation_compute_failed",
+            exc_info=True,
+        )
+        rec_action = None
+        rec_refreshed_at = None
+
     # Recents.
     recents = {
         "events": _recent_events(ctx, recent_limit),
@@ -385,14 +956,28 @@ def app_dashboard(
     }
 
     return envelope.success({
+        "recommended_next_action": rec_action,
+        "recommended_next_action_refreshed_at": rec_refreshed_at,
         "counts": {
             "containers": container_counts,
-            "panes": pane_counts,
-            "agents": agent_counts,
+            # FEAT-014 v1.1 — panes and agents gain a `by_state` sub-dict
+            # alongside the v1.0 fields. v1.0 readers ignore the new key;
+            # v1.1 readers consume it (additive-minor per FR-014, FR-012).
+            "panes": {**pane_counts, "by_state": pane_state_buckets},
+            "agents": {**agent_counts, "by_state": agent_state_buckets},
             "log_attachments": log_attachment_counts,
             "events": {"total": event_total},
             "queue": queue_counts,
-            "routes": route_counts,
+            # FEAT-014 T015 — v1.1 additive route-skip telemetry. v1.0
+            # readers ignore the new keys (FR-012); v1.1 readers consume
+            # them per FR-007 / FR-008.
+            "routes": {
+                **route_counts,
+                "recently_skipped_count": skip_counter.count_in_window(
+                    time.monotonic_ns() // 1_000_000
+                ),
+                "recently_skipped_window_ms": skip_counter.WINDOW_MS,
+            },
         },
         "recent": recents,
         "hints": [h.to_dict() for h in hints],

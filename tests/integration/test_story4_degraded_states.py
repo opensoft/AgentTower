@@ -55,6 +55,8 @@ from pathlib import Path
 
 import pytest
 
+from agenttower.app_contract import versioning
+
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
@@ -128,7 +130,7 @@ def _assert_feat011_envelope(envelope: dict) -> None:
     """Every FEAT-011 response — ok or not — carries the version stamp and
     exactly one of result / error."""
     assert isinstance(envelope, dict)
-    assert envelope["app_contract_version"] == "1.0"
+    assert envelope["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     assert isinstance(envelope["ok"], bool)
     if envelope["ok"]:
         assert "result" in envelope

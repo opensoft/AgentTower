@@ -19,19 +19,24 @@ from typing import Final
 
 # ─── Contract version (FR-010, FR-035) ────────────────────────────────────
 
-APP_CONTRACT_VERSION: Final[str] = "1.0"
+APP_CONTRACT_VERSION: Final[str] = "1.1"
 APP_CONTRACT_MAJOR: Final[int] = 1
-APP_CONTRACT_MINOR: Final[int] = 0
+APP_CONTRACT_MINOR: Final[int] = 1
 
 SUPPORTED_MINOR_RANGE: Final[dict[str, str]] = {
     "min": "1.0",
-    "max": "1.0",
+    "max": "1.1",
 }
 
-# Capability flags at v1.0 (FR-039). Always present in app.hello;
-# always empty at v1.0 because every FEAT-011 method is required.
-# Future minors append named boolean flags here additively.
+# Capability flags (FR-039 / FEAT-014 FR-015 / FR-028). Always present in
+# app.hello. Empty through v1.1 because every method is required and v1.1
+# introduced no opt-in/non-additive behavior (FR-015). The legacy name
+# ``CAPABILITY_FLAGS_V1_0`` is preserved for callers; ``CAPABILITY_FLAGS``
+# is the version-agnostic alias for v1.0+v1.1 (and forward). FR-028 governs
+# when a future v1.x minor MUST add a flag (non-additive runtime change or
+# pre-adaptation knowledge required).
 CAPABILITY_FLAGS_V1_0: Final[dict[str, bool]] = {}
+CAPABILITY_FLAGS: Final[dict[str, bool]] = CAPABILITY_FLAGS_V1_0
 
 
 def parse_major_minor(version: str) -> tuple[int, int]:
@@ -221,6 +226,7 @@ __all__ = [
     "APP_CONTRACT_MINOR",
     "SUPPORTED_MINOR_RANGE",
     "CAPABILITY_FLAGS_V1_0",
+    "CAPABILITY_FLAGS",
     "parse_major_minor",
     "is_major_compatible",
     "READINESS_STATE_OK",

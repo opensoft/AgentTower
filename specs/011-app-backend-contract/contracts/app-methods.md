@@ -457,3 +457,48 @@ Poll a previously-issued scan (FR-030c).
 - 13 operator mutations: `app.agent.update`, `app.log.attach`, `app.log.detach`, `app.send_input`, `app.queue.{approve,delay,cancel}` (3), `app.route.{add,remove,update}` (3), `app.scan.{containers,panes,status}` (3)
 
 Total: 2 + 2 + 14 + 1 + 13 = **32**. All required at v1.0; `capability_flags = {}` reflects "every method is mandatory" (FR-039). The wired `DISPATCH` table is therefore 35 legacy FEAT-002..010 methods + 32 `app.*` = 67 entries (pinned by `tests/unit/test_dispatch_table_stability.py`).
+
+---
+
+## App Contract Evolution — v1.1 (FEAT-014)
+
+> **Additive breadcrumb only.** This subsection is added per the
+> AGENTS.md §Cross-Feature Spec Dir Editing exception. The canonical
+> v1.1 contract docs live in FEAT-014's own spec dir — see the pointers
+> below. Nothing above this subsection has been rewritten, reflowed, or
+> deleted; FEAT-011's v1.0 contract specification is unchanged.
+
+**FEAT-014** extends `app.dashboard` as an **additive v1.1 minor** (FR-013 /
+FR-014 of FEAT-014). No new method is introduced; no v1.0 field is renamed,
+retyped, or removed. Capability flags remain empty (FR-015). The bump is:
+
+- `app_contract_version`: `"1.0"` → `"1.1"`
+- `supported_minor_range.max`: `"1.0"` → `"1.1"`
+
+**Additive fields on `app.dashboard` success result** (names only — every
+per-field shape, type, nullability, closed-set membership, constant, and
+invariant is defined canonically in the FEAT-014 contract docs linked
+below; this breadcrumb is a pointer, not a second source of truth):
+
+- `counts.panes.by_state`
+- `counts.agents.by_state`
+- `counts.routes.recently_skipped_count` + `counts.routes.recently_skipped_window_ms`
+- `recommended_next_action`
+- `recommended_next_action_refreshed_at`
+
+**Canonical FEAT-014 contract docs** (do NOT duplicate or restate here —
+read the originals):
+
+- Wire shape, per-field type + nullability + range, paired-null invariant,
+  failure-mode response shape, latency-budget waiver semantics:
+  `specs/014-app-dashboard-extensions/contracts/dashboard-v1_1.md`
+- New closed-set values (`PaneState`, `AgentState`, `RecommendationCode`,
+  `TargetKind` v1.1 addition, `RecommendationTimestamp`, `AppContractVersion`)
+  with per-set Future Evolution governance:
+  `specs/014-app-dashboard-extensions/contracts/closed-sets-v1_1.md`
+
+**For v1.0 clients**: every field added above is silently ignorable —
+FR-012 of FEAT-014 mandates clients ignore unknown closed-set values and
+unknown response fields. The v1.0 contract test suite passes unchanged
+against a v1.1-advertising daemon (SC-004 of FEAT-014; the regression is
+implemented in `tests/unit/test_v1_0_compat.py`).

@@ -417,14 +417,23 @@ def test_dashboard_empty_system_all_zero_counts(
     r = env["result"]
     c = r["counts"]
     assert c["containers"] == {"active": 0, "inactive": 0, "degraded_scan": 0}
-    assert c["panes"] == {"total": 0, "registered": 0, "unregistered": 0}
+    # FEAT-014 v1.1 additive bump: `panes` gains a `by_state` sub-dict.
+    # v1.0 keys still hold their expected values; the v1.0 compat test
+    # asserts the v1.0 subset rather than strict-equality.
+    assert c["panes"]["total"] == 0
+    assert c["panes"]["registered"] == 0
+    assert c["panes"]["unregistered"] == 0
     assert c["agents"]["total"] == 0
     assert all(v == 0 for v in c["agents"]["by_role"].values())
     assert set(c["agents"]["by_role"].keys()) == set(versioning.AGENT_ROLES)
     assert c["log_attachments"] == {"active": 0, "degraded": 0, "none": 0}
     assert c["events"] == {"total": 0}
     assert all(v == 0 for v in c["queue"].values())
-    assert c["routes"] == {"enabled": 0, "disabled": 0}
+    # FEAT-014 v1.1 additive bump: `routes` gains `recently_skipped_count`
+    # and `recently_skipped_window_ms`. v1.0 keys still hold their expected
+    # values; the v1.0 compat assertion is field-by-field, not strict-eq.
+    assert c["routes"]["enabled"] == 0
+    assert c["routes"]["disabled"] == 0
     assert r["recent"]["events"] == []
     assert r["recent"]["queue"] == []
     assert r["recent"]["routes"] == []
@@ -517,7 +526,9 @@ def test_dashboard_counts_with_seeded_data(
         "canceled": 0,
         "failed": 0,
     }
-    assert c["routes"] == {"enabled": 1, "disabled": 1}
+    # FEAT-014 v1.1 additive bump: see comment in the empty-system test above.
+    assert c["routes"]["enabled"] == 1
+    assert c["routes"]["disabled"] == 1
 
 
 def test_dashboard_agent_counts_coerces_unknown_role(
@@ -874,7 +885,9 @@ def test_dashboard_envelope_shape_and_hints(
     host_peer, token = host_session
     env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     assert env["ok"] is True
-    assert env["app_contract_version"] == "1.0"
+    # FEAT-014 bump (FR-013): use the constant rather than a hardcoded
+    # version string so this test survives future minor bumps automatically.
+    assert env["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     r = env["result"]
     assert set(r["counts"].keys()) == {
         "containers", "panes", "agents", "log_attachments",
@@ -896,3 +909,712 @@ def test_dashboard_emits_docker_unavailable_hint_when_unwired(
     env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     codes = {h["code"] for h in env["result"]["hints"]}
     assert "docker_unavailable_hint" in codes
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T005 — v1.1 contract assertions
+#
+# All assertions below are marked @pytest.mark.v1_1 per tasks.md §Notes
+# 'v1.1 marker rule'. T023's SC-004 v1.0-compat regression filters them
+# out with `pytest -m 'not v1_1'`. These tests do NOT modify any
+# existing FEAT-011 function above — they are pure additions.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+from agenttower.app_contract.dashboard import (  # noqa: E402  (intentional bottom import for v1.1 section)
+    AGENT_STATE_KEYS,
+    PANE_STATE_KEYS,
+)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_advertises_contract_version_1_1(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-013: daemon advertises ``app_contract_version == "1.1"`` post-bump."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["app_contract_version"] == "1.1"
+    assert versioning.APP_CONTRACT_VERSION == "1.1"
+    assert versioning.APP_CONTRACT_MINOR == 1
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_panes_by_state_present_when_empty(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-002 / FR-003: ``counts.panes.by_state`` has all 4 keys with
+    integer ``0`` on an empty database."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    by_state = env["result"]["counts"]["panes"]["by_state"]
+    assert set(by_state.keys()) == set(PANE_STATE_KEYS)
+    for key in PANE_STATE_KEYS:
+        assert isinstance(by_state[key], int)
+        assert by_state[key] == 0
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_agents_by_state_present_when_empty(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-005 / FR-003: ``counts.agents.by_state`` has all 5 keys with
+    integer ``0`` on an empty database."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    by_state = env["result"]["counts"]["agents"]["by_state"]
+    assert set(by_state.keys()) == set(AGENT_STATE_KEYS)
+    for key in AGENT_STATE_KEYS:
+        assert isinstance(by_state[key], int)
+        assert by_state[key] == 0
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_us1_acceptance_one_registered_two_unadopted(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """US1 acceptance scenario #1 at the wire level: 1 registered + 2
+    unadopted panes on an active container → ``by_state`` = ``{dau:2,
+    dar:1, ios:0, dd:0}``. Plus FR-019 cross-check at the wire level."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    _seed_container(conn, container_id="c1", name="container-c1", active=True)
+    _seed_pane(conn, container_id="c1", container_name="container-c1", pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c1", container_name="container-c1", pane_id="%1", pane_index=1)
+    _seed_pane(conn, container_id="c1", container_name="container-c1", pane_id="%2", pane_index=2)
+    _seed_agent(conn, agent_id="a1", container_id="c1", pane_id="%0", pane_index=0)
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    panes = env["result"]["counts"]["panes"]
+
+    # v1.0 fields unchanged.
+    assert panes["total"] == 3
+    assert panes["registered"] == 1
+    assert panes["unregistered"] == 2
+
+    # v1.1 by_state bucket counts.
+    assert panes["by_state"] == {
+        "discovered-and-unmanaged": 2,
+        "discovered-and-registered": 1,
+        "inactive-or-stale": 0,
+        "discovery-degraded": 0,
+    }
+
+    # FR-019 cross-check at the wire level (three equalities).
+    assert panes["by_state"]["discovered-and-registered"] == panes["registered"]
+    assert (
+        panes["by_state"]["discovered-and-unmanaged"]
+        + panes["by_state"]["inactive-or-stale"]
+        + panes["by_state"]["discovery-degraded"]
+    ) == panes["unregistered"]
+    assert sum(panes["by_state"].values()) == panes["total"]
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr020_agent_partition_at_wire(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-020 strict partition at the wire level:
+    ``active + inactive + partially_configured == total agents``.
+    Mixed fixture: active agent on active container; partially_configured
+    agent (role='unknown') on active container."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    _seed_container(conn, container_id="c-act", name="c-act", active=True)
+    _seed_pane(conn, container_id="c-act", container_name="c-act", pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c-act", container_name="c-act", pane_id="%1", pane_index=1)
+    _seed_agent(conn, agent_id="a-act", container_id="c-act", pane_id="%0", pane_index=0)
+    _seed_agent(
+        conn,
+        agent_id="a-pc",
+        container_id="c-act",
+        pane_id="%1",
+        pane_index=1,
+        role="unknown",  # → partially_configured
+    )
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    agents = env["result"]["counts"]["agents"]
+
+    # v1.0 total unchanged.
+    assert agents["total"] == 2
+
+    # v1.1 by_state partition.
+    by_state = agents["by_state"]
+    assert by_state["active"] == 1, "fully-configured agent on active container → active"
+    assert by_state["inactive"] == 0
+    assert by_state["partially_configured"] == 1, "role='unknown' → partially_configured"
+
+    # FR-020 strict configuration partition.
+    assert (
+        by_state["active"]
+        + by_state["inactive"]
+        + by_state["partially_configured"]
+    ) == agents["total"]
+
+    # FR-006 orthogonal log-state partition (no log_attachments seeded → all detached).
+    assert by_state["log-attached"] == 0
+    assert by_state["log-detached"] == 2
+    assert (
+        by_state["log-attached"] + by_state["log-detached"]
+    ) == agents["total"]
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T024 — FR-027 latency-WARN unit test (caplog-based)
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr027_warn_when_latency_exceeds_budget(
+    daemon_ctx_with_db, host_session, monkeypatch, caplog
+) -> None:
+    """FR-027 + SC-006: when ``app.dashboard`` end-to-end latency exceeds
+    the 500 ms budget, the handler emits a single WARN log line with the
+    stable event name ``app_dashboard_latency_exceeded`` AND the response
+    is returned best-effort (no error envelope, all v1.1 fields present).
+
+    Implementation note (post-swarm M2 fix): we monkey-patch
+    ``time.monotonic_ns`` inside the dashboard module so the latency
+    measurement bookends observe a 600 ms gap WITHOUT actually sleeping
+    600 ms wall-clock. The test runs in microseconds and is timing-noise-
+    immune.
+    """
+    import logging
+
+    from agenttower.app_contract import dashboard as dashboard_mod
+
+    # Fake a 600 ms latency without real sleep. The handler reads
+    # monotonic_ns THREE times on the success path: the _t0 capture
+    # (dashboard.py), the skip-window clock inside the body
+    # (skip_counter.count_in_window), and the finally-block bookend. Only
+    # the FIRST read must be t=0; every later read returns t0+600ms so the
+    # finally computes _latency_ms = 600 > 500 ms budget → WARN. Keyed off an
+    # explicit iterator (not call positions) so the test does not depend on
+    # how many interior reads the body makes, nor on _t0 being literally the
+    # 1st-and-only pre-body read (swarm: the old comment mis-counted the calls
+    # as a 2-call bookend).
+    _values = iter([0])  # _t0
+
+    def _fake_monotonic_ns() -> int:
+        return next(_values, 600_000_000)  # every read after _t0 → 600 ms
+
+    monkeypatch.setattr(
+        dashboard_mod.time, "monotonic_ns", _fake_monotonic_ns
+    )
+    caplog.set_level(logging.WARNING, logger="agenttower.app_contract.dashboard")
+
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+
+    # FR-027 best-effort: response still returns successfully with v1.1
+    # fields intact (no latency_budget_exceeded error envelope).
+    assert env["ok"] is True
+    result = env["result"]
+    assert "by_state" in result["counts"]["panes"]
+    assert "by_state" in result["counts"]["agents"]
+    assert "recently_skipped_count" in result["counts"]["routes"]
+
+    # WARN log line emitted with the stable event name + latency_ms field.
+    warn_records = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "app_dashboard_latency_exceeded" in r.getMessage()
+    ]
+    assert warn_records, (
+        "FR-027 violation: no WARN log emitted despite ~600ms injected "
+        f"latency. Captured records: {[r.getMessage() for r in caplog.records]!r}"
+    )
+    # The message includes the actual measured latency in ms.
+    assert "latency_ms=" in warn_records[0].getMessage()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T025 — Polish SC-005 single-envelope shape assertion
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_sc005_single_envelope_shape_all_fields_present(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """SC-005: a single v1.1 ``app.dashboard`` call against a populated
+    daemon returns every new v1.1 field present and correctly typed in
+    one response envelope. This is the omnibus shape assertion for the
+    v1.1 wire contract — it catches a future regression that silently
+    omits a field, even if every individual field test still passes."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+
+    # Populated daemon: 1 active container + 1 registered pane + 1
+    # unadopted pane + 1 agent + 1 enabled route. Just enough to make
+    # every v1.1 surface non-trivial.
+    _seed_container(conn, container_id="c1", name="c1", active=True)
+    _seed_pane(conn, container_id="c1", container_name="c1",
+               pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c1", container_name="c1",
+               pane_id="%1", pane_index=1)
+    _seed_agent(conn, agent_id="a1", container_id="c1",
+                pane_id="%0", pane_index=0)
+    _seed_route(conn, route_id="r1", enabled=True)
+    conn.commit()
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["ok"] is True
+    result = env["result"]
+
+    # ─ v1.1 envelope-level fields ───────────────────────────────────────
+    assert "recommended_next_action" in result
+    assert "recommended_next_action_refreshed_at" in result
+    # Paired non-null on a healthy populated daemon (floor is all_clear).
+    if result["recommended_next_action"] is None:
+        assert result["recommended_next_action_refreshed_at"] is None
+    else:
+        assert result["recommended_next_action_refreshed_at"] is not None
+        # Shape check (full schema verified in T017's dedicated tests).
+        rec = result["recommended_next_action"]
+        assert set(rec.keys()) == {"code", "title", "detail", "target"}
+
+    # ─ v1.1 counts.panes.by_state ───────────────────────────────────────
+    panes_by_state = result["counts"]["panes"]["by_state"]
+    assert set(panes_by_state.keys()) == set(PANE_STATE_KEYS)
+    for key in PANE_STATE_KEYS:
+        assert isinstance(panes_by_state[key], int)
+    # Cross-check sum-equals-total (FR-019 strict leg).
+    assert sum(panes_by_state.values()) == result["counts"]["panes"]["total"]
+
+    # ─ v1.1 counts.agents.by_state ──────────────────────────────────────
+    agents_by_state = result["counts"]["agents"]["by_state"]
+    assert set(agents_by_state.keys()) == set(AGENT_STATE_KEYS)
+    for key in AGENT_STATE_KEYS:
+        assert isinstance(agents_by_state[key], int)
+
+    # ─ v1.1 counts.routes.recently_skipped_* ────────────────────────────
+    routes = result["counts"]["routes"]
+    assert "recently_skipped_count" in routes
+    assert "recently_skipped_window_ms" in routes
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert routes["recently_skipped_count"] >= 0
+    assert routes["recently_skipped_window_ms"] == 300_000
+
+    # ─ v1.0 fields untouched (FR-014 additive-minor) ────────────────────
+    assert "total" in result["counts"]["panes"]
+    assert "registered" in result["counts"]["panes"]
+    assert "unregistered" in result["counts"]["panes"]
+    assert "enabled" in routes
+    assert "disabled" in routes
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T022 — US4 v1.0-reader + FR-012 symmetric forward-compat
+#
+# Two sub-tests. Both expected GREEN at landing — they verify behavior
+# that is already true at the current branch state (the v1.0 keys are
+# emitted bit-identically per FR-014, and the dashboard handler reads
+# only known params via params.get() so unknown fields are silently
+# ignored). The tests document the contract so any future regression
+# would be caught.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_v1_0_only_reader_unaffected_by_v1_1_additions(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """US4 acceptance #1: a v1.0 client that reads only v1.0 keys
+    (``counts.panes.{total,registered,unregistered}``, ``counts.agents.total``,
+    ``counts.agents.by_role``, ``counts.routes.{enabled,disabled}``,
+    ``recent``, ``hints``) gets bit-identical v1.0 values even when the
+    daemon emits v1.1 additions (``by_state``, ``recently_skipped_*``) in
+    the same envelope. The v1.1 fields exist but they don't disturb the
+    v1.0 surface."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    # Minimal mixed-state fixture: 1 active container + 1 registered pane +
+    # 1 unadopted pane + 2 agents + 1 enabled route.
+    _seed_container(conn, container_id="c1", name="c1", active=True)
+    _seed_pane(conn, container_id="c1", container_name="c1", pane_id="%0", pane_index=0)
+    _seed_pane(conn, container_id="c1", container_name="c1", pane_id="%1", pane_index=1)
+    _seed_agent(conn, agent_id="a1", container_id="c1", pane_id="%0", pane_index=0)
+    _seed_route(conn, route_id="r1", enabled=True)
+    conn.commit()
+
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["ok"] is True
+    result = env["result"]
+
+    # v1.0 panes surface unchanged.
+    assert result["counts"]["panes"]["total"] == 2
+    assert result["counts"]["panes"]["registered"] == 1
+    assert result["counts"]["panes"]["unregistered"] == 1
+
+    # v1.0 agents surface unchanged.
+    assert result["counts"]["agents"]["total"] == 1
+    assert "by_role" in result["counts"]["agents"]
+    assert isinstance(result["counts"]["agents"]["by_role"], dict)
+
+    # v1.0 routes surface unchanged (the {enabled, disabled} numbers).
+    assert result["counts"]["routes"]["enabled"] == 1
+    assert result["counts"]["routes"]["disabled"] == 0
+
+    # v1.0 recents + hints surfaces present and well-typed.
+    assert isinstance(result["recent"]["events"], list)
+    assert isinstance(result["recent"]["queue"], list)
+    assert isinstance(result["recent"]["routes"], list)
+    assert isinstance(result["hints"], list)
+
+    # The v1.1 additions ARE emitted (additive-minor; v1.0 reader ignores
+    # them) — verify they exist as expected types so a v1.0 client reading
+    # only the v1.0 keys cannot accidentally trip over them.
+    assert isinstance(result["counts"]["panes"]["by_state"], dict)
+    assert isinstance(result["counts"]["agents"]["by_state"], dict)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_count"], int)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_window_ms"], int)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr012_daemon_ignores_unknown_request_fields(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-012 R2 / Clarifications R2 Q3 — symmetric forward-compat: a v1.1+
+    client sending an unknown future request field MUST NOT cause the daemon
+    to reject the call or return an error envelope. The daemon silently
+    ignores unknown fields, returning the standard v1.1 success envelope.
+
+    This establishes the symmetric forward-compat convention BEFORE any
+    future v1.x minor introduces request parameters. Without this rule,
+    daemons that strict-validate the request dict would force a synchronized
+    client-daemon upgrade for any future minor that adds a request param —
+    breaking the additive-minor evolution model FR-013/FR-014 promise."""
+    host_peer, token = host_session
+    # Synthetic unknown future fields. The daemon must silently ignore them.
+    params = {
+        "app_session_token": token,
+        "unknown_future_field": True,
+        "another_v1_2_param": "future-value",
+        "nested_unknown": {"deep": {"foo": "bar"}},
+        "recent_limit": 10,  # known field, should still be honored
+    }
+    env = dashboard_mod.app_dashboard(
+        daemon_ctx_with_db, params, peer_uid=host_peer
+    )
+
+    # Daemon accepts the call.
+    assert env["ok"] is True, (
+        f"FR-012 R2 violation: unknown request fields caused error: "
+        f"{env.get('error')!r}"
+    )
+
+    # The v1.1 success envelope is intact.
+    result = env["result"]
+    assert "counts" in result
+    assert "panes" in result["counts"]
+    assert "by_state" in result["counts"]["panes"], (
+        "v1.1 fields must be present despite unknown request fields"
+    )
+    assert "agents" in result["counts"]
+    assert "by_state" in result["counts"]["agents"]
+
+    # No error code surfaced.
+    assert "error" not in env or env.get("error") is None
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T017 — US3 wire-level assertions (recommended_next_action)
+#
+# All assertions are @pytest.mark.v1_1. They pin the US3 wire-level contract
+# for `recommended_next_action` (now wired in dashboard.py envelope assembly,
+# alongside the FR-021 compute-failure null pathway); any future regression
+# that omits the field would be caught here.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_recommended_next_action_shape(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-011: ``recommended_next_action`` wire-shape — ``code`` is a
+    closed-set string, ``title`` is ≤128 chars, ``detail`` is ≤512 chars
+    or null, ``target`` is the closed-shape object or null. Also asserts
+    the field is present (never omitted, never null when refreshed_at is
+    set)."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    result = env["result"]
+
+    assert "recommended_next_action" in result
+    rec = result["recommended_next_action"]
+    assert rec is not None, "empty daemon should produce no_containers, not null"
+
+    valid_codes = {
+        "subsystem_degraded",
+        "no_containers",
+        "no_panes_discovered",
+        "unadopted_panes_present",
+        "blocked_queue_drain",
+        "no_routes_configured",
+        "all_clear",
+    }
+    assert rec["code"] in valid_codes
+    assert isinstance(rec["title"], str) and 0 < len(rec["title"]) <= 128
+    if rec["detail"] is not None:
+        assert isinstance(rec["detail"], str) and len(rec["detail"]) <= 512
+    if rec["target"] is not None:
+        assert isinstance(rec["target"], dict)
+        assert set(rec["target"].keys()) == {"kind", "id"}
+        valid_kinds = {
+            "container", "pane", "agent", "route", "message", "event", "subsystem",
+        }
+        assert rec["target"]["kind"] in valid_kinds
+        assert isinstance(rec["target"]["id"], str)
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_recommendation_paired_null_invariant(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-021 + Research §FE paired-null invariant: when ``recommended_
+    next_action`` is null, ``recommended_next_action_refreshed_at`` MUST
+    also be null. Conversely, when one is populated, both are populated.
+    On a healthy daemon the floor is ``all_clear`` (never null), so on
+    this success path both fields are non-null."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    result = env["result"]
+
+    rec = result["recommended_next_action"]
+    refreshed_at = result["recommended_next_action_refreshed_at"]
+
+    # Paired-null: both null OR both populated.
+    if rec is None:
+        assert refreshed_at is None
+    else:
+        assert refreshed_at is not None
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_recommendation_refreshed_at_iso_8601_utc_ms(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """Research §TS: ``recommended_next_action_refreshed_at`` is an ISO-8601
+    UTC string with millisecond precision, e.g. "2026-05-25T17:23:45.123Z".
+    Wall-clock source, not monotonic (Research §TS rationale)."""
+    import re
+
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    refreshed_at = env["result"]["recommended_next_action_refreshed_at"]
+
+    if refreshed_at is not None:
+        # ISO-8601 UTC ms shape: YYYY-MM-DDTHH:MM:SS.sssZ
+        iso_ms_utc = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+        assert iso_ms_utc.match(refreshed_at), (
+            f"refreshed_at not ISO-8601 UTC ms format: {refreshed_at!r}"
+        )
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_target_id_opacity_no_display_chars(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-011 / FR-024 + Clarifications R1 Q14: when ``target`` is non-null,
+    ``target.id`` is an opaque internal identifier. It MUST NOT contain
+    operator-readable display characters like spaces, slashes, or
+    container-label punctuation that would suggest a human-readable name.
+
+    Seed an active container with a display-char-laden ``name`` but an
+    opaque ``container_id`` and NO panes — that drives the recommendation
+    engine to ``no_panes_discovered`` with ``target={"kind":"container",
+    "id": <container_id>}`` (recommendations.py), so the opacity assertions
+    below actually execute against a non-null target. Calling against an
+    empty daemon would yield ``no_containers`` (target=None) and skip every
+    assertion, making the test vacuous."""
+    host_peer, token = host_session
+    conn = daemon_ctx_with_db.state_conn
+    # name carries display chars (space + slash); container_id stays opaque.
+    _seed_container(conn, container_id="ctr-opaque-1", name="bench 1/dev", active=True)
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    rec = env["result"]["recommended_next_action"]
+
+    assert rec is not None and rec["target"] is not None, (
+        "fixture must drive a non-null recommendation target so the opacity "
+        f"assertions are actually exercised; got rec={rec!r}"
+    )
+    target_id = rec["target"]["id"]
+    assert " " not in target_id, (
+        f"target.id leaks display character (space): {target_id!r}"
+    )
+    assert "/" not in target_id, (
+        f"target.id leaks display character (slash): {target_id!r}"
+    )
+    assert "\\" not in target_id, (
+        f"target.id leaks display character (backslash): {target_id!r}"
+    )
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr026_non_suppression_during_subsystem_degraded(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-026 (Clarifications R1 Q7): even when the recommendation is
+    ``subsystem_degraded``, ``counts.panes.by_state`` and
+    ``counts.agents.by_state`` MUST STILL be emitted with all 4-key /
+    5-key vocabularies. Count values may be best-effort during
+    degradation, but the keys themselves are unconditional.
+
+    This drives an ACTUAL degraded state (swarm: the test must enter the
+    `subsystem_degraded` branch it is named for, not pass vacuously on a
+    healthy ctx). Setting `routing_shared_state.routing_worker_degraded`
+    makes the dashboard union `routing_worker` into `degraded_subsystems`, so
+    `compute_recommendation` returns `subsystem_degraded` (precedence #1)."""
+    from types import SimpleNamespace as _NS
+
+    daemon_ctx_with_db.routing_shared_state = _NS(routing_worker_degraded=True)
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    result = env["result"]
+
+    # The recommendation MUST actually be subsystem_degraded here — otherwise
+    # the by_state assertions below would be vacuous (true on every code).
+    assert result["recommended_next_action"]["code"] == "subsystem_degraded"
+
+    # by_state keys MUST be present unconditionally — and specifically still
+    # present DURING degradation (FR-026 non-suppression).
+    panes_by_state = result["counts"]["panes"]["by_state"]
+    agents_by_state = result["counts"]["agents"]["by_state"]
+    assert set(panes_by_state.keys()) == set(PANE_STATE_KEYS)
+    assert set(agents_by_state.keys()) == set(AGENT_STATE_KEYS)
+    for key in PANE_STATE_KEYS:
+        assert isinstance(panes_by_state[key], int)
+    for key in AGENT_STATE_KEYS:
+        assert isinstance(agents_by_state[key], int)
+
+
+@pytest.mark.v1_1
+def test_route_counts_failure_flags_sqlite_not_silent_no_routes() -> None:
+    """codex P2: a swallowed routes-read failure (missing table / schema
+    drift) must signal ``sqlite`` into ``failed_subsystems`` so the
+    recommendation surfaces ``subsystem_degraded`` rather than a spurious
+    ``no_routes_configured`` from a fail-soft ``{enabled:0,disabled:0}``.
+    A missing ``state_conn`` (bring-up) must NOT flag (probe_sqlite owns it)."""
+    from types import SimpleNamespace as _NS
+
+    class _BrokenConn:
+        def execute(self, *_a: object, **_k: object) -> object:
+            raise RuntimeError("simulated routes-table read failure")
+
+    failed: set[str] = set()
+    result = dashboard_mod._route_counts(_NS(state_conn=_BrokenConn()), failed)
+    assert result == {"enabled": 0, "disabled": 0}
+    assert failed == {"sqlite"}
+
+    bringup: set[str] = set()
+    dashboard_mod._route_counts(_NS(), bringup)
+    assert bringup == set(), "no state_conn is a bring-up signal, must not flag"
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_fr021_compute_failure_leaves_other_v1_1_fields_intact(
+    daemon_ctx_with_db, host_session, monkeypatch
+) -> None:
+    """FR-021 + Research §FE: when ``compute_recommendation`` raises, the
+    dashboard handler catches the exception, sets BOTH
+    ``recommended_next_action`` and ``recommended_next_action_refreshed_at``
+    to null (paired-null), AND leaves every other v1.1 field populated:
+    ``counts.panes.by_state``, ``counts.agents.by_state``,
+    ``counts.routes.recently_skipped_*``. No new error code is emitted —
+    the response is still a success envelope."""
+    from agenttower.app_contract import recommendations
+
+    def _boom(_state: recommendations.RecommendationState) -> None:
+        raise RuntimeError("simulated compute failure")
+
+    monkeypatch.setattr(recommendations, "compute_recommendation", _boom)
+
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    assert env["ok"] is True, "FR-021: compute failure MUST NOT propagate as error"
+    result = env["result"]
+
+    # Paired-null pathway.
+    assert result["recommended_next_action"] is None
+    assert result["recommended_next_action_refreshed_at"] is None
+
+    # Other v1.1 fields all present and well-typed.
+    assert isinstance(result["counts"]["panes"]["by_state"], dict)
+    assert set(result["counts"]["panes"]["by_state"].keys()) == set(PANE_STATE_KEYS)
+    assert isinstance(result["counts"]["agents"]["by_state"], dict)
+    assert set(result["counts"]["agents"]["by_state"].keys()) == set(AGENT_STATE_KEYS)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_count"], int)
+    assert isinstance(result["counts"]["routes"]["recently_skipped_window_ms"], int)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# FEAT-014 T011 — US2 wire-level assertions (recently_skipped_*)
+#
+# All assertions below are @pytest.mark.v1_1 per the v1.1 marker rule. They
+# pin the US2 wire-level contract for
+# counts.routes.recently_skipped_count + .recently_skipped_window_ms (now
+# wired into the dashboard.py response envelope, backed by the skip_counter
+# module); any regression that drops these fields would be caught here —
+# the wire surface FR-007 / FR-008 demand.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_routes_recently_skipped_window_ms_is_300000(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-008 + Clarifications Q6: ``counts.routes.recently_skipped_window_ms``
+    is the exact literal ``300_000`` ms (5 min, fixed daemon-side, not
+    client-tunable in v1.1)."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    routes = env["result"]["counts"]["routes"]
+    assert routes["recently_skipped_window_ms"] == 300_000
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_routes_recently_skipped_count_is_non_negative_int(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-007 / FR-004 typing: ``counts.routes.recently_skipped_count`` is a
+    non-negative integer. On an empty daemon with no skip events recorded
+    (post-construction / post-restart per FR-008) the value MUST be ``0``."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    routes = env["result"]["counts"]["routes"]
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert routes["recently_skipped_count"] >= 0
+    # Empty daemon, no record_skip calls yet → 0.
+    assert routes["recently_skipped_count"] == 0
+
+
+@pytest.mark.v1_1
+def test_dashboard_v1_1_routes_recently_skipped_fields_present_even_when_zero(
+    daemon_ctx_with_db, host_session
+) -> None:
+    """FR-003 (generalized to v1.1 route fields): both ``recently_skipped_count``
+    and ``recently_skipped_window_ms`` MUST be present as keys with integer
+    values, NEVER omitted and NEVER ``null`` — even on an empty daemon where
+    the count is ``0``. This mirrors FR-003's by_state key-presence guarantee
+    for the route surface."""
+    host_peer, token = host_session
+    env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
+    routes = env["result"]["counts"]["routes"]
+
+    # Both keys MUST be present.
+    assert "recently_skipped_count" in routes, (
+        "FR-003: recently_skipped_count key MUST be present (not omitted)"
+    )
+    assert "recently_skipped_window_ms" in routes, (
+        "FR-003: recently_skipped_window_ms key MUST be present (not omitted)"
+    )
+
+    # Neither field is ever null.
+    assert routes["recently_skipped_count"] is not None, "FR-003: never null"
+    assert routes["recently_skipped_window_ms"] is not None, "FR-003: never null"
+
+    # Both are integer-typed.
+    assert isinstance(routes["recently_skipped_count"], int)
+    assert isinstance(routes["recently_skipped_window_ms"], int)

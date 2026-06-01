@@ -117,7 +117,6 @@ resolve_main_repo_root() {
     printf '%s\n' "$repo_root"
 }
 
-
 worktree_root_has_entries() {
     local candidate="$1"
     local first
@@ -146,7 +145,6 @@ resolve_worktree_root() {
     candidate=$(resolve_path_from_root "$main_root" "$raw_root")
     printf '%s\n' "$candidate"
 }
-
 
 canonicalize_if_dir() {
     local candidate="$1"

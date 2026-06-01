@@ -65,6 +65,7 @@ from typing import Final, Protocol
 from agenttower.routing import (
     arbitration,
     routes_dao,
+    skip_counter,
     source_scope,
     target_resolver,
     template,
@@ -644,6 +645,11 @@ class RoutingWorker:
             sub_reason=sub_reason,
             event_excerpt=ev.excerpt[:240],
         )
+        # FEAT-014 T014: record the skip in the dashboard ring buffer
+        # (telemetry, not audit). The durable audit log emit_route_skipped
+        # above is unchanged — the dashboard counter is in-memory and
+        # process-local; the JSONL audit remains the source of truth.
+        skip_counter.record_skip(time.monotonic_ns() // 1_000_000)
         ts = now_iso_ms_utc(self._clock)
         with self._state.lock:
             self._state.skips_since_last_heartbeat += 1

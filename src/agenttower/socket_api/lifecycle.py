@@ -209,6 +209,15 @@ EVENT_AUDIT_APPEND_FAILED = "audit_append_failed"
 # auditable in the daemon log.
 EVENT_HOST_PEER_CHECK_BYPASSED = "host_peer_check_bypassed"
 
+# FEAT-014 review-remediation (M4): same auditability pattern as
+# EVENT_HOST_PEER_CHECK_BYPASSED above, applied to the two T024 test-only
+# env vars that influence app.dashboard latency / readiness behavior. A
+# production daemon MUST NOT have these set; emitting a warn-level
+# lifecycle event surfaces an otherwise-silent deviation in the daemon log
+# so an accidentally-leaked seam doesn't masquerade as a real regression.
+EVENT_DASHBOARD_TEST_LATENCY_INJECTED = "dashboard_test_latency_injected"
+EVENT_DASHBOARD_TEST_DEGRADED_FORCED = "dashboard_test_degraded_forced"
+
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
         EVENT_DAEMON_STARTING,
@@ -231,6 +240,8 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         EVENT_SOCKET_PEER_UID_MISMATCH,
         EVENT_AUDIT_APPEND_FAILED,
         EVENT_HOST_PEER_CHECK_BYPASSED,
+        EVENT_DASHBOARD_TEST_LATENCY_INJECTED,
+        EVENT_DASHBOARD_TEST_DEGRADED_FORCED,
     }
 )
 
