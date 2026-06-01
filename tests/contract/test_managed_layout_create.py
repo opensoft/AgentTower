@@ -35,6 +35,7 @@ import pytest
 from agenttower.managed_sessions.dao import (
     count_active_layouts,
     insert_layout,
+    list_layouts,
     ManagedLayoutRow,
 )
 from agenttower.managed_sessions.errors import (
@@ -723,3 +724,47 @@ def test_transient_failures_retry_2x_with_exponential_backoff() -> None:
     """
     # This placeholder stays as documentation; real coverage lives in
     # the dedicated test file referenced above.
+
+
+def test_review4_list_layouts_pagination_after_cursor_does_not_raise(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review #4: list_layouts with a non-None `after` cursor must not raise
+    (it bound 7 params for 6 placeholders → sqlite3 'Incorrect number of
+    bindings' on every page-2+ request)."""
+    # Distinct containers so per-container label uniqueness doesn't reject
+    # the later creates; the listing spans all containers.
+    for i in range(3):
+        create_layout(
+            conn=conn, serializer=serializer, container_id=f"bench-{i}",
+            template_name="1m+2s", tmux_session_name=f"sess-{i}",
+        )
+    page1, cursor = list_layouts(conn, limit=1)
+    assert len(page1) == 1
+    assert cursor is not None  # more pages remain
+    # The page-2 request (the previously-crashing path) must succeed.
+    page2, _ = list_layouts(conn, limit=1, after=cursor)
+    assert len(page2) == 1
+    assert page2[0].id != page1[0].id
+
+
+def test_review9_same_session_name_across_containers_is_allowed(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review #9: the tmux-target uniqueness index is scoped per container,
+    so two DIFFERENT containers may each use the same tmux_session_name
+    without a false managed_session_name_conflict. (create_layout at the
+    service layer does not verify container existence — that's a handler
+    concern — so no containers row is needed here.)"""
+    first = create_layout(
+        conn=conn, serializer=serializer, container_id="bench-alpha",
+        template_name="1m+2s", tmux_session_name="shared-name",
+    )
+    # Same session name, different container → must NOT conflict.
+    second = create_layout(
+        conn=conn, serializer=serializer, container_id="bench-beta",
+        template_name="1m+2s", tmux_session_name="shared-name",
+    )
+    assert first.state == ManagedState.CREATING
+    assert second.state == ManagedState.CREATING
+    assert first.layout_id != second.layout_id

@@ -106,9 +106,10 @@ CREATE INDEX IF NOT EXISTS ix_managed_pane_predecessor
     WHERE predecessor_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_pane_tmux_target
-    ON managed_pane(tmux_session_name, tmux_pane_index)
+    ON managed_pane(container_id, tmux_session_name, tmux_pane_index)
     WHERE state IN ('creating','ready','degraded');
-    -- tmux pane target uniqueness; terminal-state rows are archived.
+    -- tmux pane target uniqueness, scoped per container (session names
+    -- are per-container); terminal-state rows are archived.
 ```
 
 **Notes**:

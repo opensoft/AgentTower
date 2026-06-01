@@ -281,10 +281,12 @@ def list_layouts(
             f"     AND created_at = (SELECT created_at FROM managed_layout WHERE id = ?)"
             f"     AND id < ?))"
         )
-        # The sp_cursor expression embeds the `?` placeholder for the
-        # cursor id; we need it 4× because sp_cursor is referenced 4
-        # times above. Then created_at appears 2× and id appears 1×.
-        params.extend([after, after, after, after, after, after, after])
+        # review #4: the WHERE clause has exactly 6 `?` placeholders bound
+        # to the cursor id — sp_cursor (which embeds one `?`) is referenced
+        # 3× (lines above), the created_at subquery 2×, and `id < ?` 1×.
+        # (Previously bound 7 copies → 8 binds for 7 placeholders →
+        # sqlite3 "Incorrect number of bindings" on every page-2+ request.)
+        params.extend([after, after, after, after, after, after])
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     cur = conn.execute(
         f"SELECT id, container_id, template_name, intended_pane_count, state, "

@@ -863,10 +863,19 @@ def _apply_migration_v9(conn: sqlite3.Connection) -> None:
             WHERE predecessor_id IS NOT NULL
         """
     )
+    # review #9: scope the tmux-target uniqueness by container_id. tmux
+    # session names are per-container (each bench has its own socket), and
+    # FR-016 scopes the conflict to the SELECTED container — without
+    # container_id two different containers each legitimately using session
+    # 'work' pane 0 would trip a false managed_session_name_conflict. (The
+    # sibling ux_managed_pane_container_label index already includes
+    # container_id.) DROP+CREATE so the corrected definition lands even if a
+    # pre-release dev DB created the old 2-column index.
+    conn.execute("DROP INDEX IF EXISTS ux_managed_pane_tmux_target")
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_pane_tmux_target
-            ON managed_pane(tmux_session_name, tmux_pane_index)
+            ON managed_pane(container_id, tmux_session_name, tmux_pane_index)
             WHERE state IN ('creating','ready','degraded')
         """
     )
