@@ -242,3 +242,109 @@ class TmuxAdapter(Protocol):
         when called on the happy path and the worker decides to surface
         the cleanup failure (rare; Q2 says we don't).
         """
+
+    # ─── FEAT-013 managed-session surface (T057) ──────────────────────
+    #
+    # Verbs used by the managed-session spawn backend to *create* tmux
+    # state inside a bench container (research §R6). Argv-first — launch
+    # commands are passed as separate argv items after ``--`` and NEVER
+    # interpolated into a shell string (Principle III). Each verb runs
+    # through the same ``docker exec -u <bench-user>`` channel as the
+    # discovery / delivery surfaces above.
+
+    def has_session(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+    ) -> bool:
+        """Return whether a tmux session named ``session_name`` exists.
+
+        Invokes ``docker exec ... tmux -S <socket> has-session -t
+        <session_name>``. Exit 0 → ``True``; a tmux "can't find session"
+        / "no server running" non-zero exit → ``False`` (these are the
+        normal "absent" signals, not errors). Raises :class:`TmuxError`
+        only when ``docker exec`` itself fails (missing container, OCI
+        runtime error, docker daemon unreachable). Used as the FR-016
+        ``managed_session_name_conflict`` pre-check before the first
+        ``new-session`` of a layout.
+        """
+
+    def new_session(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+        window_name: str,
+        launch_argv: Sequence[str],
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        """Create a detached session with its first pane; return the pane id.
+
+        Invokes ``docker exec ... tmux -S <socket> new-session -d -s
+        <session> -n <window> [-c <dir>] [-e K=V ...] -P -F '#{pane_id}'
+        [-- <launch_argv...>]`` (research §R6). With an empty
+        ``launch_argv`` tmux starts the bench's default shell. Returns
+        the ``%N`` pane id printed by ``-P -F``. Raises :class:`TmuxError`
+        on non-zero exit / docker-exec failure (the spawn backend maps
+        this to ``failed_stage=pane_create``).
+        """
+
+    def split_window(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+        direction: str,
+        launch_argv: Sequence[str],
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        """Split the session's active pane; return the new pane id.
+
+        Invokes ``docker exec ... tmux -S <socket> split-window -t
+        <session> -h|-v [-c <dir>] [-e K=V ...] -P -F '#{pane_id}'
+        [-- <launch_argv...>]``. ``direction`` MUST be ``"h"`` or
+        ``"v"``. Targeting the session (not a numeric pane index) avoids
+        DB-vs-tmux pane-index drift — the returned ``%N`` id is the
+        durable handle the register backend threads downstream. Raises
+        :class:`TmuxError` on failure (``failed_stage=pane_create``).
+        """
+
+    def set_pane_title(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        title: str,
+    ) -> None:
+        """Set ``pane_id``'s title (``select-pane -t <pane_id> -T <title>``).
+
+        Used to stamp the ``@MANAGED:<token>:<label>`` pending-managed
+        marker (FR-014 / research §R1) and to clear it to the bare label
+        after registration. Targets the ``%N`` pane id so it is immune to
+        pane-index renumbering. Raises :class:`TmuxError` on failure.
+        """
+
+    def kill_pane(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+    ) -> None:
+        """Kill ``pane_id`` (``kill-pane -t <pane_id>``) — FR-010 remove.
+
+        Raises :class:`TmuxError` on failure; callers treat a
+        pane-already-gone signal as idempotent success.
+        """

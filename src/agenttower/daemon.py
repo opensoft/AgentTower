@@ -936,20 +936,32 @@ def _run(args: argparse.Namespace) -> int:
             #      socket opens (FR-020 + SC-008).
             #   3. Schedule the FR-022 5-minute TTL sweep on a 60-second
             #      periodic timer. Cancel on shutdown.
-            #   4. Production spawn backends are deferred until the
-            #      real tmux backend is composed (separate follow-up);
-            #      the M1 handler's kickoff_spawn_pipeline() is a no-op
-            #      when ``managed_spawn_backends`` stays None.
+            #   4. Production spawn backends (T057): compose the tmux /
+            #      register / log-attach backends over the FEAT-004
+            #      adapter so the M1 handler's kickoff_spawn_pipeline()
+            #      actually spawns + registers panes. ``None`` only when
+            #      no tmux adapter resolves (kickoff then no-ops).
             from .managed_sessions.daemon_boot import (
                 make_managed_serializer,
                 reconcile_managed_state_at_boot,
                 start_pending_marker_sweep,
             )
+            from .managed_sessions.spawn_backends import build_spawn_backends
             managed_serializer = make_managed_serializer()
+            managed_tmux_adapter = _resolve_tmux_adapter()
+            managed_spawn_backends: dict[str, object] | None = None
+            if managed_tmux_adapter is not None:
+                managed_spawn_backends = build_spawn_backends(
+                    adapter=managed_tmux_adapter,
+                    agent_service=agent_service,
+                    log_service=log_service,
+                )
             managed_reconcile_outcome = reconcile_managed_state_at_boot(
                 conn=worker_conn,
                 serializer=managed_serializer,
-                tmux_list_panes_fn=None,  # production backend follow-up
+                # Recovery list-panes channel is wired with the T046/T047
+                # recovery follow-up; spawn-path wiring (T057) is independent.
+                tmux_list_panes_fn=None,
                 tx_lock=worker_tx_lock,
             )
             managed_sweep_cancel = start_pending_marker_sweep(
@@ -983,6 +995,7 @@ def _run(args: argparse.Namespace) -> int:
                 routing_audit_writer=routes_audit_writer,
                 routing_shared_state=routing_shared_state,
                 managed_serializer=managed_serializer,
+                managed_spawn_backends=managed_spawn_backends,
                 managed_sweep_cancel=managed_sweep_cancel,
                 managed_reconcile_outcome=managed_reconcile_outcome,
             )

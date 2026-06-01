@@ -70,6 +70,20 @@ class FakeTmuxAdapter:
         # `paste_buffer` can be asserted to have received the right body
         # via the prior `load_buffer`.
         self.buffers: dict[str, bytes] = {}
+        # ── FEAT-013 managed-session surface (T057) ──────────────────────
+        # `managed_calls` records (verb, kwargs) for every managed verb so
+        # tests assert the exact tmux argv shape composed by the spawn
+        # backend. `existing_sessions` seeds the has_session conflict
+        # pre-check. `*_failures` are FIFO TmuxError injection queues.
+        self.managed_calls: list[tuple[str, dict[str, Any]]] = []
+        self.existing_sessions: set[str] = set()
+        self.new_session_failures: list["TmuxError"] = []
+        self.split_window_failures: list["TmuxError"] = []
+        self.has_session_failures: list["TmuxError"] = []
+        self.set_pane_title_failures: list["TmuxError"] = []
+        self.kill_pane_failures: list["TmuxError"] = []
+        self.created_pane_ids: list[str] = []
+        self._pane_counter = 0
 
     @classmethod
     def from_path(cls, path: str | Path) -> "FakeTmuxAdapter":
@@ -308,6 +322,143 @@ class FakeTmuxAdapter:
             raise self.delete_buffer_failures.pop(0)
         # Success — drop the buffer from memory.
         self.buffers.pop(buffer_name, None)
+
+    # ─── FEAT-013 managed-session surface (T057) ──────────────────────
+
+    def _next_pane_id(self) -> str:
+        pane_id = f"%{self._pane_counter}"
+        self._pane_counter += 1
+        self.created_pane_ids.append(pane_id)
+        return pane_id
+
+    def has_session(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+    ) -> bool:
+        self.managed_calls.append((
+            "has_session",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "session_name": session_name,
+            },
+        ))
+        if self.has_session_failures:
+            raise self.has_session_failures.pop(0)
+        return session_name in self.existing_sessions
+
+    def new_session(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+        window_name: str,
+        launch_argv: Sequence[str],
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        self.managed_calls.append((
+            "new_session",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "session_name": session_name,
+                "window_name": window_name,
+                "launch_argv": tuple(launch_argv),
+                "working_dir": working_dir,
+                "env": dict(env) if env else {},
+            },
+        ))
+        if self.new_session_failures:
+            raise self.new_session_failures.pop(0)
+        self.existing_sessions.add(session_name)
+        return self._next_pane_id()
+
+    def split_window(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+        direction: str,
+        launch_argv: Sequence[str],
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        if direction not in ("h", "v"):
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=f"split direction must be 'h' or 'v', got {direction!r}",
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+            )
+        self.managed_calls.append((
+            "split_window",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "session_name": session_name,
+                "direction": direction,
+                "launch_argv": tuple(launch_argv),
+                "working_dir": working_dir,
+                "env": dict(env) if env else {},
+            },
+        ))
+        if self.split_window_failures:
+            raise self.split_window_failures.pop(0)
+        return self._next_pane_id()
+
+    def set_pane_title(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        title: str,
+    ) -> None:
+        self.managed_calls.append((
+            "set_pane_title",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "pane_id": pane_id,
+                "title": title,
+            },
+        ))
+        if self.set_pane_title_failures:
+            raise self.set_pane_title_failures.pop(0)
+
+    def kill_pane(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+    ) -> None:
+        self.managed_calls.append((
+            "kill_pane",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "pane_id": pane_id,
+            },
+        ))
+        if self.kill_pane_failures:
+            raise self.kill_pane_failures.pop(0)
 
 
 def _normalize_failure(

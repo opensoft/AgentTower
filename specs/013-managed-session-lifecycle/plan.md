@@ -64,7 +64,7 @@ specs/013-managed-session-lifecycle/
 │   ├── state-machine.md     # Formal lifecycle transition graph
 │   └── error-codes.md       # New closed-set additions
 ├── quickstart.md        # Phase 1 — synthetic-client walkthrough for US1
-├── checklists/          # 15 release-gate checklists (from /speckit.checklist deep-and-wide)
+├── checklists/          # 15 deep-and-wide release-gate checklists + 6 alignment/readiness artifacts (21 files total)
 └── tasks.md             # Phase 2 — created by /speckit.tasks, NOT by this command
 ```
 

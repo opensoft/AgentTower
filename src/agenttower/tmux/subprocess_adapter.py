@@ -208,6 +208,205 @@ class SubprocessTmuxAdapter(TmuxAdapter):
             )
         return parsed
 
+    # ─── FEAT-013 managed-session surface (T057) ──────────────────────
+
+    def has_session(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+    ) -> bool:
+        argv = self._argv(
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path, "has-session", "-t", session_name,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode == 0:
+            return True
+        # Non-zero: tmux says the session/server is absent (the normal
+        # "no conflict" signal) UNLESS docker exec itself failed.
+        stderr = (completed.stderr or "").lower()
+        for pattern in self._DOCKER_EXEC_FAILURE_PATTERNS:
+            if pattern in stderr:
+                raise TmuxError(
+                    code=_errors.DOCKER_EXEC_FAILED,
+                    message=_bound(
+                        f"tmux has-session docker-exec failure: {completed.stderr.strip()}"
+                    ),
+                    container_id=container_id,
+                    tmux_socket_path=socket_path,
+                )
+        return False
+
+    def new_session(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+        window_name: str,
+        launch_argv: Sequence[str],
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        tmux_args: list[str] = [
+            "new-session", "-d", "-s", session_name, "-n", window_name,
+        ]
+        if working_dir is not None:
+            tmux_args += ["-c", working_dir]
+        tmux_args += self._tmux_env_args(env)
+        tmux_args += ["-P", "-F", "#{pane_id}"]
+        if launch_argv:
+            tmux_args.append("--")
+            tmux_args.extend(launch_argv)
+        return self._spawn_and_read_pane_id(
+            tmux_args,
+            container_id=container_id,
+            bench_user=bench_user,
+            socket_path=socket_path,
+            verb="new-session",
+        )
+
+    def split_window(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        session_name: str,
+        direction: str,
+        launch_argv: Sequence[str],
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        if direction not in ("h", "v"):
+            raise TmuxError(
+                code=_errors.DOCKER_EXEC_FAILED,
+                message=_bound(f"split direction must be 'h' or 'v', got {direction!r}"),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+            )
+        tmux_args: list[str] = ["split-window", "-t", session_name, f"-{direction}"]
+        if working_dir is not None:
+            tmux_args += ["-c", working_dir]
+        tmux_args += self._tmux_env_args(env)
+        tmux_args += ["-P", "-F", "#{pane_id}"]
+        if launch_argv:
+            tmux_args.append("--")
+            tmux_args.extend(launch_argv)
+        return self._spawn_and_read_pane_id(
+            tmux_args,
+            container_id=container_id,
+            bench_user=bench_user,
+            socket_path=socket_path,
+            verb="split-window",
+        )
+
+    def set_pane_title(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+        title: str,
+    ) -> None:
+        argv = self._argv(
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path, "select-pane", "-t", pane_id, "-T", title,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode != 0:
+            raise TmuxError(
+                code=_classify_tmux_failure(completed.stderr),
+                message=_bound(
+                    f"tmux select-pane -T exited {completed.returncode}: "
+                    f"{completed.stderr.strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+            )
+
+    def kill_pane(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+    ) -> None:
+        argv = self._argv(
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path, "kill-pane", "-t", pane_id,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode != 0:
+            raise TmuxError(
+                code=_classify_tmux_failure(completed.stderr),
+                message=_bound(
+                    f"tmux kill-pane exited {completed.returncode}: "
+                    f"{completed.stderr.strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+            )
+
+    @staticmethod
+    def _tmux_env_args(env: Mapping[str, str] | None) -> list[str]:
+        """Build the ``-e KEY=VALUE`` argv items for a managed launch env.
+
+        Passed as separate argv items (``shell=False``) so values are
+        never shell-interpolated (Principle III). tmux applies these to
+        the spawned pane's environment.
+        """
+        if not env:
+            return []
+        out: list[str] = []
+        for key, value in env.items():
+            out += ["-e", f"{key}={value}"]
+        return out
+
+    def _spawn_and_read_pane_id(
+        self,
+        tmux_args: list[str],
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        verb: str,
+    ) -> str:
+        argv = self._argv(
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path, *tmux_args,
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode != 0:
+            raise TmuxError(
+                code=_classify_tmux_failure(completed.stderr),
+                message=_bound(
+                    f"tmux {verb} exited {completed.returncode}: "
+                    f"{completed.stderr.strip()}"
+                ),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+            )
+        pane_id = (completed.stdout or "").strip()
+        if not pane_id:
+            raise TmuxError(
+                code=_errors.OUTPUT_MALFORMED,
+                message=_bound(f"tmux {verb} -P -F printed no pane id"),
+                container_id=container_id,
+                tmux_socket_path=socket_path,
+            )
+        return pane_id
+
     # -- Internals -------------------------------------------------------------
 
     def _argv(self, *args: str) -> list[str]:
