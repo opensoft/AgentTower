@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../helpers/fixture_builders.dart';
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 
 /// Widget tests for [LogAttachAffordance] (FR-017). T164 — Phase 3 US1.
 ///
@@ -36,6 +37,8 @@ void main() {
           appClientProvider.overrideWithValue(fake),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(body: LogAttachAffordance(agent: agent)),
         ),
       ),

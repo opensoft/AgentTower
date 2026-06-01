@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/lifecycles/pane_state_validator.dart';
 import '../../../domain/models/common_enums.dart';
@@ -63,6 +64,7 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Form(
@@ -72,24 +74,28 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Adopt pane ${widget.pane.tmuxSessionName}:'
-              '${widget.pane.tmuxWindowIndex}.${widget.pane.tmuxPaneIndex}',
+              l10n.adoptTitle(
+                widget.pane.tmuxSessionName,
+                widget.pane.tmuxWindowIndex,
+                widget.pane.tmuxPaneIndex,
+              ),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _labelCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Label',
-                hintText: 'e.g. claude-master-1',
+              decoration: InputDecoration(
+                labelText: l10n.adoptLabelLabel,
+                hintText: l10n.adoptLabelHint,
               ),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Label is required' : null,
+              validator: (v) => (v == null || v.trim().isEmpty)
+                  ? l10n.adoptLabelRequired
+                  : null,
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<AgentRole>(
               value: _role,
-              decoration: const InputDecoration(labelText: 'Role'),
+              decoration: InputDecoration(labelText: l10n.adoptRoleLabel),
               items: [
                 for (final r in AgentRole.values)
                   DropdownMenuItem(value: r, child: Text(r.wireValue)),
@@ -99,7 +105,7 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: _capability,
-              decoration: const InputDecoration(labelText: 'Capability'),
+              decoration: InputDecoration(labelText: l10n.adoptCapabilityLabel),
               items: [
                 for (final c in _capabilities)
                   DropdownMenuItem(value: c, child: Text(c)),
@@ -109,15 +115,15 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _projectPathCtrl,
-              decoration: const InputDecoration(labelText: 'Project path'),
+              decoration: InputDecoration(labelText: l10n.adoptProjectPathLabel),
               validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Project path is required'
+                  ? l10n.adoptProjectPathRequired
                   : null,
             ),
             const SizedBox(height: 8),
             SwitchListTile(
-              title: const Text('Attach log now'),
-              subtitle: const Text('Recommended (FR-017)'),
+              title: Text(l10n.adoptAttachLogTitle),
+              subtitle: Text(l10n.adoptAttachLogSubtitle),
               value: _attachLogNow,
               onChanged: (v) => setState(() => _attachLogNow = v),
             ),
@@ -135,7 +141,7 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
                 TextButton(
                   onPressed:
                       _submitting ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.adoptCancel),
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
@@ -146,7 +152,7 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Adopt'),
+                      : Text(l10n.adoptSubmit),
                 ),
               ],
             ),
@@ -157,6 +163,7 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
   }
 
   Future<void> _submit() async {
+    final l10n = AppLocalizations.of(context);
     if (!_formKey.currentState!.validate()) return;
     // FR-014 + data-model §3: refuse to submit a transition that the
     // PaneStateValidator says is invalid. The daemon would reject too,
@@ -166,9 +173,8 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
       widget.pane.state,
       PaneState.discoveredAndRegistered,
     )) {
-      setState(() => _error =
-          'Pane state ${widget.pane.state.wireValue} cannot transition '
-          'to discovered-and-registered (FR-014).');
+      setState(() =>
+          _error = l10n.adoptInvalidTransition(widget.pane.state.wireValue));
       return;
     }
     setState(() {
@@ -201,12 +207,12 @@ class _AdoptFlowState extends ConsumerState<AdoptFlow> {
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(
-        SnackBar(content: Text('Adopted as ${_labelCtrl.text.trim()}')),
+        SnackBar(content: Text(l10n.adoptedAs(_labelCtrl.text.trim()))),
       );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Adopt failed: ${_errorText(e)}';
+        _error = l10n.adoptFailed(_errorText(e));
         _submitting = false;
       });
     }

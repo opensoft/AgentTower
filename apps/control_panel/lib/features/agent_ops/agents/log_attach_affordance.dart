@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
 import '../../../domain/models/common_enums.dart';
@@ -37,9 +38,10 @@ class _LogAttachAffordanceState extends ConsumerState<LogAttachAffordance> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return TextButton.icon(
       icon: Icon(_isAttached ? Icons.link_off : Icons.link),
-      label: Text(_isAttached ? 'Detach log' : 'Attach log'),
+      label: Text(_isAttached ? l10n.logAttachDetach : l10n.logAttachAttach),
       onPressed: _busy ? null : _toggle,
     );
   }
@@ -51,6 +53,7 @@ class _LogAttachAffordanceState extends ConsumerState<LogAttachAffordance> {
     final wasAttached = _isAttached;
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
     try {
       final client = ref.read(appClientProvider);
       if (wasAttached) {
@@ -61,12 +64,14 @@ class _LogAttachAffordanceState extends ConsumerState<LogAttachAffordance> {
       ref.invalidate(agentListProvider);
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(
-        content: Text(wasAttached ? 'Log detached' : 'Log attached'),
+        content: Text(
+          wasAttached ? l10n.logAttachDetached : l10n.logAttachAttached,
+        ),
       ));
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Log action failed: ${_errorText(e)}')),
+        SnackBar(content: Text(l10n.logAttachFailed(_errorText(e)))),
       );
     } finally {
       if (mounted) setState(() => _busy = false);

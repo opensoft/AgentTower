@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
@@ -34,6 +35,7 @@ class _QueueViewState extends ConsumerState<QueueView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (!_loaded) {
       _loaded = true;
       final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
@@ -51,8 +53,8 @@ class _QueueViewState extends ConsumerState<QueueView> {
             ListControlsBar(
               controls: [
                 EnumFilterMenu<QueueRowState>(
-                  tooltip: 'Filter by state',
-                  allLabel: 'All states',
+                  tooltip: l10n.queueFilterStateTooltip,
+                  allLabel: l10n.queueFilterAllStates,
                   value: _filter,
                   options: QueueRowState.values,
                   labelOf: (s) => s.wireValue,
@@ -62,11 +64,11 @@ class _QueueViewState extends ConsumerState<QueueView> {
             ),
             Expanded(
               child: rows.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Padding(
-                        padding: EdgeInsets.all(32),
+                        padding: const EdgeInsets.all(32),
                         child: Text(
-                          'Queue is empty.\n\nMessages waiting for routing or operator approval will appear here.',
+                          l10n.queueEmptyMessage,
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -74,8 +76,8 @@ class _QueueViewState extends ConsumerState<QueueView> {
                   : RefreshIndicator(
                       onRefresh: () async => ref.invalidate(queueListProvider),
                       child: filtered.isEmpty
-                          ? const FilterNoMatch(
-                              message: 'No queue rows match the current filter.')
+                          ? FilterNoMatch(
+                              message: l10n.queueFilterNoMatch)
                           : ListView.separated(
                               itemCount: filtered.length,
                               separatorBuilder: (_, __) =>
@@ -89,7 +91,8 @@ class _QueueViewState extends ConsumerState<QueueView> {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Could not load queue: $e')),
+      error: (e, _) =>
+          Center(child: Text(l10n.queueLoadError(e.toString()))),
     );
   }
 
@@ -161,6 +164,7 @@ class _ActionsState extends ConsumerState<_Actions> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (widget.row.state.isTerminal) {
       return const SizedBox.shrink();
     }
@@ -175,18 +179,18 @@ class _ActionsState extends ConsumerState<_Actions> {
       children: [
         if (widget.row.state == QueueRowState.blocked)
           IconButton(
-            tooltip: 'Approve',
+            tooltip: l10n.queueApprove,
             icon: const Icon(Icons.check),
             onPressed: _busy ? null : () => _do('approve'),
           ),
         if (widget.row.state == QueueRowState.queued)
           IconButton(
-            tooltip: 'Delay 60s',
+            tooltip: l10n.queueDelay,
             icon: const Icon(Icons.snooze),
             onPressed: _busy ? null : () => _do('delay'),
           ),
         IconButton(
-          tooltip: 'Cancel',
+          tooltip: l10n.queueCancel,
           icon: const Icon(Icons.close),
           onPressed: _busy ? null : () => _do('cancel'),
         ),
@@ -199,6 +203,7 @@ class _ActionsState extends ConsumerState<_Actions> {
     // Capture messenger BEFORE awaits so the SnackBar dispatch is safe even
     // if the parent rebuilds and detaches our context (review fix H5).
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
     try {
       final client = ref.read(appClientProvider);
       switch (action) {
@@ -214,11 +219,12 @@ class _ActionsState extends ConsumerState<_Actions> {
       }
       ref.invalidate(queueListProvider);
       if (!mounted) return;
-      messenger.showSnackBar(SnackBar(content: Text('Queue $action ok')));
+      messenger.showSnackBar(
+          SnackBar(content: Text(l10n.queueActionOk(action))));
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Queue $action failed: ${_errorText(e)}')),
+        SnackBar(content: Text(l10n.queueActionFailed(action, _errorText(e)))),
       );
     } finally {
       if (mounted) setState(() => _busy = false);

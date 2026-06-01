@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../ui/widgets/list_controls.dart';
@@ -38,6 +39,7 @@ class _EventsViewState extends ConsumerState<EventsView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (!_loaded) {
       _loaded = true;
       final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
@@ -58,8 +60,8 @@ class _EventsViewState extends ConsumerState<EventsView> {
             ListControlsBar(
               controls: [
                 EnumFilterMenu<String>(
-                  tooltip: 'Filter by event type',
-                  allLabel: 'All event types',
+                  tooltip: l10n.eventsFilterTypeTooltip,
+                  allLabel: l10n.eventsFilterAllTypes,
                   value: _filter,
                   options: types,
                   labelOf: (s) => s,
@@ -69,11 +71,11 @@ class _EventsViewState extends ConsumerState<EventsView> {
             ),
             Expanded(
               child: rows.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Padding(
-                        padding: EdgeInsets.all(32),
+                        padding: const EdgeInsets.all(32),
                         child: Text(
-                          'No events yet.\n\nAdopt an agent and watch its events stream in here.',
+                          l10n.eventsEmptyMessage,
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -81,8 +83,7 @@ class _EventsViewState extends ConsumerState<EventsView> {
                   : Stack(
                       children: [
                         if (filtered.isEmpty)
-                          const FilterNoMatch(
-                              message: 'No events match the current filter.')
+                          FilterNoMatch(message: l10n.eventsFilterNoMatch)
                         else
                           ListView.builder(
                             controller: _scroll,
@@ -108,7 +109,7 @@ class _EventsViewState extends ConsumerState<EventsView> {
                           right: 16,
                           bottom: 16,
                           child: FloatingActionButton.small(
-                            tooltip: 'Jump to most recent',
+                            tooltip: l10n.eventsJumpToMostRecent,
                             onPressed: () {
                               ref.invalidate(eventListProvider);
                               if (_scroll.hasClients) {
@@ -125,7 +126,8 @@ class _EventsViewState extends ConsumerState<EventsView> {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Could not load events: $e')),
+      error: (e, _) =>
+          Center(child: Text(l10n.eventsLoadError(e.toString()))),
     );
   }
 

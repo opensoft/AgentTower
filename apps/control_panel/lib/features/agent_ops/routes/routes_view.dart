@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/route.dart' as model;
@@ -31,6 +32,7 @@ class _RoutesViewState extends ConsumerState<RoutesView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (!_loaded) {
       _loaded = true;
       final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
@@ -51,22 +53,23 @@ class _RoutesViewState extends ConsumerState<RoutesView> {
               ListControlsBar(
                 controls: [
                   EnumFilterMenu<bool>(
-                    tooltip: 'Filter by enabled state',
-                    allLabel: 'All routes',
+                    tooltip: l10n.routesFilterEnabledTooltip,
+                    allLabel: l10n.routesFilterAll,
                     value: _enabledFilter,
                     options: const [true, false],
-                    labelOf: (b) => b ? 'Enabled' : 'Disabled',
+                    labelOf: (b) =>
+                        b ? l10n.routesFilterEnabled : l10n.routesFilterDisabled,
                     onSelected: _onFilter,
                   ),
                 ],
               ),
               Expanded(
                 child: rows.isEmpty
-                    ? const Center(
+                    ? Center(
                         child: Padding(
-                          padding: EdgeInsets.all(32),
+                          padding: const EdgeInsets.all(32),
                           child: Text(
-                            'No routes defined.\n\nTap + to add a route that wires events from a source agent to a target.',
+                            l10n.routesEmptyMessage,
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -75,9 +78,8 @@ class _RoutesViewState extends ConsumerState<RoutesView> {
                         onRefresh: () async =>
                             ref.invalidate(routeListProvider),
                         child: filtered.isEmpty
-                            ? const FilterNoMatch(
-                                message:
-                                    'No routes match the current filter.')
+                            ? FilterNoMatch(
+                                message: l10n.routesFilterNoMatch)
                             : ListView.separated(
                                 itemCount: filtered.length,
                                 separatorBuilder: (_, __) =>
@@ -91,11 +93,12 @@ class _RoutesViewState extends ConsumerState<RoutesView> {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Could not load routes: $e')),
+        error: (e, _) =>
+            Center(child: Text(l10n.routesLoadError(e.toString()))),
       ),
       floatingActionButton: FloatingActionButton.extended(
         icon: const Icon(Icons.add),
-        label: const Text('Add route'),
+        label: Text(l10n.routesAddRoute),
         onPressed: () => AddRouteFlow.show(context),
       ),
     );
@@ -126,6 +129,7 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
   @override
   Widget build(BuildContext context) {
     final r = widget.route;
+    final l10n = AppLocalizations.of(context);
     return ListTile(
       leading: Switch(
         value: r.enabled,
@@ -138,13 +142,13 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('template: ${r.template}'),
-          if (r.masterRule != null) Text('master: ${r.masterRule}'),
+          Text(l10n.routesTemplate(r.template)),
+          if (r.masterRule != null) Text(l10n.routesMaster(r.masterRule!)),
           if (r.recentSkipExplanation != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                '↳ recent skip: ${r.recentSkipExplanation}',
+                l10n.routesRecentSkip(r.recentSkipExplanation!),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
@@ -152,14 +156,14 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                '↳ recent match: ${r.recentMatchSummary}',
+                l10n.routesRecentMatch(r.recentMatchSummary!),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
         ],
       ),
       trailing: IconButton(
-        tooltip: 'Remove',
+        tooltip: l10n.routesRemove,
         icon: const Icon(Icons.delete_outline),
         onPressed: _busy ? null : _remove,
       ),
@@ -169,6 +173,7 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
   Future<void> _toggle(bool enabled) async {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
     try {
       await ref.read(appClientProvider).routeUpdate(
             routeId: widget.route.routeId,
@@ -177,8 +182,8 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
       ref.invalidate(routeListProvider);
     } catch (e) {
       if (!mounted) return;
-      messenger
-          .showSnackBar(SnackBar(content: Text('Toggle failed: ${_errorText(e)}')));
+      messenger.showSnackBar(
+          SnackBar(content: Text(l10n.routesToggleFailed(_errorText(e)))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -187,17 +192,18 @@ class _RouteTileState extends ConsumerState<_RouteTile> {
   Future<void> _remove() async {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
     try {
       await ref
           .read(appClientProvider)
           .routeRemove(routeId: widget.route.routeId);
       ref.invalidate(routeListProvider);
       if (!mounted) return;
-      messenger.showSnackBar(const SnackBar(content: Text('Route removed')));
+      messenger.showSnackBar(SnackBar(content: Text(l10n.routesRemoved)));
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Remove failed: ${_errorText(e)}')),
+        SnackBar(content: Text(l10n.routesRemoveFailed(_errorText(e)))),
       );
     } finally {
       if (mounted) setState(() => _busy = false);

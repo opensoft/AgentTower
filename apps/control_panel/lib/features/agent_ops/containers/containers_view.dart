@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
@@ -30,6 +31,7 @@ class _ContainersViewState extends ConsumerState<ContainersView> {
       _filter = filterValueFromWire(
           p.filters['state'], ContainerState.values, (s) => s.wireValue);
     }
+    final l10n = AppLocalizations.of(context);
     final containers = ref.watch(containerListProvider);
     return containers.when(
       data: (rows) {
@@ -41,8 +43,8 @@ class _ContainersViewState extends ConsumerState<ContainersView> {
             ListControlsBar(
               controls: [
                 EnumFilterMenu<ContainerState>(
-                  tooltip: 'Filter by state',
-                  allLabel: 'All states',
+                  tooltip: l10n.containersFilterStateTooltip,
+                  allLabel: l10n.containersFilterAllStates,
                   value: _filter,
                   options: ContainerState.values,
                   labelOf: (s) => s.wireValue,
@@ -57,8 +59,8 @@ class _ContainersViewState extends ConsumerState<ContainersView> {
                       onRefresh: () async =>
                           ref.invalidate(containerListProvider),
                       child: filtered.isEmpty
-                          ? const FilterNoMatch(
-                              message: 'No containers match the current filter.')
+                          ? FilterNoMatch(
+                              message: l10n.containersFilterNoMatch)
                           : ListView.builder(
                               itemCount: filtered.length,
                               itemBuilder: (_, i) {
@@ -115,12 +117,12 @@ class _Empty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    final l10n = AppLocalizations.of(context);
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No containers discovered yet.\n\nLaunch a bench container with agenttowerd running '
-          'and the Panes view will surface its tmux panes for adoption.',
+          l10n.containersEmptyMessage,
           textAlign: TextAlign.center,
         ),
       ),
@@ -135,13 +137,16 @@ class _ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Could not load containers: $error', textAlign: TextAlign.center),
+          Text(l10n.containersLoadError(error.toString()),
+              textAlign: TextAlign.center),
           const SizedBox(height: 12),
-          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+          OutlinedButton(
+              onPressed: onRetry, child: Text(l10n.containersRetry)),
         ],
       ),
     );

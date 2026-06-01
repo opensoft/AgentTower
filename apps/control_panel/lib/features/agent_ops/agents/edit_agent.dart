@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
 import '../../../domain/models/common_enums.dart';
@@ -76,6 +77,7 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Form(
@@ -85,21 +87,21 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Edit ${widget.agent.label}',
+              l10n.editAgentTitle(widget.agent.label),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _labelCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Label',
-                helperText: 'Empty clears the label.',
+              decoration: InputDecoration(
+                labelText: l10n.editAgentLabelLabel,
+                helperText: l10n.editAgentLabelHelper,
               ),
             ),
             const SizedBox(height: 8),
             DropdownButtonFormField<AgentRole>(
               value: _role,
-              decoration: const InputDecoration(labelText: 'Role'),
+              decoration: InputDecoration(labelText: l10n.editAgentRoleLabel),
               items: [
                 for (final r in AgentRole.values)
                   DropdownMenuItem(value: r, child: Text(r.wireValue)),
@@ -109,7 +111,8 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: _capability,
-              decoration: const InputDecoration(labelText: 'Capability'),
+              decoration:
+                  InputDecoration(labelText: l10n.editAgentCapabilityLabel),
               items: [
                 for (final c in _capabilities)
                   DropdownMenuItem(value: c, child: Text(c)),
@@ -120,9 +123,9 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
             const SizedBox(height: 8),
             TextFormField(
               controller: _projectPathCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Project path',
-                helperText: 'Empty clears the project path.',
+              decoration: InputDecoration(
+                labelText: l10n.editAgentProjectPathLabel,
+                helperText: l10n.editAgentProjectPathHelper,
               ),
             ),
             if (_error != null) ...[
@@ -138,7 +141,7 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
                 TextButton(
                   onPressed:
                       _saving ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.editAgentCancel),
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
@@ -149,7 +152,7 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Save'),
+                      : Text(l10n.editAgentSave),
                 ),
               ],
             ),
@@ -166,6 +169,7 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
     });
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
     try {
       // Only include fields the operator actually changed. `label` and
       // `project_path` may be set to '' (clears the field per FR-029a);
@@ -187,11 +191,12 @@ class _EditAgentDialogState extends ConsumerState<EditAgentDialog> {
       ref.invalidate(agentDetailProvider(widget.agent.agentId));
       if (!mounted) return;
       navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Agent updated.')));
+      messenger.showSnackBar(
+          SnackBar(content: Text(l10n.editAgentUpdatedSnack)));
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Update failed: ${_errorText(e)}';
+        _error = l10n.editAgentUpdateFailed(_errorText(e));
         _saving = false;
       });
     }

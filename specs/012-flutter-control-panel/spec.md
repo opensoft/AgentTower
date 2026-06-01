@@ -2,7 +2,7 @@
 
 **Feature Branch**: `012-flutter-control-panel`
 **Created**: 2026-05-23
-**Status**: Phase 9 — Polish (177/182 tasks done; 3 upstream-blocked on FEAT-011 v1.x: T160b/T166/T167; 1 operator-validation: T153; 1 i18n follow-up: T181 — FR-067 sweep for the 6 Agent-Ops list views. FR-078 is now fully met: the persistence layer + Drift/Runs wiring landed as T179, and persisted sort/filter affordances for the remaining 8 list views landed as T180 on 2026-06-01 / analyze Round 12)
+**Status**: Phase 9 — Polish (178/182 tasks done; 3 upstream-blocked on FEAT-011 v1.x: T160b/T166/T167; 1 operator-validation: T153 — cross-OS quickstart, requires real Windows/macOS/Linux workstations + a live agenttowerd. FR-078 fully met (T179 + T180); FR-067 fully met across every Phase 3-9 widget (T165 + T177 + T181, the last sweeping all Agent-Ops views, sub-flows, and Health on 2026-06-01))
 **Input**: User description: "FEAT-012: Flutter Desktop Control Panel for Local Operator Workspaces — first packaged local Flutter desktop control panel for AgentTower over the FEAT-011 `app.*` backend contract; organized around three operator workspaces (Agent Operations, Project and Specs, Testing and Demo) plus shared notifications and settings; adopt-existing-panes only; managed pane creation deferred to FEAT-013; local-only, no remote SaaS control plane, no scraping of human CLI output."
 
 ## Summary

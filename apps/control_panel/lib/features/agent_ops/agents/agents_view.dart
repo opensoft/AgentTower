@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
@@ -45,6 +46,7 @@ class _AgentsViewState extends ConsumerState<AgentsView> {
       _filter = filterValueFromWire(
           p.filters['state'], AgentState.values, (s) => s.wireValue);
     }
+    final l10n = AppLocalizations.of(context);
     final agents = ref.watch(agentListProvider);
     return agents.when(
       data: (rows) {
@@ -56,8 +58,8 @@ class _AgentsViewState extends ConsumerState<AgentsView> {
             ListControlsBar(
               controls: [
                 EnumFilterMenu<AgentState>(
-                  tooltip: 'Filter by state',
-                  allLabel: 'All states',
+                  tooltip: l10n.agentsFilterStateTooltip,
+                  allLabel: l10n.agentsFilterAllStates,
                   value: _filter,
                   options: AgentState.values,
                   labelOf: (s) => s.wireValue,
@@ -67,12 +69,11 @@ class _AgentsViewState extends ConsumerState<AgentsView> {
             ),
             Expanded(
               child: rows.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Padding(
-                        padding: EdgeInsets.all(32),
+                        padding: const EdgeInsets.all(32),
                         child: Text(
-                          'No adopted agents yet.\n\n'
-                          'Adopt a pane from the Panes view to see it appear here as a registered agent.',
+                          l10n.agentsEmptyMessage,
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -80,8 +81,8 @@ class _AgentsViewState extends ConsumerState<AgentsView> {
                   : RefreshIndicator(
                       onRefresh: () async => ref.invalidate(agentListProvider),
                       child: filtered.isEmpty
-                          ? const FilterNoMatch(
-                              message: 'No agents match the current filter.')
+                          ? FilterNoMatch(
+                              message: l10n.agentsFilterNoMatch)
                           : ListView.builder(
                               itemCount: filtered.length,
                               itemBuilder: (_, i) =>
@@ -97,11 +98,12 @@ class _AgentsViewState extends ConsumerState<AgentsView> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Could not load agents: $e', textAlign: TextAlign.center),
+            Text(l10n.agentsLoadError(e.toString()),
+                textAlign: TextAlign.center),
             const SizedBox(height: 12),
             OutlinedButton(
               onPressed: () => ref.invalidate(agentListProvider),
-              child: const Text('Retry'),
+              child: Text(l10n.agentsRetry),
             ),
           ],
         ),
@@ -127,6 +129,7 @@ class _AgentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final indent = agent.parentAgentId != null ? 32.0 : 0.0;
     final descendants = agent.descendantsBeyondVisible ?? 0;
     return Padding(
@@ -160,15 +163,16 @@ class _AgentTile extends StatelessWidget {
               ),
               if (agent.currentGoal != null) ...[
                 const SizedBox(height: 8),
-                Text('Goal: ${agent.currentGoal}'),
+                Text(l10n.agentsGoal(agent.currentGoal!)),
               ],
-              if (agent.currentTask != null) Text('Task: ${agent.currentTask}'),
+              if (agent.currentTask != null)
+                Text(l10n.agentsTask(agent.currentTask!)),
               const SizedBox(height: 8),
               Row(
                 children: [
                   TextButton.icon(
                     icon: const Icon(Icons.send_outlined),
-                    label: const Text('Send'),
+                    label: Text(l10n.agentsSend),
                     onPressed: () => DirectSendDialog.show(context, agent: agent),
                   ),
                   const SizedBox(width: 8),
@@ -176,7 +180,7 @@ class _AgentTile extends StatelessWidget {
                   const SizedBox(width: 8),
                   TextButton.icon(
                     icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Edit'),
+                    label: Text(l10n.agentsEdit),
                     onPressed: () => EditAgentDialog.show(context, agent: agent),
                   ),
                 ],
@@ -184,7 +188,7 @@ class _AgentTile extends StatelessWidget {
               if (descendants > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text('+$descendants descendants'),
+                  child: Text(l10n.agentsDescendants(descendants)),
                 ),
             ],
           ),

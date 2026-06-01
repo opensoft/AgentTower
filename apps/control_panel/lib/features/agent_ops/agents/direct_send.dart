@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/adopted_agent.dart';
 import '../providers.dart';
@@ -51,6 +52,7 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Form(
@@ -60,7 +62,7 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Send to ${widget.agent.label}',
+              l10n.directSendTitle(widget.agent.label),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 4),
@@ -71,15 +73,15 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _payloadCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Payload',
-                hintText: 'Type the prompt to send…',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.directSendPayloadLabel,
+                hintText: l10n.directSendPayloadHint,
+                border: const OutlineInputBorder(),
               ),
               minLines: 4,
               maxLines: 10,
               validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Payload is required (FR-018)'
+                  ? l10n.directSendEmptyError
                   : null,
             ),
             if (_error != null) ...[
@@ -96,14 +98,14 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
                 TextButton(
                   onPressed:
                       _sending ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.directSendCancel),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.icon(
                   icon: const Icon(Icons.send),
                   label: _sending
-                      ? const Text('Sending…')
-                      : const Text('Send'),
+                      ? Text(l10n.directSendSending)
+                      : Text(l10n.directSendSend),
                   onPressed: _sending ? null : _send,
                 ),
               ],
@@ -120,6 +122,7 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
       _sending = true;
       _error = null;
     });
+    final l10n = AppLocalizations.of(context);
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -134,11 +137,13 @@ class _DirectSendDialogState extends ConsumerState<DirectSendDialog> {
       ref.invalidate(queueListProvider);
       if (!mounted) return;
       navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Sent.')));
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.directSendSuccess)),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Send failed: ${_errorText(e)}';
+        _error = l10n.directSendFailure(_errorText(e));
         _sending = false;
       });
     }

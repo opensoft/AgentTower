@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../helpers/fixture_builders.dart';
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 
 /// Widget tests for [QueueView] (FR-020). T164 — Phase 3 US1.
 ///
@@ -28,7 +29,10 @@ void main() {
           overrides: [
             appClientProvider.overrideWithValue(_FakeAppClient(rows: const [])),
           ],
-          child: const MaterialApp(home: Scaffold(body: QueueView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: QueueView())),
         ),
       );
       await tester.pump();
@@ -46,7 +50,10 @@ void main() {
           overrides: [
             appClientProvider.overrideWithValue(_FakeAppClient(rows: rows)),
           ],
-          child: const MaterialApp(home: Scaffold(body: QueueView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: QueueView())),
         ),
       );
       await tester.pump();
@@ -68,7 +75,10 @@ void main() {
           overrides: [
             appClientProvider.overrideWithValue(_FakeAppClient(rows: rows)),
           ],
-          child: const MaterialApp(home: Scaffold(body: QueueView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: QueueView())),
         ),
       );
       await tester.pump();
@@ -90,7 +100,10 @@ void main() {
           overrides: [
             appClientProvider.overrideWithValue(_FakeAppClient(rows: rows)),
           ],
-          child: const MaterialApp(home: Scaffold(body: QueueView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: QueueView())),
         ),
       );
       await tester.pump();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/providers.dart';
 import '../providers.dart';
 
@@ -50,6 +51,7 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Form(
@@ -59,24 +61,22 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Add route',
+              l10n.addRouteTitle,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              'Defines a FEAT-010 routing rule. The daemon owns the rule grammar; '
-              'these three fields are forwarded verbatim.',
+              l10n.addRouteDescription,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
-            _field(_sourceScope, 'Source scope',
-                'e.g. agent:claude-master-1 or container:bench-1'),
+            _field(_sourceScope, l10n.addRouteSourceLabel,
+                l10n.addRouteSourceHint),
             const SizedBox(height: 8),
-            _field(_template, 'Template',
-                'e.g. forward_event_to | broadcast_event | …'),
+            _field(_template, l10n.addRouteTemplateLabel,
+                l10n.addRouteTemplateHint),
             const SizedBox(height: 8),
-            _field(_target, 'Target',
-                'e.g. agent:codex-slave-1 or master:any'),
+            _field(_target, l10n.addRouteTargetLabel, l10n.addRouteTargetHint),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!,
@@ -89,7 +89,7 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
               children: [
                 TextButton(
                   onPressed: _busy ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.addRouteCancel),
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
@@ -100,7 +100,7 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Add'),
+                      : Text(l10n.addRouteAdd),
                 ),
               ],
             ),
@@ -111,11 +111,13 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
   }
 
   Widget _field(TextEditingController c, String label, String hint) {
+    final l10n = AppLocalizations.of(context);
     return TextFormField(
       controller: c,
       decoration: InputDecoration(labelText: label, hintText: hint),
-      validator: (v) =>
-          (v == null || v.trim().isEmpty) ? '$label is required' : null,
+      validator: (v) => (v == null || v.trim().isEmpty)
+          ? l10n.addRouteFieldRequired(label)
+          : null,
     );
   }
 
@@ -125,6 +127,7 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
       _busy = true;
       _error = null;
     });
+    final l10n = AppLocalizations.of(context);
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -136,11 +139,12 @@ class _AddRouteFlowState extends ConsumerState<AddRouteFlow> {
       ref.invalidate(routeListProvider);
       if (!mounted) return;
       navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Route added')));
+      messenger
+          .showSnackBar(SnackBar(content: Text(l10n.addRouteAddedSnack)));
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Add failed: ${_errorText(e)}';
+        _error = l10n.addRouteAddFailed(_errorText(e));
         _busy = false;
       });
     }

@@ -2408,5 +2408,601 @@
         "example": "MissingPluginException"
       }
     }
+  },
+  "agentsEmptyMessage": "No adopted agents yet.\n\nAdopt a pane from the Panes view to see it appear here as a registered agent.",
+  "@agentsEmptyMessage": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "agentsLoadError": "Could not load agents: {error}",
+  "@agentsLoadError": {
+    "description": "Agent-Ops Agents view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "agentsRetry": "Retry",
+  "@agentsRetry": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "agentsGoal": "Goal: {goal}",
+  "@agentsGoal": {
+    "description": "Agent-Ops Agents view (T181 FR-067).",
+    "placeholders": {
+      "goal": { "type": "String" }
+    }
+  },
+  "agentsTask": "Task: {task}",
+  "@agentsTask": {
+    "description": "Agent-Ops Agents view (T181 FR-067).",
+    "placeholders": {
+      "task": { "type": "String" }
+    }
+  },
+  "agentsSend": "Send",
+  "@agentsSend": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "agentsEdit": "Edit",
+  "@agentsEdit": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "agentsDescendants": "+{count} descendants",
+  "@agentsDescendants": {
+    "description": "Agent-Ops Agents view (T181 FR-067).",
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "agentsFilterStateTooltip": "Filter by state",
+  "@agentsFilterStateTooltip": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "agentsFilterAllStates": "All states",
+  "@agentsFilterAllStates": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "agentsFilterNoMatch": "No agents match the current filter.",
+  "@agentsFilterNoMatch": {
+    "description": "Agent-Ops Agents view (T181 FR-067)."
+  },
+  "containersFilterStateTooltip": "Filter by state",
+  "@containersFilterStateTooltip": {
+    "description": "Agent-Ops Containers view (T181 FR-067)."
+  },
+  "containersFilterAllStates": "All states",
+  "@containersFilterAllStates": {
+    "description": "Agent-Ops Containers view (T181 FR-067)."
+  },
+  "containersFilterNoMatch": "No containers match the current filter.",
+  "@containersFilterNoMatch": {
+    "description": "Agent-Ops Containers view (T181 FR-067)."
+  },
+  "containersEmptyMessage": "No containers discovered yet.\n\nLaunch a bench container with agenttowerd running and the Panes view will surface its tmux panes for adoption.",
+  "@containersEmptyMessage": {
+    "description": "Agent-Ops Containers view (T181 FR-067)."
+  },
+  "containersLoadError": "Could not load containers: {error}",
+  "@containersLoadError": {
+    "description": "Agent-Ops Containers view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "containersRetry": "Retry",
+  "@containersRetry": {
+    "description": "Agent-Ops Containers view (T181 FR-067)."
+  },
+  "eventsEmptyMessage": "No events yet.\n\nAdopt an agent and watch its events stream in here.",
+  "@eventsEmptyMessage": {
+    "description": "Agent-Ops Events view (T181 FR-067)."
+  },
+  "eventsLoadError": "Could not load events: {error}",
+  "@eventsLoadError": {
+    "description": "Agent-Ops Events view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "eventsJumpToMostRecent": "Jump to most recent",
+  "@eventsJumpToMostRecent": {
+    "description": "Agent-Ops Events view (T181 FR-067)."
+  },
+  "eventsFilterTypeTooltip": "Filter by event type",
+  "@eventsFilterTypeTooltip": {
+    "description": "Agent-Ops Events view (T181 FR-067)."
+  },
+  "eventsFilterAllTypes": "All event types",
+  "@eventsFilterAllTypes": {
+    "description": "Agent-Ops Events view (T181 FR-067)."
+  },
+  "eventsFilterNoMatch": "No events match the current filter.",
+  "@eventsFilterNoMatch": {
+    "description": "Agent-Ops Events view (T181 FR-067)."
+  },
+  "panesEmptyMessage": "No tmux panes discovered yet.\n\nStart an agent in a tmux pane inside any discovered container — it will appear here as \"discovered-and-unmanaged\".",
+  "@panesEmptyMessage": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesLoadError": "Could not load panes: {error}",
+  "@panesLoadError": {
+    "description": "Agent-Ops Panes view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "panesRetry": "Retry",
+  "@panesRetry": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesAdopt": "Adopt",
+  "@panesAdopt": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesOpenAgent": "Open agent",
+  "@panesOpenAgent": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesReprobe": "Re-probe",
+  "@panesReprobe": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesReprobeQueued": "Re-probe queued",
+  "@panesReprobeQueued": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesReprobeFailed": "Re-probe failed: {error}",
+  "@panesReprobeFailed": {
+    "description": "Agent-Ops Panes view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "panesFilterStateTooltip": "Filter by state",
+  "@panesFilterStateTooltip": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesFilterAllStates": "All states",
+  "@panesFilterAllStates": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "panesFilterNoMatch": "No panes match the current filter.",
+  "@panesFilterNoMatch": {
+    "description": "Agent-Ops Panes view (T181 FR-067)."
+  },
+  "queueEmptyMessage": "Queue is empty.\n\nMessages waiting for routing or operator approval will appear here.",
+  "@queueEmptyMessage": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "queueLoadError": "Could not load queue: {error}",
+  "@queueLoadError": {
+    "description": "Agent-Ops Queue view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "queueApprove": "Approve",
+  "@queueApprove": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "queueDelay": "Delay 60s",
+  "@queueDelay": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "queueCancel": "Cancel",
+  "@queueCancel": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "queueActionOk": "Queue {action} ok",
+  "@queueActionOk": {
+    "description": "Agent-Ops Queue view (T181 FR-067).",
+    "placeholders": {
+      "action": { "type": "String" }
+    }
+  },
+  "queueActionFailed": "Queue {action} failed: {error}",
+  "@queueActionFailed": {
+    "description": "Agent-Ops Queue view (T181 FR-067).",
+    "placeholders": {
+      "action": { "type": "String" },
+      "error": { "type": "String" }
+    }
+  },
+  "queueFilterStateTooltip": "Filter by state",
+  "@queueFilterStateTooltip": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "queueFilterAllStates": "All states",
+  "@queueFilterAllStates": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "queueFilterNoMatch": "No queue rows match the current filter.",
+  "@queueFilterNoMatch": {
+    "description": "Agent-Ops Queue view (T181 FR-067)."
+  },
+  "routesEmptyMessage": "No routes defined.\n\nTap + to add a route that wires events from a source agent to a target.",
+  "@routesEmptyMessage": {
+    "description": "Agent-Ops Routes view empty state (T181 FR-067)."
+  },
+  "routesLoadError": "Could not load routes: {error}",
+  "@routesLoadError": {
+    "description": "Agent-Ops Routes view load error (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "routesAddRoute": "Add route",
+  "@routesAddRoute": {
+    "description": "Agent-Ops Routes view add-route FAB label (T181 FR-067)."
+  },
+  "routesRemove": "Remove",
+  "@routesRemove": {
+    "description": "Agent-Ops Routes view remove-route tooltip (T181 FR-067)."
+  },
+  "routesRemoved": "Route removed",
+  "@routesRemoved": {
+    "description": "Agent-Ops Routes view route-removed snackbar (T181 FR-067)."
+  },
+  "routesToggleFailed": "Toggle failed: {error}",
+  "@routesToggleFailed": {
+    "description": "Agent-Ops Routes view toggle-failed snackbar (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "routesRemoveFailed": "Remove failed: {error}",
+  "@routesRemoveFailed": {
+    "description": "Agent-Ops Routes view remove-failed snackbar (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "routesTemplate": "template: {template}",
+  "@routesTemplate": {
+    "description": "Agent-Ops Routes view row template label (T181 FR-067).",
+    "placeholders": {
+      "template": { "type": "String" }
+    }
+  },
+  "routesMaster": "master: {master}",
+  "@routesMaster": {
+    "description": "Agent-Ops Routes view row master-rule label (T181 FR-067).",
+    "placeholders": {
+      "master": { "type": "String" }
+    }
+  },
+  "routesRecentSkip": "↳ recent skip: {explanation}",
+  "@routesRecentSkip": {
+    "description": "Agent-Ops Routes view row recent-skip explanation (T181 FR-067).",
+    "placeholders": {
+      "explanation": { "type": "String" }
+    }
+  },
+  "routesRecentMatch": "↳ recent match: {summary}",
+  "@routesRecentMatch": {
+    "description": "Agent-Ops Routes view row recent-match summary (T181 FR-067).",
+    "placeholders": {
+      "summary": { "type": "String" }
+    }
+  },
+  "routesFilterEnabledTooltip": "Filter by enabled state",
+  "@routesFilterEnabledTooltip": {
+    "description": "Agent-Ops Routes view enabled-state filter tooltip (T181 FR-067, T180)."
+  },
+  "routesFilterAll": "All routes",
+  "@routesFilterAll": {
+    "description": "Agent-Ops Routes view filter all-routes label (T181 FR-067, T180)."
+  },
+  "routesFilterEnabled": "Enabled",
+  "@routesFilterEnabled": {
+    "description": "Agent-Ops Routes view filter enabled label (T181 FR-067, T180)."
+  },
+  "routesFilterDisabled": "Disabled",
+  "@routesFilterDisabled": {
+    "description": "Agent-Ops Routes view filter disabled label (T181 FR-067, T180)."
+  },
+  "routesFilterNoMatch": "No routes match the current filter.",
+  "@routesFilterNoMatch": {
+    "description": "Agent-Ops Routes view filter no-match message (T181 FR-067, T180)."
+  },
+  "addRouteTitle": "Add route",
+  "@addRouteTitle": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteDescription": "Defines a FEAT-010 routing rule. The daemon owns the rule grammar; these three fields are forwarded verbatim.",
+  "@addRouteDescription": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteSourceLabel": "Source scope",
+  "@addRouteSourceLabel": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteSourceHint": "e.g. agent:claude-master-1 or container:bench-1",
+  "@addRouteSourceHint": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteTemplateLabel": "Template",
+  "@addRouteTemplateLabel": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteTemplateHint": "e.g. forward_event_to | broadcast_event | …",
+  "@addRouteTemplateHint": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteTargetLabel": "Target",
+  "@addRouteTargetLabel": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteTargetHint": "e.g. agent:codex-slave-1 or master:any",
+  "@addRouteTargetHint": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteFieldRequired": "{label} is required",
+  "@addRouteFieldRequired": {
+    "description": "Agent-Ops add route flow (T181 FR-067).",
+    "placeholders": {
+      "label": { "type": "String" }
+    }
+  },
+  "addRouteCancel": "Cancel",
+  "@addRouteCancel": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteAdd": "Add",
+  "@addRouteAdd": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteAddedSnack": "Route added",
+  "@addRouteAddedSnack": {
+    "description": "Agent-Ops add route flow (T181 FR-067)."
+  },
+  "addRouteAddFailed": "Add failed: {error}",
+  "@addRouteAddFailed": {
+    "description": "Agent-Ops add route flow (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "adoptTitle": "Adopt pane {sessionName}:{windowIndex}.{paneIndex}",
+  "@adoptTitle": {
+    "description": "Agent-Ops adopt flow modal title (T181 FR-067).",
+    "placeholders": {
+      "sessionName": { "type": "String" },
+      "windowIndex": { "type": "int" },
+      "paneIndex": { "type": "int" }
+    }
+  },
+  "adoptLabelLabel": "Label",
+  "@adoptLabelLabel": {
+    "description": "Agent-Ops adopt flow label field label (T181 FR-067)."
+  },
+  "adoptLabelHint": "e.g. claude-master-1",
+  "@adoptLabelHint": {
+    "description": "Agent-Ops adopt flow label field hint (T181 FR-067)."
+  },
+  "adoptLabelRequired": "Label is required",
+  "@adoptLabelRequired": {
+    "description": "Agent-Ops adopt flow label validation message (T181 FR-067)."
+  },
+  "adoptRoleLabel": "Role",
+  "@adoptRoleLabel": {
+    "description": "Agent-Ops adopt flow role field label (T181 FR-067)."
+  },
+  "adoptCapabilityLabel": "Capability",
+  "@adoptCapabilityLabel": {
+    "description": "Agent-Ops adopt flow capability field label (T181 FR-067)."
+  },
+  "adoptProjectPathLabel": "Project path",
+  "@adoptProjectPathLabel": {
+    "description": "Agent-Ops adopt flow project path field label (T181 FR-067)."
+  },
+  "adoptProjectPathRequired": "Project path is required",
+  "@adoptProjectPathRequired": {
+    "description": "Agent-Ops adopt flow project path validation message (T181 FR-067)."
+  },
+  "adoptAttachLogTitle": "Attach log now",
+  "@adoptAttachLogTitle": {
+    "description": "Agent-Ops adopt flow attach-log switch title (T181 FR-067)."
+  },
+  "adoptAttachLogSubtitle": "Recommended (FR-017)",
+  "@adoptAttachLogSubtitle": {
+    "description": "Agent-Ops adopt flow attach-log switch subtitle (T181 FR-067)."
+  },
+  "adoptCancel": "Cancel",
+  "@adoptCancel": {
+    "description": "Agent-Ops adopt flow cancel button (T181 FR-067)."
+  },
+  "adoptSubmit": "Adopt",
+  "@adoptSubmit": {
+    "description": "Agent-Ops adopt flow submit button (T181 FR-067)."
+  },
+  "adoptInvalidTransition": "Pane state {state} cannot transition to discovered-and-registered (FR-014).",
+  "@adoptInvalidTransition": {
+    "description": "Agent-Ops adopt flow invalid-transition error (T181 FR-067).",
+    "placeholders": {
+      "state": { "type": "String" }
+    }
+  },
+  "adoptedAs": "Adopted as {label}",
+  "@adoptedAs": {
+    "description": "Agent-Ops adopt flow success SnackBar (T181 FR-067).",
+    "placeholders": {
+      "label": { "type": "String" }
+    }
+  },
+  "adoptFailed": "Adopt failed: {error}",
+  "@adoptFailed": {
+    "description": "Agent-Ops adopt flow failure error message (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "directSendTitle": "Send to {label}",
+  "@directSendTitle": {
+    "description": "Agent-Ops direct send (T181 FR-067).",
+    "placeholders": {
+      "label": { "type": "String" }
+    }
+  },
+  "directSendPayloadLabel": "Payload",
+  "@directSendPayloadLabel": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendPayloadHint": "Type the prompt to send…",
+  "@directSendPayloadHint": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendEmptyError": "Payload is required (FR-018)",
+  "@directSendEmptyError": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendCancel": "Cancel",
+  "@directSendCancel": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendSending": "Sending…",
+  "@directSendSending": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendSend": "Send",
+  "@directSendSend": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendSuccess": "Sent.",
+  "@directSendSuccess": {
+    "description": "Agent-Ops direct send (T181 FR-067)."
+  },
+  "directSendFailure": "Send failed: {error}",
+  "@directSendFailure": {
+    "description": "Agent-Ops direct send (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "editAgentTitle": "Edit {label}",
+  "@editAgentTitle": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Dialog title.",
+    "placeholders": {
+      "label": { "type": "String" }
+    }
+  },
+  "editAgentLabelLabel": "Label",
+  "@editAgentLabelLabel": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Label field label."
+  },
+  "editAgentLabelHelper": "Empty clears the label.",
+  "@editAgentLabelHelper": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Label field helper text."
+  },
+  "editAgentRoleLabel": "Role",
+  "@editAgentRoleLabel": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Role field label."
+  },
+  "editAgentCapabilityLabel": "Capability",
+  "@editAgentCapabilityLabel": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Capability field label."
+  },
+  "editAgentProjectPathLabel": "Project path",
+  "@editAgentProjectPathLabel": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Project path field label."
+  },
+  "editAgentProjectPathHelper": "Empty clears the project path.",
+  "@editAgentProjectPathHelper": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Project path field helper text."
+  },
+  "editAgentCancel": "Cancel",
+  "@editAgentCancel": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Cancel button."
+  },
+  "editAgentSave": "Save",
+  "@editAgentSave": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Save button."
+  },
+  "editAgentUpdatedSnack": "Agent updated.",
+  "@editAgentUpdatedSnack": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Success snackbar."
+  },
+  "editAgentUpdateFailed": "Update failed: {error}",
+  "@editAgentUpdateFailed": {
+    "description": "Agent-Ops edit agent (T181 FR-067). Update failure message.",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "logAttachAttach": "Attach log",
+  "@logAttachAttach": {
+    "description": "Agent-Ops log attach affordance (T181 FR-067)."
+  },
+  "logAttachDetach": "Detach log",
+  "@logAttachDetach": {
+    "description": "Agent-Ops log attach affordance (T181 FR-067)."
+  },
+  "logAttachAttached": "Log attached",
+  "@logAttachAttached": {
+    "description": "Agent-Ops log attach affordance (T181 FR-067)."
+  },
+  "logAttachDetached": "Log detached",
+  "@logAttachDetached": {
+    "description": "Agent-Ops log attach affordance (T181 FR-067)."
+  },
+  "logAttachFailed": "Log action failed: {error}",
+  "@logAttachFailed": {
+    "description": "Agent-Ops log attach affordance (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "healthOverall": "Overall: {state}",
+  "@healthOverall": {
+    "description": "Agent-Ops Health view (T181 FR-067).",
+    "placeholders": {
+      "state": { "type": "String" }
+    }
+  },
+  "healthNoSubsystemData": "No subsystem data",
+  "@healthNoSubsystemData": {
+    "description": "Agent-Ops Health view (T181 FR-067)."
+  },
+  "healthSubsystemsReporting": "{count} subsystems reporting",
+  "@healthSubsystemsReporting": {
+    "description": "Agent-Ops Health view (T181 FR-067).",
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "healthHints": "Hints",
+  "@healthHints": {
+    "description": "Agent-Ops Health view (T181 FR-067)."
+  },
+  "healthHintFallback": "Hint",
+  "@healthHintFallback": {
+    "description": "Agent-Ops Health view hint fallback (T181 FR-067)."
+  },
+  "healthLoadError": "Could not load readiness: {error}",
+  "@healthLoadError": {
+    "description": "Agent-Ops Health view (T181 FR-067).",
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "healthStatus": "Status: {status}",
+  "@healthStatus": {
+    "description": "Agent-Ops Health subsystem (T181 FR-067).",
+    "placeholders": {
+      "status": { "type": "String" }
+    }
+  },
+  "healthReason": "Reason: {reason}",
+  "@healthReason": {
+    "description": "Agent-Ops Health subsystem (T181 FR-067).",
+    "placeholders": {
+      "reason": { "type": "String" }
+    }
+  },
+  "healthHintLabel": "Hint: {hint}",
+  "@healthHintLabel": {
+    "description": "Agent-Ops Health subsystem (T181 FR-067).",
+    "placeholders": {
+      "hint": { "type": "String" }
+    }
   }
 }

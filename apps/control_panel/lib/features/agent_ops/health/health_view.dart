@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../providers.dart';
 
 /// Agent Operations → Health. T076 (Phase 3 US1) + FR-022 + FR-059.
@@ -15,6 +16,7 @@ class HealthView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final readiness = ref.watch(readinessProvider);
     return readiness.when(
       data: (result) {
@@ -31,10 +33,10 @@ class HealthView extends ConsumerWidget {
                 color: _colorForState(context, state),
                 child: ListTile(
                   leading: Icon(_iconForState(state)),
-                  title: Text('Overall: $state'),
+                  title: Text(l10n.healthOverall(state)),
                   subtitle: subsystems.isEmpty
-                      ? const Text('No subsystem data')
-                      : Text('${subsystems.length} subsystems reporting'),
+                      ? Text(l10n.healthNoSubsystemData)
+                      : Text(l10n.healthSubsystemsReporting(subsystems.length)),
                 ),
               ),
               const SizedBox(height: 16),
@@ -44,12 +46,14 @@ class HealthView extends ConsumerWidget {
                 ),
               if (hints.isNotEmpty) ...[
                 const SizedBox(height: 16),
-                Text('Hints', style: Theme.of(context).textTheme.titleMedium),
+                Text(l10n.healthHints,
+                    style: Theme.of(context).textTheme.titleMedium),
                 for (final h in hints)
                   ListTile(
                     leading: const Icon(Icons.info_outline),
                     title: Text(
-                      (h is Map ? h['message']?.toString() : null) ?? 'Hint',
+                      (h is Map ? h['message']?.toString() : null) ??
+                          l10n.healthHintFallback,
                     ),
                   ),
               ],
@@ -58,7 +62,8 @@ class HealthView extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Could not load readiness: $e')),
+      error: (e, _) =>
+          Center(child: Text(l10n.healthLoadError(e.toString()))),
     );
   }
 
@@ -86,6 +91,7 @@ class _SubsystemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final name = data['name']?.toString() ?? 'unknown';
     final status = data['status']?.toString() ?? 'unknown';
     final reason = data['reason']?.toString();
@@ -96,9 +102,10 @@ class _SubsystemTile extends StatelessWidget {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Status: $status'),
-          if (reason != null && reason.isNotEmpty) Text('Reason: $reason'),
-          if (hint != null && hint.isNotEmpty) Text('Hint: $hint'),
+          Text(l10n.healthStatus(status)),
+          if (reason != null && reason.isNotEmpty)
+            Text(l10n.healthReason(reason)),
+          if (hint != null && hint.isNotEmpty) Text(l10n.healthHintLabel(hint)),
         ],
       ),
     );

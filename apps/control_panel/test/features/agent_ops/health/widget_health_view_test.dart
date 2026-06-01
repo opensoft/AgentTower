@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../helpers/fixture_builders.dart';
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 
 /// Widget tests for [HealthView] (FR-022 + FR-059). T164 — Phase 3 US1.
 ///
@@ -35,7 +36,10 @@ void main() {
               ),
             ),
           ],
-          child: const MaterialApp(home: Scaffold(body: HealthView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: HealthView())),
         ),
       );
       await tester.pump();
@@ -71,7 +75,10 @@ void main() {
               ),
             ),
           ],
-          child: const MaterialApp(home: Scaffold(body: HealthView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: HealthView())),
         ),
       );
       await tester.pump();
@@ -111,7 +118,10 @@ void main() {
               ),
             ),
           ],
-          child: const MaterialApp(home: Scaffold(body: HealthView())),
+          child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: HealthView())),
         ),
       );
       await tester.pump();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/daemon/errors.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/persistence/sort_filter_state.dart';
 import '../../../core/providers.dart';
 import '../../../domain/models/common_enums.dart';
@@ -36,6 +37,7 @@ class _PanesViewState extends ConsumerState<PanesView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (!_loaded) {
       _loaded = true;
       final p = ref.read(sortFilterRepositoryProvider).load(viewId: _viewId);
@@ -53,8 +55,8 @@ class _PanesViewState extends ConsumerState<PanesView> {
             ListControlsBar(
               controls: [
                 EnumFilterMenu<PaneState>(
-                  tooltip: 'Filter by state',
-                  allLabel: 'All states',
+                  tooltip: l10n.panesFilterStateTooltip,
+                  allLabel: l10n.panesFilterAllStates,
                   value: _filter,
                   options: PaneState.values,
                   labelOf: (s) => s.wireValue,
@@ -64,13 +66,11 @@ class _PanesViewState extends ConsumerState<PanesView> {
             ),
             Expanded(
               child: rows.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Padding(
-                        padding: EdgeInsets.all(32),
+                        padding: const EdgeInsets.all(32),
                         child: Text(
-                          'No tmux panes discovered yet.\n\nStart an agent in a tmux pane inside any '
-                          'discovered container — it will appear here as '
-                          '"discovered-and-unmanaged".',
+                          l10n.panesEmptyMessage,
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -78,8 +78,7 @@ class _PanesViewState extends ConsumerState<PanesView> {
                   : RefreshIndicator(
                       onRefresh: () async => ref.invalidate(paneListProvider),
                       child: filtered.isEmpty
-                          ? const FilterNoMatch(
-                              message: 'No panes match the current filter.')
+                          ? FilterNoMatch(message: l10n.panesFilterNoMatch)
                           : ListView.separated(
                               itemCount: filtered.length,
                               separatorBuilder: (_, __) =>
@@ -97,11 +96,12 @@ class _PanesViewState extends ConsumerState<PanesView> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Could not load panes: $e', textAlign: TextAlign.center),
+            Text(l10n.panesLoadError(e.toString()),
+                textAlign: TextAlign.center),
             const SizedBox(height: 12),
             OutlinedButton(
               onPressed: () => ref.invalidate(paneListProvider),
-              child: const Text('Retry'),
+              child: Text(l10n.panesRetry),
             ),
           ],
         ),
@@ -146,17 +146,18 @@ class _NextAction extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     switch (pane.state) {
       case PaneState.discoveredAndUnmanaged:
         return TextButton.icon(
           icon: const Icon(Icons.add_circle_outline),
-          label: const Text('Adopt'),
+          label: Text(l10n.panesAdopt),
           onPressed: () => AdoptFlow.show(context, pane: pane),
         );
       case PaneState.discoveredAndRegistered:
         return TextButton.icon(
           icon: const Icon(Icons.open_in_new),
-          label: const Text('Open agent'),
+          label: Text(l10n.panesOpenAgent),
           onPressed: pane.registeredAgentId == null
               ? null
               : () => Navigator.of(context).pushReplacementNamed(
@@ -170,7 +171,7 @@ class _NextAction extends ConsumerWidget {
       case PaneState.discoveryDegraded:
         return TextButton.icon(
           icon: const Icon(Icons.refresh),
-          label: const Text('Re-probe'),
+          label: Text(l10n.panesReprobe),
           onPressed: () => _reprobe(context, ref),
         );
     }
@@ -182,13 +183,16 @@ class _NextAction extends ConsumerWidget {
     // SnackBar dispatch. Per `app-methods.md` §app.scan.panes the call accepts
     // ONLY {wait}; the v1.0 contract has no container scoping.
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
     try {
       await ref.read(appClientProvider).scanPanes();
       ref.invalidate(paneListProvider);
-      messenger.showSnackBar(const SnackBar(content: Text('Re-probe queued')));
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.panesReprobeQueued)),
+      );
     } catch (e) {
       messenger.showSnackBar(
-        SnackBar(content: Text('Re-probe failed: ${_errorText(e)}')),
+        SnackBar(content: Text(l10n.panesReprobeFailed(_errorText(e)))),
       );
     }
   }
