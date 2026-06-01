@@ -10,7 +10,9 @@ separately against a live bench container.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -192,6 +194,8 @@ def test_build_spawn_backends_returns_three_callable_keys() -> None:
     adapter = _adapter()
 
     class _StubAgentService:
+        connection_factory = staticmethod(lambda: None)
+
         def register_agent(self, params, socket_peer_uid):  # noqa: ANN001
             return {"agent": {"agent_id": "agent-xyz"}}
 
@@ -208,7 +212,8 @@ def test_build_spawn_backends_returns_three_callable_keys() -> None:
     )
 
     assert set(backends) == {
-        "tmux_spawn", "register", "log_attach", "session_conflict"
+        "tmux_spawn", "register", "log_attach", "session_conflict",
+        "tmux_kill", "route_cleanup", "log_detach",
     }
     pane = _pane(index=0, label="m1")
     spawn_result = backends["tmux_spawn"](pane)
@@ -487,3 +492,188 @@ def test_recovery_channel_salvages_malformed_partial_panes() -> None:
 
     rows = _recovery_channel(adapter)(CONTAINER)
     assert rows == [{"tmux_session_name": "feat013", "tmux_pane_index": 2}]
+
+
+# ─── Remove-pane backends (T059) ────────────────────────────────────────
+
+
+class _FakeAgentService:
+    """Minimal AgentService stub exposing the ``connection_factory`` the
+    kill backend uses to look up an agent's durable ``%N`` pane id."""
+
+    def __init__(self) -> None:
+        self.connection_factory = lambda: SimpleNamespace(close=lambda: None)
+
+
+def _registered_pane(agent_id: str | None) -> ManagedPaneRow:
+    return dataclasses.replace(_pane(index=0, label="m1"), agent_id=agent_id)
+
+
+def test_tmux_kill_backend_resolves_pane_id_via_agent_registry(monkeypatch) -> None:  # noqa: ANN001
+    import agenttower.managed_sessions.spawn_backends as sbmod
+    from agenttower.managed_sessions.spawn_backends import make_tmux_kill_backend
+
+    monkeypatch.setattr(
+        sbmod._state_agents, "select_agent_by_id",
+        lambda conn, *, agent_id: SimpleNamespace(
+            tmux_pane_id="%5", tmux_socket_path="/tmp/tmux-1000/default"
+        ),
+    )
+    adapter = _adapter()
+    kill = make_tmux_kill_backend(
+        adapter=adapter, agent_service=_FakeAgentService(),
+        bench_user_resolver=lambda _cid: BENCH_USER,
+    )
+
+    result = kill(_registered_pane("agt_aaaaaaaaaaaa"))
+
+    assert result == {"ok": True}
+    kill_calls = [kw for name, kw in adapter.managed_calls if name == "kill_pane"]
+    assert len(kill_calls) == 1
+    assert kill_calls[0]["pane_id"] == "%5"
+    assert kill_calls[0]["socket_path"] == "/tmp/tmux-1000/default"
+    assert kill_calls[0]["bench_user"] == BENCH_USER
+
+
+def test_tmux_kill_backend_no_agent_id_is_noop_success() -> None:
+    from agenttower.managed_sessions.spawn_backends import make_tmux_kill_backend
+
+    adapter = _adapter()
+    kill = make_tmux_kill_backend(
+        adapter=adapter, agent_service=_FakeAgentService(),
+        bench_user_resolver=lambda _cid: BENCH_USER,
+    )
+
+    # Never-registered pane → no durable %N target → idempotent success.
+    assert kill(_registered_pane(None)) == {"ok": True}
+    assert not [name for name, _ in adapter.managed_calls if name == "kill_pane"]
+
+
+def test_tmux_kill_backend_unknown_agent_is_noop_success(monkeypatch) -> None:  # noqa: ANN001
+    import agenttower.managed_sessions.spawn_backends as sbmod
+    from agenttower.managed_sessions.spawn_backends import make_tmux_kill_backend
+
+    monkeypatch.setattr(
+        sbmod._state_agents, "select_agent_by_id",
+        lambda conn, *, agent_id: None,
+    )
+    adapter = _adapter()
+    kill = make_tmux_kill_backend(
+        adapter=adapter, agent_service=_FakeAgentService(),
+        bench_user_resolver=lambda _cid: BENCH_USER,
+    )
+    assert kill(_registered_pane("agt_gone0000000")) == {"ok": True}
+
+
+def test_tmux_kill_backend_maps_tmux_error_to_ok_false(monkeypatch) -> None:  # noqa: ANN001
+    import agenttower.managed_sessions.spawn_backends as sbmod
+    from agenttower.managed_sessions.spawn_backends import make_tmux_kill_backend
+
+    monkeypatch.setattr(
+        sbmod._state_agents, "select_agent_by_id",
+        lambda conn, *, agent_id: SimpleNamespace(
+            tmux_pane_id="%5", tmux_socket_path="/s"
+        ),
+    )
+    adapter = _adapter()
+    adapter.kill_pane_failures.append(
+        TmuxError(code="docker_exec_failed", message="boom", container_id=CONTAINER)
+    )
+    kill = make_tmux_kill_backend(
+        adapter=adapter, agent_service=_FakeAgentService(),
+        bench_user_resolver=lambda _cid: BENCH_USER,
+    )
+
+    result = kill(_registered_pane("agt_aaaaaaaaaaaa"))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "docker_exec_failed"
+
+
+class _FakeRoutesService:
+    def __init__(self, routes) -> None:  # noqa: ANN001
+        self._routes = routes
+        self.removed: list[str] = []
+
+    def list_routes(self):  # noqa: ANN201
+        return list(self._routes)
+
+    def remove_route(self, route_id, *, deleted_by_agent_id):  # noqa: ANN001
+        self.removed.append(route_id)
+
+
+def _route(route_id: str, *, source=None, target=None, master=None):  # noqa: ANN001
+    return SimpleNamespace(
+        route_id=route_id,
+        source_scope_value=source,
+        target_value=target,
+        master_value=master,
+    )
+
+
+def test_route_cleanup_removes_only_routes_referencing_agent() -> None:
+    from agenttower.managed_sessions.spawn_backends import make_route_cleanup_backend
+
+    agent = "agt_aaaaaaaaaaaa"
+    routes = [
+        _route("r-src", source=agent),
+        _route("r-tgt", target=agent),
+        _route("r-mst", master=agent),
+        _route("r-other", source="agt_bbbbbbbbbbbb"),
+    ]
+    svc = _FakeRoutesService(routes)
+    make_route_cleanup_backend(svc)(_registered_pane(agent))
+
+    assert svc.removed == ["r-src", "r-tgt", "r-mst"]
+
+
+def test_route_cleanup_noop_without_agent_or_service() -> None:
+    from agenttower.managed_sessions.spawn_backends import make_route_cleanup_backend
+
+    svc = _FakeRoutesService([_route("r", source="agt_aaaaaaaaaaaa")])
+    # No agent_id → no cleanup.
+    make_route_cleanup_backend(svc)(_registered_pane(None))
+    assert svc.removed == []
+    # No routes_service → no-op (doesn't raise).
+    make_route_cleanup_backend(None)(_registered_pane("agt_aaaaaaaaaaaa"))
+
+
+def test_route_cleanup_tolerates_per_route_remove_error() -> None:
+    from agenttower.managed_sessions.spawn_backends import make_route_cleanup_backend
+
+    agent = "agt_aaaaaaaaaaaa"
+
+    class _AngryRoutes(_FakeRoutesService):
+        def remove_route(self, route_id, *, deleted_by_agent_id):  # noqa: ANN001
+            if route_id == "r1":
+                raise RuntimeError("RouteIdNotFound race")
+            self.removed.append(route_id)
+
+    svc = _AngryRoutes([_route("r1", source=agent), _route("r2", target=agent)])
+    make_route_cleanup_backend(svc)(_registered_pane(agent))
+    # r1 raised but the loop continued and removed r2.
+    assert svc.removed == ["r2"]
+
+
+class _FakeLogService:
+    def __init__(self) -> None:
+        self.detached: list[dict] = []
+
+    def detach_log(self, params, *, socket_peer_uid):  # noqa: ANN001
+        self.detached.append(params)
+        return {"status": "detached"}
+
+
+def test_log_detach_backend_detaches_by_agent_id() -> None:
+    from agenttower.managed_sessions.spawn_backends import make_log_detach_backend
+
+    svc = _FakeLogService()
+    make_log_detach_backend(svc)(_registered_pane("agt_aaaaaaaaaaaa"))
+    assert svc.detached == [{"agent_id": "agt_aaaaaaaaaaaa"}]
+
+
+def test_log_detach_backend_noop_without_agent_id() -> None:
+    from agenttower.managed_sessions.spawn_backends import make_log_detach_backend
+
+    svc = _FakeLogService()
+    make_log_detach_backend(svc)(_registered_pane(None))
+    assert svc.detached == []

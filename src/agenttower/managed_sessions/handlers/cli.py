@@ -166,6 +166,18 @@ def _session_conflict_fn(ctx: "DaemonContext"):  # noqa: ANN202
     return backends.get("session_conflict")
 
 
+def _remove_pane_backends(ctx: "DaemonContext"):  # noqa: ANN202
+    """Pull the FR-010 remove-pane side-effect backends from the daemon's
+    ``managed_spawn_backends`` dict as ``(tmux_kill, route_cleanup,
+    log_detach)``. Each is ``None`` when boot wiring is incomplete."""
+    backends = getattr(ctx, "managed_spawn_backends", None) or {}
+    return (
+        backends.get("tmux_kill"),
+        backends.get("route_cleanup"),
+        backends.get("log_detach"),
+    )
+
+
 # ─── managed.layout.create ───────────────────────────────────────────────
 
 
@@ -695,12 +707,12 @@ def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             )
 
     # Service performs the actual lifecycle work + raises closed-set errors.
-    # The tmux kill / route / log cleanup backends are pulled from ctx
-    # (production wiring) or default to None (test fixtures + the spawn-
-    # backends factory pattern from Phase 4c).
-    tmux_kill_fn = getattr(ctx, "managed_tmux_kill_fn", None)
-    route_cleanup_fn = getattr(ctx, "managed_route_cleanup_fn", None)
-    log_detach_fn = getattr(ctx, "managed_log_detach_fn", None)
+    # The FR-010 tmux-kill / route-cleanup / log-detach backends are pulled
+    # from the daemon's managed_spawn_backends dict (T059 production wiring);
+    # they default to None when boot wiring is incomplete (test fixtures /
+    # no tmux adapter), in which case remove_pane archives the row without
+    # the real side-effects.
+    tmux_kill_fn, route_cleanup_fn, log_detach_fn = _remove_pane_backends(ctx)
 
     try:
         result = remove_pane(
@@ -780,6 +792,12 @@ def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
         )
+        # FR-011: the recreated pane lands in ``creating``; kick off the
+        # background spawn pipeline so it actually spawns in production
+        # (spawn_layout_in_background only touches ``creating`` panes, so
+        # re-running it for the parent layout disturbs no settled siblings).
+        from ..daemon_boot import kickoff_spawn_pipeline
+        kickoff_spawn_pipeline(layout_id=result.layout_id, ctx=ctx)
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)
     except Exception:  # noqa: BLE001

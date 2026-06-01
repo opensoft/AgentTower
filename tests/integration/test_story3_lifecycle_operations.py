@@ -147,8 +147,12 @@ def test_us3_as1_remove_kills_pane_and_preserves_managed_pane_row(ctx: Any) -> N
     target = detail["result"]["panes"][0]["pane_id"]
 
     # Inject a tmux-kill backend on ctx so the M6 handler picks it up.
+    # T059: the remove handler reads the backend from the
+    # managed_spawn_backends dict (key "tmux_kill").
     kill_calls: list[str] = []
-    ctx.managed_tmux_kill_fn = lambda pane: (kill_calls.append(pane.id), {"ok": True})[1]
+    ctx.managed_spawn_backends = {
+        "tmux_kill": lambda pane: (kill_calls.append(pane.id), {"ok": True})[1]
+    }
 
     rm = APP_DISPATCH["app.managed_pane_remove"](
         ctx, {"pane_id": target}, HOST_PEER_UID,
@@ -182,9 +186,11 @@ def test_us3_as1_remove_tmux_already_gone_is_idempotent(ctx: Any) -> None:
         ctx, {"layout_id": layout_id}, HOST_PEER_UID,
     )["result"]["panes"][0]["pane_id"]
 
-    ctx.managed_tmux_kill_fn = lambda pane: {
-        "ok": False,
-        "error": {"code": "tmux_pane_not_found", "message": "gone"},
+    ctx.managed_spawn_backends = {
+        "tmux_kill": lambda pane: {
+            "ok": False,
+            "error": {"code": "tmux_pane_not_found", "message": "gone"},
+        }
     }
 
     rm = APP_DISPATCH["app.managed_pane_remove"](
@@ -192,6 +198,33 @@ def test_us3_as1_remove_tmux_already_gone_is_idempotent(ctx: Any) -> None:
     )
     assert rm["ok"] is True
     assert rm["result"]["state"] == "removed"
+
+
+def test_us3_as1_remove_threads_all_three_backends_from_dict(ctx: Any) -> None:
+    """T059: the M6 handler threads tmux_kill + route_cleanup + log_detach
+    from the managed_spawn_backends dict into remove_pane, and all three
+    fire for the removed pane."""
+    layout_id = _create_layout_and_drive_to_ready(ctx)
+    target = APP_DISPATCH["app.managed_layout_detail"](
+        ctx, {"layout_id": layout_id}, HOST_PEER_UID,
+    )["result"]["panes"][0]["pane_id"]
+
+    killed: list[str] = []
+    routes_cleaned: list[str] = []
+    logs_detached: list[str] = []
+    ctx.managed_spawn_backends = {
+        "tmux_kill": lambda pane: (killed.append(pane.id), {"ok": True})[1],
+        "route_cleanup": lambda pane: routes_cleaned.append(pane.id),
+        "log_detach": lambda pane: logs_detached.append(pane.id),
+    }
+
+    rm = APP_DISPATCH["app.managed_pane_remove"](
+        ctx, {"pane_id": target}, HOST_PEER_UID,
+    )
+    assert rm["ok"] is True
+    assert killed == [target]
+    assert routes_cleaned == [target]
+    assert logs_detached == [target]
 
 
 # ─── US3 AS-2: recreate produces predecessor-linked row ─────────────────

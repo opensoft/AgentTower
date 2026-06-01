@@ -92,6 +92,18 @@ def _session_conflict_fn(ctx: "DaemonContext"):  # noqa: ANN202
     return backends.get("session_conflict")
 
 
+def _remove_pane_backends(ctx: "DaemonContext"):  # noqa: ANN202
+    """FR-010 remove-pane side-effect backends as ``(tmux_kill,
+    route_cleanup, log_detach)``; each ``None`` when boot wiring is
+    incomplete."""
+    backends = getattr(ctx, "managed_spawn_backends", None) or {}
+    return (
+        backends.get("tmux_kill"),
+        backends.get("route_cleanup"),
+        backends.get("log_detach"),
+    )
+
+
 def _state_str(state: Any) -> str:
     if isinstance(state, ManagedState):
         return state.value
@@ -542,9 +554,7 @@ def app_managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"field": "pane_id", "reason": "missing or empty"},
         )
 
-    tmux_kill_fn = getattr(ctx, "managed_tmux_kill_fn", None)
-    route_cleanup_fn = getattr(ctx, "managed_route_cleanup_fn", None)
-    log_detach_fn = getattr(ctx, "managed_log_detach_fn", None)
+    tmux_kill_fn, route_cleanup_fn, log_detach_fn = _remove_pane_backends(ctx)
 
     try:
         result = remove_pane(
@@ -612,6 +622,10 @@ def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
         )
+        # FR-011: the recreated pane lands in ``creating``; kick off the
+        # background spawn pipeline so it actually spawns in production.
+        from ..daemon_boot import kickoff_spawn_pipeline
+        kickoff_spawn_pipeline(layout_id=result.layout_id, ctx=ctx)
     except ManagedSessionsError as exc:
         return _build_managed_error_envelope(exc.code, str(exc), details=exc.details)
 

@@ -49,13 +49,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from ..socket_api import errors as _sock_errors
+from ..state import agents as _state_agents
 from ..tmux.adapter import TmuxAdapter, TmuxError
 from .dao import ManagedPaneRow
 from .errors import MANAGED_SESSION_NAME_CONFLICT, ManagedSessionsError
 from .launch_profiles import resolve_profile
 from .service import (
+    CleanupFn,
     LogAttachFn,
     RegisterAgentFn,
+    TmuxKillFn,
     TmuxSpawnFn,
 )
 
@@ -406,6 +409,109 @@ def make_recovery_list_panes_channel(
     return list_panes
 
 
+# ─── Remove-pane backends (T059) ────────────────────────────────────────
+
+
+def make_tmux_kill_backend(
+    *,
+    adapter: TmuxAdapter,
+    agent_service: "AgentService",
+    bench_user_resolver: Optional[BenchUserResolver] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> TmuxKillFn:
+    """Build the FR-010 ``tmux_kill_fn(pane) -> {ok, error?}`` backend.
+
+    ``managed_pane`` stores ``tmux_pane_index`` (which renumbers when
+    sibling panes close), NOT the durable ``%N`` pane id ``kill-pane``
+    targets. We resolve the durable id by joining
+    ``managed_pane.agent_id`` → the FEAT-006 agent registry's
+    ``tmux_pane_id`` + ``tmux_socket_path`` (the design decision recorded
+    on T059). A pane with no ``agent_id`` (never registered — e.g.
+    ``failed`` at ``pane_create``) has no durable target, so kill is a
+    no-op success (idempotent: "the pane is gone" is satisfied). A
+    :class:`TmuxError` from ``kill-pane`` becomes ``{ok: False}`` so
+    ``remove_pane`` can record ``tmux_kill_succeeded=False`` (it still
+    archives the row — removal is not blocked on the kill).
+    """
+    env_map = dict(env if env is not None else os.environ)
+    resolve_bench_user = bench_user_resolver or _default_bench_user_resolver(env_map)
+
+    def kill(pane: ManagedPaneRow) -> dict[str, Any]:
+        if not pane.agent_id:
+            return {"ok": True}
+        conn = agent_service.connection_factory()
+        try:
+            agent = _state_agents.select_agent_by_id(conn, agent_id=pane.agent_id)
+        finally:
+            conn.close()
+        if agent is None:
+            # Registry row already gone → nothing durable to target.
+            return {"ok": True}
+        try:
+            adapter.kill_pane(
+                container_id=pane.container_id,
+                bench_user=resolve_bench_user(pane.container_id),
+                socket_path=agent.tmux_socket_path,
+                pane_id=agent.tmux_pane_id,
+            )
+            return {"ok": True}
+        except TmuxError as exc:
+            return {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+
+    return kill
+
+
+def make_route_cleanup_backend(routes_service: Optional[Any]) -> CleanupFn:
+    """Build the FR-010 ``route_cleanup_fn(pane)`` backend over FEAT-010.
+
+    Removes every route that references the removed pane's agent in any
+    role — ``source_scope_value`` / ``target_value`` / ``master_value``.
+    FEAT-010 has no bulk "delete routes for agent" verb, so we
+    ``list_routes`` then ``remove_route`` each match. Best-effort: a
+    pane with no ``agent_id`` or an absent ``routes_service`` is a no-op,
+    and a per-route ``RouteIdNotFound`` race is skipped (the caller —
+    ``remove_pane`` — also wraps this in a best-effort guard).
+    """
+
+    def cleanup(pane: ManagedPaneRow) -> None:
+        if not pane.agent_id or routes_service is None:
+            return
+        agent_id = pane.agent_id
+        routes = routes_service.list_routes()
+        for route in routes:
+            if agent_id in (
+                route.source_scope_value,
+                route.target_value,
+                route.master_value,
+            ):
+                try:
+                    routes_service.remove_route(
+                        route.route_id, deleted_by_agent_id=None
+                    )
+                except Exception:  # noqa: BLE001 — RouteIdNotFound race / best-effort
+                    continue
+
+    return cleanup
+
+
+def make_log_detach_backend(log_service: "LogService") -> CleanupFn:
+    """Build the FR-010 ``log_detach_fn(pane)`` backend over FEAT-007.
+
+    Mirrors ``make_log_attach_backend``: detaches the pane's agent log
+    follow by ``agent_id`` (the attachment is keyed by agent, not by a
+    handle). Best-effort — a pane with no ``agent_id`` or an
+    ``attachment_not_found`` (never attached / already detached) is a
+    no-op (``remove_pane`` wraps this in a best-effort guard too).
+    """
+
+    def detach(pane: ManagedPaneRow) -> None:
+        if not pane.agent_id:
+            return
+        log_service.detach_log({"agent_id": pane.agent_id}, socket_peer_uid=-1)
+
+    return detach
+
+
 # ─── Register backend (T029) ────────────────────────────────────────────
 
 
@@ -531,16 +637,26 @@ def build_spawn_backends(
     adapter: TmuxAdapter,
     agent_service: "AgentService",
     log_service: "LogService",
+    routes_service: Optional[Any] = None,
     bench_user_resolver: Optional[BenchUserResolver] = None,
     env: Optional[Mapping[str, str]] = None,
     profile_override_dir: Optional[Path] = None,
     launch_probe_delay_s: float = DEFAULT_LAUNCH_PROBE_DELAY_S,
 ) -> dict[str, Any]:
-    """Assemble the three concrete backends as the dict the daemon stores.
+    """Assemble the production managed-session backends as the dict the
+    daemon stores on ``DaemonContext.managed_spawn_backends``.
 
-    The daemon calls this once at boot and stores the result on
-    ``DaemonContext.managed_spawn_backends``; ``kickoff_spawn_pipeline``
-    reads ``backends["tmux_spawn"|"register"|"log_attach"]`` off it.
+    Keys:
+
+    * ``tmux_spawn`` / ``register`` / ``log_attach`` — the create/spawn
+      pipeline (T028–T030 / T057), read by ``kickoff_spawn_pipeline``.
+    * ``session_conflict`` — the FR-016 synchronous conflict pre-check
+      (T057b), read by the M1 handlers.
+    * ``tmux_kill`` / ``route_cleanup`` / ``log_detach`` — the FR-010
+      remove-pane side-effect backends (T059), read by the M6 handlers.
+
+    ``routes_service`` is optional; when ``None`` the ``route_cleanup``
+    backend is a no-op (routes can't be reached without it).
     """
     return {
         "tmux_spawn": make_tmux_spawn_backend(
@@ -562,15 +678,26 @@ def build_spawn_backends(
             bench_user_resolver=bench_user_resolver,
             env=env,
         ),
+        "tmux_kill": make_tmux_kill_backend(
+            adapter=adapter,
+            agent_service=agent_service,
+            bench_user_resolver=bench_user_resolver,
+            env=env,
+        ),
+        "route_cleanup": make_route_cleanup_backend(routes_service),
+        "log_detach": make_log_detach_backend(log_service),
     }
 
 
 __all__ = [
     "BenchUserResolver",
     "build_spawn_backends",
+    "make_log_attach_backend",
+    "make_log_detach_backend",
     "make_recovery_list_panes_channel",
     "make_register_backend",
-    "make_log_attach_backend",
+    "make_route_cleanup_backend",
     "make_session_conflict_checker",
+    "make_tmux_kill_backend",
     "make_tmux_spawn_backend",
 ]

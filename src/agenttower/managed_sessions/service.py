@@ -1225,6 +1225,7 @@ class RecreatePaneResult:
 
     pane_id: str
     predecessor_id: str
+    layout_id: str  # the parent layout (= predecessor's layout) the new pane joins
     chain_depth: int
     state: ManagedState  # always ManagedState.CREATING on success
 
@@ -1423,6 +1424,7 @@ def recreate_pane(
         return RecreatePaneResult(
             pane_id=new_pane_id,
             predecessor_id=predecessor.id,
+            layout_id=predecessor.layout_id,
             chain_depth=new_chain_depth,
             state=ManagedState.CREATING,
         )

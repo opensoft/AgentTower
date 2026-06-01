@@ -959,6 +959,9 @@ def _run(args: argparse.Namespace) -> int:
                     adapter=managed_tmux_adapter,
                     agent_service=agent_service,
                     log_service=log_service,
+                    # T059: FR-010 remove-pane side-effects (route cleanup
+                    # over FEAT-010) need the RoutesService.
+                    routes_service=routes_service,
                 )
                 # T058: production recovery list-panes channel so the
                 # FR-020 / SC-008 / SC-009 boot reconcile actually runs.
