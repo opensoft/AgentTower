@@ -347,3 +347,143 @@ def test_session_conflict_checker_resolves_socket_and_delegates() -> None:
     has_calls = [kw for name, kw in adapter.managed_calls if name == "has_session"]
     assert has_calls[0]["socket_path"] == EXPECTED_SOCKET
     assert has_calls[0]["bench_user"] == BENCH_USER
+
+
+# ─── Recovery list-panes channel (T058) ─────────────────────────────────
+
+
+def _recovery_channel(adapter: FakeTmuxAdapter):
+    from agenttower.managed_sessions.spawn_backends import (
+        make_recovery_list_panes_channel,
+    )
+
+    return make_recovery_list_panes_channel(
+        adapter=adapter, bench_user_resolver=lambda _cid: BENCH_USER
+    )
+
+
+def _pane_fixture(session: str, index: int, *, title: str = "") -> dict:
+    return {
+        "session_name": session,
+        "window_index": 0,
+        "pane_index": index,
+        "pane_id": f"%{index}",
+        "pane_pid": 1000 + index,
+        "pane_title": title,
+    }
+
+
+def test_recovery_channel_maps_panes_without_stripping_pending_managed() -> None:
+    adapter = FakeTmuxAdapter(
+        {
+            "containers": {
+                CONTAINER: {
+                    "uid": UID,
+                    "sockets": {
+                        "default": [
+                            # A still-pending managed pane (marker title set)
+                            # MUST be reported live — reconcile needs to see it.
+                            _pane_fixture("feat013", 0, title="@MANAGED:tok:m1"),
+                            _pane_fixture("feat013", 1),
+                        ],
+                    },
+                }
+            }
+        }
+    )
+
+    rows = _recovery_channel(adapter)(CONTAINER)
+
+    assert rows == [
+        {"tmux_session_name": "feat013", "tmux_pane_index": 0},
+        {"tmux_session_name": "feat013", "tmux_pane_index": 1},
+    ]
+
+
+def test_recovery_channel_socket_dir_missing_returns_empty() -> None:
+    adapter = FakeTmuxAdapter(
+        {"containers": {CONTAINER: {"uid": UID, "socket_dir_missing": True}}}
+    )
+    assert _recovery_channel(adapter)(CONTAINER) == []
+
+
+def test_recovery_channel_tmux_no_server_socket_contributes_nothing() -> None:
+    adapter = FakeTmuxAdapter(
+        {
+            "containers": {
+                CONTAINER: {
+                    "uid": UID,
+                    "sockets": {"default": {"failure": "tmux_no_server"}},
+                }
+            }
+        }
+    )
+    assert _recovery_channel(adapter)(CONTAINER) == []
+
+
+def test_recovery_channel_propagates_socket_dir_docker_failure() -> None:
+    adapter = FakeTmuxAdapter(
+        {
+            "containers": {
+                CONTAINER: {
+                    "uid": UID,
+                    "socket_listing_failure": "docker_exec_failed",
+                }
+            }
+        }
+    )
+    # Uncertain liveness → propagate so the boot reconcile leaves rows alone.
+    with pytest.raises(TmuxError):
+        _recovery_channel(adapter)(CONTAINER)
+
+
+def test_recovery_channel_propagates_non_recoverable_per_socket_error() -> None:
+    adapter = FakeTmuxAdapter(
+        {
+            "containers": {
+                CONTAINER: {
+                    "uid": UID,
+                    "sockets": {"default": {"failure": "docker_exec_timeout"}},
+                }
+            }
+        }
+    )
+    with pytest.raises(TmuxError):
+        _recovery_channel(adapter)(CONTAINER)
+
+
+def test_recovery_channel_salvages_malformed_partial_panes() -> None:
+    from agenttower.tmux.parsers import ParsedPane
+
+    adapter = _adapter()
+    partial = (
+        ParsedPane(
+            tmux_session_name="feat013",
+            tmux_window_index=0,
+            tmux_pane_index=2,
+            tmux_pane_id="%2",
+            pane_pid=42,
+            pane_tty="",
+            pane_current_command="",
+            pane_current_path="",
+            pane_title="",
+            pane_active=True,
+        ),
+    )
+
+    def _list_panes(*, container_id, bench_user, socket_path):  # noqa: ANN001
+        raise TmuxError(
+            code="output_malformed",
+            message="one bad row",
+            container_id=container_id,
+            tmux_socket_path=socket_path,
+            partial_panes=partial,
+        )
+
+    # One socket present so the loop runs; override list_panes to raise
+    # OUTPUT_MALFORMED carrying a salvageable partial.
+    adapter._script["containers"][CONTAINER]["sockets"] = {"default": []}
+    adapter.list_panes = _list_panes  # type: ignore[assignment]
+
+    rows = _recovery_channel(adapter)(CONTAINER)
+    assert rows == [{"tmux_session_name": "feat013", "tmux_pane_index": 2}]

@@ -221,6 +221,86 @@ def test_reconcile_at_boot_is_fail_soft_when_backend_raises(
     assert outcome is None
 
 
+def test_reconcile_at_boot_with_production_channel_reattaches_survivors(
+    conn: sqlite3.Connection,
+) -> None:
+    """T058 end-to-end: the production ``make_recovery_list_panes_channel``
+    built over a FakeTmuxAdapter drives reconcile to reattach a surviving
+    pane and fail a missing one (FR-020 / SC-008 / SC-009)."""
+    from agenttower.managed_sessions.spawn_backends import (
+        make_recovery_list_panes_channel,
+    )
+    from agenttower.tmux import FakeTmuxAdapter
+
+    serializer = make_managed_serializer()
+    layout_id = str(uuid.uuid4())
+    insert_layout(
+        conn,
+        ManagedLayoutRow(
+            id=layout_id, container_id="bench-alpha",
+            template_name="2m+2s", intended_pane_count=2,
+            state=ManagedState.READY, failed_stage=None,
+            idempotency_key=None,
+            created_at=_ts(), updated_at=_ts(),
+        ),
+    )
+    survivor_id, missing_id = str(uuid.uuid4()), str(uuid.uuid4())
+    for pid, index in ((survivor_id, 0), (missing_id, 1)):
+        insert_pane(
+            conn,
+            ManagedPaneRow(
+                id=pid, layout_id=layout_id,
+                container_id="bench-alpha", agent_id=None,
+                role="master" if index == 0 else "slave",
+                capability="orchestrator" if index == 0 else "worker",
+                label=f"m{index}",
+                launch_command_ref=None,
+                tmux_session_name="s-live", tmux_pane_index=index,
+                pending_marker_token=None,
+                state=ManagedState.READY, failed_stage=None,
+                predecessor_id=None, chain_depth=0,
+                created_at=_ts(), updated_at=_ts(),
+            ),
+        )
+    conn.commit()
+
+    # Tmux reports only pane_index 0 alive on s-live (pane 1 vanished).
+    adapter = FakeTmuxAdapter(
+        {
+            "containers": {
+                "bench-alpha": {
+                    "uid": "1000",
+                    "sockets": {
+                        "default": [
+                            {
+                                "session_name": "s-live", "window_index": 0,
+                                "pane_index": 0, "pane_id": "%0", "pane_pid": 100,
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+    )
+    channel = make_recovery_list_panes_channel(
+        adapter=adapter, bench_user_resolver=lambda _cid: "tester"
+    )
+
+    outcome = reconcile_managed_state_at_boot(
+        conn=conn, serializer=serializer,
+        tmux_list_panes_fn=channel, tx_lock=None,
+    )
+
+    assert outcome is not None
+    assert outcome.panes_reattached == 1
+    assert outcome.panes_failed == 1
+    assert select_pane(conn, survivor_id).state == ManagedState.READY
+    missing = select_pane(conn, missing_id)
+    assert missing.state == ManagedState.FAILED
+    assert missing.failed_stage is not None
+    assert missing.failed_stage.value == "recovery_reattach"
+
+
 # ─── start_pending_marker_sweep ──────────────────────────────────────────
 
 

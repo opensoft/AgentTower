@@ -48,6 +48,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
+from ..socket_api import errors as _sock_errors
 from ..tmux.adapter import TmuxAdapter, TmuxError
 from .dao import ManagedPaneRow
 from .errors import MANAGED_SESSION_NAME_CONFLICT, ManagedSessionsError
@@ -331,6 +332,80 @@ def make_session_conflict_checker(
     return has_session
 
 
+# ─── Recovery list-panes channel (T058) ─────────────────────────────────
+
+
+def make_recovery_list_panes_channel(
+    *,
+    adapter: TmuxAdapter,
+    bench_user_resolver: Optional[BenchUserResolver] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Callable[[str], list[dict[str, object]]]:
+    """Build the FR-020 recovery ``tmux_list_panes_fn(container_id)``.
+
+    Mirrors the FEAT-004 ``resolve_uid -> list_socket_dir -> list_panes``
+    traversal but returns the minimal ``{tmux_session_name,
+    tmux_pane_index}`` rows ``recovery.reconcile`` matches managed DB
+    panes against. Unlike the FEAT-004 scan it does NOT strip
+    pending-managed panes — reconcile must see a mid-spawn pane as live
+    (a ``creating`` pane's disposition is decided by marker TTL, while
+    ``ready``/``degraded`` panes have already had their marker cleared).
+
+    Conservative liveness contract: the channel contributes a pane row
+    only when it is confident the live set is COMPLETE.
+    ``socket_dir_missing`` (no tmux at all) and per-socket
+    ``tmux_no_server`` are confident "nothing here" signals → they
+    contribute no rows. Any OTHER :class:`TmuxError` (docker-exec
+    failure/timeout, unreadable socket dir, malformed output with no
+    salvageable partial) is PROPAGATED so the boot reconcile's fail-soft
+    wrapper leaves the rows untouched rather than risk a false
+    ``failed_stage=recovery_reattach`` transition on a transient blip.
+    """
+    env_map = dict(env if env is not None else os.environ)
+    resolve_bench_user = bench_user_resolver or _default_bench_user_resolver(env_map)
+
+    def list_panes(container_id: str) -> list[dict[str, object]]:
+        bench_user = resolve_bench_user(container_id)
+        # resolve_uid failure propagates → reconcile skips this boot
+        # (safe-fail; rows untouched).
+        uid = adapter.resolve_uid(container_id=container_id, bench_user=bench_user)
+        try:
+            listing = adapter.list_socket_dir(
+                container_id=container_id, bench_user=bench_user, uid=uid
+            )
+        except TmuxError as exc:
+            if exc.code == _sock_errors.SOCKET_DIR_MISSING:
+                return []  # no tmux socket dir → confidently no live panes
+            raise
+
+        rows: list[dict[str, object]] = []
+        for socket_name in listing.sockets:
+            socket_path = f"/tmp/tmux-{uid}/{socket_name}"  # NOSONAR - tmux socket path inside bench container.
+            try:
+                panes = adapter.list_panes(
+                    container_id=container_id,
+                    bench_user=bench_user,
+                    socket_path=socket_path,
+                )
+            except TmuxError as exc:
+                if exc.code == _sock_errors.TMUX_NO_SERVER:
+                    continue  # this socket has no server → no panes on it
+                if exc.code == _sock_errors.OUTPUT_MALFORMED and exc.partial_panes:
+                    panes = exc.partial_panes  # salvage the parseable subset
+                else:
+                    raise
+            for pane in panes:
+                rows.append(
+                    {
+                        "tmux_session_name": pane.tmux_session_name,
+                        "tmux_pane_index": pane.tmux_pane_index,
+                    }
+                )
+        return rows
+
+    return list_panes
+
+
 # ─── Register backend (T029) ────────────────────────────────────────────
 
 
@@ -493,6 +568,7 @@ def build_spawn_backends(
 __all__ = [
     "BenchUserResolver",
     "build_spawn_backends",
+    "make_recovery_list_panes_channel",
     "make_register_backend",
     "make_log_attach_backend",
     "make_session_conflict_checker",

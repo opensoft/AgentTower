@@ -946,22 +946,29 @@ def _run(args: argparse.Namespace) -> int:
                 reconcile_managed_state_at_boot,
                 start_pending_marker_sweep,
             )
-            from .managed_sessions.spawn_backends import build_spawn_backends
+            from .managed_sessions.spawn_backends import (
+                build_spawn_backends,
+                make_recovery_list_panes_channel,
+            )
             managed_serializer = make_managed_serializer()
             managed_tmux_adapter = _resolve_tmux_adapter()
             managed_spawn_backends: dict[str, object] | None = None
+            managed_list_panes_fn = None
             if managed_tmux_adapter is not None:
                 managed_spawn_backends = build_spawn_backends(
                     adapter=managed_tmux_adapter,
                     agent_service=agent_service,
                     log_service=log_service,
                 )
+                # T058: production recovery list-panes channel so the
+                # FR-020 / SC-008 / SC-009 boot reconcile actually runs.
+                managed_list_panes_fn = make_recovery_list_panes_channel(
+                    adapter=managed_tmux_adapter,
+                )
             managed_reconcile_outcome = reconcile_managed_state_at_boot(
                 conn=worker_conn,
                 serializer=managed_serializer,
-                # Recovery list-panes channel is wired with the T046/T047
-                # recovery follow-up; spawn-path wiring (T057) is independent.
-                tmux_list_panes_fn=None,
+                tmux_list_panes_fn=managed_list_panes_fn,
                 tx_lock=worker_tx_lock,
             )
             managed_sweep_cancel = start_pending_marker_sweep(
