@@ -466,14 +466,83 @@ def test_create_layout_with_launch_command_overrides(
         shutil.rmtree(profile_dir, ignore_errors=True)
 
 
-@pytest.mark.skip(reason="needs FEAT-004 tmux list-sessions pre-check (Phase 4c — T034)")
-def test_create_layout_rejects_existing_session_name() -> None:
-    """Q6 / FR-016: target tmux session name already exists →
-    ``managed_session_name_conflict`` with the conflicting name in details.
+def test_create_layout_rejects_existing_session_name(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Q6 / FR-016: target tmux session name already exists in the bench
+    container → ``managed_session_name_conflict`` with the conflicting
+    name in details, rejected SYNCHRONOUSLY (no rows inserted).
 
-    Detection requires the daemon to query the bench container via
-    FEAT-004 BEFORE attempting tmux new-session. That cross-FEAT call
-    site lands in Phase 4c alongside the FEAT-004 scan update."""
+    T057b part 3: the daemon supplies a ``tmux_has_session_fn``
+    ``(container_id, session_name) -> bool`` built over the FEAT-004
+    adapter. This rejects an OUT-OF-BAND tmux session (one not tracked in
+    AgentTower's DB) before any insert, distinct from the DB-unique-index
+    path that catches collisions among AgentTower's own managed panes."""
+    seen: list[tuple[str, str]] = []
+
+    def has_session(container_id: str, session_name: str) -> bool:
+        seen.append((container_id, session_name))
+        return session_name == "session-occupied"
+
+    with pytest.raises(ManagedSessionsError) as excinfo:
+        create_layout(
+            conn=conn,
+            serializer=serializer,
+            container_id="bench-alpha",
+            template_name="1m+2s",
+            tmux_session_name="session-occupied",
+            tmux_has_session_fn=has_session,
+        )
+
+    assert excinfo.value.code == MANAGED_SESSION_NAME_CONFLICT
+    assert excinfo.value.details == {
+        "container_id": "bench-alpha",
+        "tmux_session_name": "session-occupied",
+    }
+    # The pre-check ran against the bench container, and no rows leaked.
+    assert seen == [("bench-alpha", "session-occupied")]
+    assert count_active_layouts(conn) == 0
+
+
+def test_create_layout_passes_when_pre_check_reports_no_conflict(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """FR-016: a clean ``has_session`` pre-check lets the create proceed."""
+    result = create_layout(
+        conn=conn,
+        serializer=serializer,
+        container_id="bench-alpha",
+        template_name="1m+2s",
+        tmux_session_name="session-free",
+        tmux_has_session_fn=lambda _cid, _name: False,
+    )
+    assert result.state == ManagedState.CREATING
+    assert count_active_layouts(conn) == 1
+
+
+def test_create_layout_swallows_pre_check_tmux_error(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """An indeterminate pre-check (docker-exec TmuxError) must NOT
+    masquerade as a name conflict — the create proceeds and the async
+    spawn gate classifies any real failure later."""
+    from agenttower.tmux.adapter import TmuxError
+
+    def boom(_cid: str, _name: str) -> bool:
+        raise TmuxError(
+            code="docker_exec_failed", message="exec down", container_id="bench-alpha"
+        )
+
+    result = create_layout(
+        conn=conn,
+        serializer=serializer,
+        container_id="bench-alpha",
+        template_name="1m+2s",
+        tmux_session_name="session-indeterminate",
+        tmux_has_session_fn=boom,
+    )
+    assert result.state == ManagedState.CREATING
+    assert count_active_layouts(conn) == 1
 
 
 def test_create_layout_db_unique_index_rejects_session_name_collision(

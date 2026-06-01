@@ -32,6 +32,13 @@ command has already exited reports ``launch_alive=False`` so the spawn
 task drives ``degraded`` / ``failed_stage=launch_command``. An
 indeterminate probe (docker-exec failure) is swallowed as "assume-alive"
 so it never spuriously downgrades a pane that genuinely spawned.
+
+This module also exposes ``make_session_conflict_checker`` (T057b part 3):
+a ``(container_id, session_name) -> bool`` probe over the FEAT-004
+``has_session`` verb that lets ``create_layout`` reject an out-of-band
+tmux session-name collision synchronously (FR-016) before any DB rows
+are inserted. It is included in ``build_spawn_backends`` under the
+``session_conflict`` key and threaded into the M1 handlers.
 """
 
 from __future__ import annotations
@@ -284,6 +291,46 @@ def make_tmux_spawn_backend(
     return spawn
 
 
+# ─── Session-name conflict checker (T057b part 3) ───────────────────────
+
+
+def make_session_conflict_checker(
+    *,
+    adapter: TmuxAdapter,
+    bench_user_resolver: Optional[BenchUserResolver] = None,
+    env: Optional[Mapping[str, str]] = None,
+    socket_name: str = DEFAULT_SOCKET_NAME,
+) -> Callable[[str, str], bool]:
+    """Build a ``(container_id, session_name) -> bool`` conflict probe.
+
+    The returned callable resolves the bench socket and runs the FEAT-004
+    ``has_session`` verb so ``create_layout`` can reject an out-of-band
+    tmux session-name collision *synchronously* (FR-016) — before any DB
+    rows are inserted — instead of letting it surface as a failed pane in
+    the async spawn task. ``has_session`` already maps an absent
+    session/server to ``False`` and raises :class:`TmuxError` only on a
+    genuine docker-exec failure; ``create_layout`` swallows that
+    indeterminate case so a transient probe error never masquerades as a
+    name conflict.
+    """
+    env_map = dict(env if env is not None else os.environ)
+    resolve_bench_user = bench_user_resolver or _default_bench_user_resolver(env_map)
+
+    def has_session(container_id: str, session_name: str) -> bool:
+        bench_user = resolve_bench_user(container_id)
+        socket_path = _socket_path_for(
+            adapter, container_id, bench_user, socket_name
+        )
+        return adapter.has_session(
+            container_id=container_id,
+            bench_user=bench_user,
+            socket_path=socket_path,
+            session_name=session_name,
+        )
+
+    return has_session
+
+
 # ─── Register backend (T029) ────────────────────────────────────────────
 
 
@@ -435,6 +482,11 @@ def build_spawn_backends(
             env=env,
         ),
         "log_attach": make_log_attach_backend(log_service),
+        "session_conflict": make_session_conflict_checker(
+            adapter=adapter,
+            bench_user_resolver=bench_user_resolver,
+            env=env,
+        ),
     }
 
 
@@ -443,5 +495,6 @@ __all__ = [
     "build_spawn_backends",
     "make_register_backend",
     "make_log_attach_backend",
+    "make_session_conflict_checker",
     "make_tmux_spawn_backend",
 ]

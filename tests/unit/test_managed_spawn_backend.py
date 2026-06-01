@@ -207,7 +207,9 @@ def test_build_spawn_backends_returns_three_callable_keys() -> None:
         launch_probe_delay_s=0.0,
     )
 
-    assert set(backends) == {"tmux_spawn", "register", "log_attach"}
+    assert set(backends) == {
+        "tmux_spawn", "register", "log_attach", "session_conflict"
+    }
     pane = _pane(index=0, label="m1")
     spawn_result = backends["tmux_spawn"](pane)
     assert spawn_result["ok"] is True
@@ -322,3 +324,26 @@ def test_launch_probe_tmuxerror_is_swallowed_as_alive() -> None:
     # Indeterminate probe must not downgrade a pane that genuinely spawned.
     assert result["ok"] is True
     assert result["launch_alive"] is True
+
+
+# ─── Session-name conflict checker (T057b part 3) ───────────────────────
+
+
+def test_session_conflict_checker_resolves_socket_and_delegates() -> None:
+    from agenttower.managed_sessions.spawn_backends import (
+        make_session_conflict_checker,
+    )
+
+    adapter = _adapter()
+    adapter.existing_sessions.add("occupied")
+    check = make_session_conflict_checker(
+        adapter=adapter, bench_user_resolver=lambda _cid: BENCH_USER
+    )
+
+    assert check(CONTAINER, "occupied") is True
+    assert check(CONTAINER, "free") is False
+
+    # Delegated to has_session against the resolved bench socket.
+    has_calls = [kw for name, kw in adapter.managed_calls if name == "has_session"]
+    assert has_calls[0]["socket_path"] == EXPECTED_SOCKET
+    assert has_calls[0]["bench_user"] == BENCH_USER

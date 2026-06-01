@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Final, Optional
 
+from ..tmux.adapter import TmuxError
 from ._retry import run_stage_with_retry
 from ._tx import tx_guard
 from .dao import (
@@ -239,6 +240,7 @@ def create_layout(
     event_emitter: Optional[EventEmitter] = None,
     actor: str = "operator",
     tx_lock: Optional[threading.Lock] = None,
+    tmux_has_session_fn: Optional[Callable[[str, str], bool]] = None,
 ) -> CreateLayoutResult:
     """Create a managed layout — synchronous orchestration entry point.
 
@@ -312,6 +314,36 @@ def create_layout(
             if existing is not None:
                 with tx_guard(tx_lock):
                     return _summarize_layout(conn, existing, replay=True)
+
+        # 4b. FR-016 synchronous session-name conflict pre-check. The DB
+        #     partial unique index (below, in the insert tx) already
+        #     rejects collisions against AgentTower's OWN non-terminal
+        #     panes. This pre-check additionally rejects an out-of-band
+        #     tmux session (one NOT tracked in our DB — e.g. an adopted
+        #     or operator-created session) synchronously, so the conflict
+        #     surfaces as a clean ``create`` rejection rather than a
+        #     failed pane in the async spawn task. The async ``has-session``
+        #     gate in the spawn backend REMAINS as the TOCTOU backstop (a
+        #     session can appear between this check and ``new-session``).
+        #     Placed AFTER the idempotency replay short-circuit so a
+        #     legitimate replay of OUR own layout isn't rejected against
+        #     the session it already owns. Skipped when no checker is
+        #     injected (tests / incomplete boot wiring); an indeterminate
+        #     probe (docker-exec failure) is swallowed and left for the
+        #     async path to classify as ``failed_stage=pane_create``.
+        if tmux_has_session_fn is not None:
+            try:
+                conflict = tmux_has_session_fn(container_id, tmux_session_name)
+            except TmuxError:
+                conflict = False
+            if conflict:
+                raise ManagedSessionsError(
+                    MANAGED_SESSION_NAME_CONFLICT,
+                    details={
+                        "container_id": container_id,
+                        "tmux_session_name": tmux_session_name,
+                    },
+                )
 
         # 5. FR-025 capacity check.
         with tx_guard(tx_lock):

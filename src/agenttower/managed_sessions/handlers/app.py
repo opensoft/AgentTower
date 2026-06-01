@@ -83,6 +83,15 @@ def _serializer(ctx: "DaemonContext") -> Any:
     return getattr(ctx, "managed_serializer", None)
 
 
+def _session_conflict_fn(ctx: "DaemonContext"):  # noqa: ANN202
+    """FR-016 synchronous session-name conflict checker (``session_conflict``
+    backend), or ``None`` when spawn backends aren't boot-wired."""
+    backends = getattr(ctx, "managed_spawn_backends", None)
+    if not backends:
+        return None
+    return backends.get("session_conflict")
+
+
 def _state_str(state: Any) -> str:
     if isinstance(state, ManagedState):
         return state.value
@@ -191,6 +200,7 @@ def app_managed_layout_create(
             launch_command_overrides=launch_command_overrides if launch_command_overrides else None,
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
+            tmux_has_session_fn=_session_conflict_fn(ctx),
         )
         # C4 fix: kick off the bg spawn pipeline. No-op when
         # daemon-boot wiring is incomplete. Replay results skip

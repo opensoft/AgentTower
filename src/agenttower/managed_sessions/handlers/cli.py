@@ -150,6 +150,22 @@ def _serializer(ctx: "DaemonContext") -> Any:
     return getattr(ctx, "managed_serializer", None)
 
 
+def _session_conflict_fn(ctx: "DaemonContext"):  # noqa: ANN202
+    """Pull the FR-016 synchronous session-name conflict checker.
+
+    Returns the ``(container_id, session_name) -> bool`` probe built by
+    ``build_spawn_backends`` (keyed ``session_conflict``), or ``None``
+    when the tmux adapter / spawn backends aren't boot-wired — in which
+    case ``create_layout`` falls back to the DB unique index for
+    managed-pane collisions and the async ``has-session`` gate for
+    out-of-band ones.
+    """
+    backends = getattr(ctx, "managed_spawn_backends", None)
+    if not backends:
+        return None
+    return backends.get("session_conflict")
+
+
 # ─── managed.layout.create ───────────────────────────────────────────────
 
 
@@ -246,6 +262,7 @@ def _managed_layout_create(
             launch_command_overrides=launch_command_overrides if launch_command_overrides else None,
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
+            tmux_has_session_fn=_session_conflict_fn(ctx),
         )
         # C4 fix: kick off the background spawn pipeline so the new
         # layout transitions out of ``creating`` in production. The
