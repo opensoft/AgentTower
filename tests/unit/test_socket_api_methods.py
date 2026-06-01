@@ -141,6 +141,24 @@ def test_dispatch_table_keys_are_closed_set() -> None:
         "app.route.add",
         "app.route.remove",
         "app.route.update",
+        # FEAT-013 — managed session lifecycle (T025): 8 app.managed_* +
+        # 8 legacy managed.*. (FEAT-014 app dashboard v1.1 adds no new keys.)
+        "app.managed_layout_create",
+        "app.managed_layout_list",
+        "app.managed_layout_detail",
+        "app.managed_pane_list",
+        "app.managed_pane_detail",
+        "app.managed_pane_remove",
+        "app.managed_pane_recreate",
+        "app.managed_pane_promote_from_adopted",
+        "managed.layout.create",
+        "managed.layout.list",
+        "managed.layout.detail",
+        "managed.pane.list",
+        "managed.pane.detail",
+        "managed.pane.remove",
+        "managed.pane.recreate",
+        "managed.pane.promote_from_adopted",
     }
 
 

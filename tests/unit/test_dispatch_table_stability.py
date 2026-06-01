@@ -5,7 +5,8 @@ The dispatch table's KEY ORDER is part of the FEAT-002 stability rule
 established the first seven entries; FEAT-006 appended five more;
 FEAT-007 appended four more; FEAT-008 appended five more; FEAT-009
 appended eight more; FEAT-010 appended six more (routes.*); FEAT-011
-appended thirty-two more (app.* host-only namespace, US1 + US2 + US3; FR-001/FR-002/FR-042).
+appended thirty-two more (app.* host-only namespace, US1 + US2 + US3; FR-001/FR-002/FR-042);
+FEAT-013 appended sixteen more (8 app.managed_* + 8 legacy managed.*, T025).
 This test pins the exact ordered key list so an accidental
 re-ordering or added entry is caught immediately.
 """
@@ -98,6 +99,27 @@ EXPECTED_ORDER = [
     "app.route.add",
     "app.route.remove",
     "app.route.update",
+    # FEAT-013 (managed session lifecycle; T025). Appended after the
+    # FEAT-011 app.* block: 8 app.managed_* (host-only app namespace) then
+    # 8 legacy managed.* (CLI + bench thin-client). FEAT-014 (app dashboard
+    # v1.1) added NO new dispatch keys — its change is additive within the
+    # existing app.dashboard method.
+    "app.managed_layout_create",
+    "app.managed_layout_list",
+    "app.managed_layout_detail",
+    "app.managed_pane_list",
+    "app.managed_pane_detail",
+    "app.managed_pane_remove",
+    "app.managed_pane_recreate",
+    "app.managed_pane_promote_from_adopted",
+    "managed.layout.create",
+    "managed.layout.list",
+    "managed.layout.detail",
+    "managed.pane.list",
+    "managed.pane.detail",
+    "managed.pane.remove",
+    "managed.pane.recreate",
+    "managed.pane.promote_from_adopted",
 ]
 
 
@@ -105,12 +127,12 @@ def test_dispatch_table_key_order_is_locked() -> None:
     assert list(DISPATCH.keys()) == EXPECTED_ORDER
 
 
-def test_dispatch_table_is_exactly_sixtyseven_entries() -> None:
-    """35 legacy (FEAT-002..010) + 32 new (FEAT-011 app.*) = 67.
+def test_dispatch_table_is_exactly_eightythree_entries() -> None:
+    """35 legacy (FEAT-002..010) + 32 (FEAT-011 app.*) + 16 (FEAT-013
+    managed: 8 app.managed_* + 8 legacy managed.*) = 83.
 
-    The full FEAT-011 v1.0 ``app.*`` surface is 32 methods: 4 bootstrap/
-    dashboard + 3 scans + 14 entity reads (7 entities × list/detail) +
-    1 adopt mutation + 10 operator mutations. US1+US2 shipped 12; US3
-    (this phase) adds the remaining 20.
+    The FEAT-011 v1.0 ``app.*`` surface is 32 methods. FEAT-013 adds 16
+    managed-session methods (T025). FEAT-014 (app dashboard v1.1) adds none
+    — its evolution is additive within the existing ``app.dashboard``.
     """
-    assert len(DISPATCH) == 67
+    assert len(DISPATCH) == 83
