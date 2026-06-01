@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import pytest
 
+from agenttower.routing import skip_counter as skip_counter_mod
 from agenttower.routing.skip_counter import MAXLEN, WINDOW_MS, SkipCounter
 
 
@@ -208,3 +209,23 @@ def test_fr008_worker_stall_lets_events_age_out_via_window_arithmetic() -> None:
 
     # now=349_999 → age(0)=349_999 (outside), age(50_000)=299_999 (inside → counted)
     assert counter.count_in_window(now_ms=349_999) == 1
+
+
+# ─── codex P2 — module-singleton test-isolation reset ──────────────────────
+
+
+@pytest.mark.v1_1
+def test_reset_default_clears_module_singleton() -> None:
+    """codex P2: ``reset_default()`` drops all entries on the process-local
+    default counter so recorded skips don't leak across in-process tests
+    (the conftest autouse fixture calls this before/after every test). The
+    upper-edge clamp (``entry_ms <= now_ms``) is also exercised here."""
+    skip_counter_mod.reset_default()
+    skip_counter_mod.record_skip(1_000)
+    skip_counter_mod.record_skip(2_000)
+    assert skip_counter_mod.count_in_window(now_ms=2_000) == 2
+    # Future-dated entry (clock race) is NOT counted — half-open upper edge.
+    assert skip_counter_mod.count_in_window(now_ms=1_500) == 1
+
+    skip_counter_mod.reset_default()
+    assert skip_counter_mod.count_in_window(now_ms=2_000) == 0

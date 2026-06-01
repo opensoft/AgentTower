@@ -46,7 +46,16 @@ import pytest
 # truthy; CI sets it explicitly in the unit-gate step
 # (``.github/workflows/sonarqube.yml``) so SC-004 is still enforced on every
 # CI run, exactly once and as a clearly-budgeted cost.
-_SC004_OPT_IN = os.environ.get("AGENTTOWER_RUN_SC004_REGRESSION")
+#
+# Parse as an explicit boolean (codex/Copilot P2): plain string truthiness
+# would treat a falsey sentinel like ``"0"`` or ``"false"`` as enabled,
+# contradicting the ``=1`` instruction in the skip reason and risking an
+# accidental double-run of the whole contract suite.
+def _env_flag_enabled(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_SC004_OPT_IN = _env_flag_enabled(os.environ.get("AGENTTOWER_RUN_SC004_REGRESSION"))
 
 
 @pytest.mark.skipif(

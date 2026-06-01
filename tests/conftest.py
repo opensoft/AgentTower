@@ -79,6 +79,26 @@ def _reset_feat007_lifecycle_suppression() -> Iterator[None]:
     logs_lifecycle.reset_for_test()
 
 
+@pytest.fixture(autouse=True)
+def _reset_skip_counter_singleton() -> Iterator[None]:
+    """Reset the FEAT-014 route-skip counter singleton between tests.
+
+    ``agenttower.routing.skip_counter`` keeps a process-local default
+    instance (data-model.md §RecentlySkippedRoutesWindow); the production
+    ``record_skip`` path and ``app.dashboard``'s ``count_in_window`` both
+    target it. Without this reset a routing-worker test that records skips
+    would leak a nonzero ``recently_skipped_count`` into a later
+    empty-daemon dashboard test that asserts ``0`` — order-dependent flake
+    (codex P2). Resetting mirrors the daemon-restart-resets-to-zero
+    semantics the spec already documents.
+    """
+    from agenttower.routing import skip_counter
+
+    skip_counter.reset_default()
+    yield
+    skip_counter.reset_default()
+
+
 # FEAT-008 — register the two new test seams from plan.md §R10. Both
 # are env-var driven (mirrors the FEAT-007 ``AGENTTOWER_TEST_LOG_FS_FAKE``
 # pattern). The FEAT-008 reader honors them only when the AGENTTOWER_*

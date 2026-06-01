@@ -328,9 +328,14 @@ def _first_active_container_id(ctx: "DaemonContext") -> str | None:
 
 
 def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
-    """Deterministic first unadopted pane by primary-key order. A pane is
-    unadopted iff no agent row exists for it (per the same agent→pane
-    matching the v1.0 ``_pane_counts.registered`` query uses).
+    """Deterministic first *adoptable* unadopted pane by primary-key order.
+    A pane is adoptable-unadopted iff it is ACTIVE (``p.active = 1``) on an
+    ACTIVE container (``c.active = 1``) and no active agent row exists for
+    it — i.e. it is in the ``discovered-and-unmanaged`` bucket, NOT
+    ``inactive-or-stale``. This excludes ``p.active = 0`` stale panes
+    (codex P2): the ``unadopted_panes_present`` recommendation must point at
+    a pane an operator can actually adopt, consistent with the v1.1
+    PaneState buckets — never a dead/stale pane.
 
     Determinism (post-swarm low): ``ORDER BY`` spans the full FEAT-004
     composite PK (``container_id, tmux_socket_path, tmux_session_name,
@@ -357,7 +362,9 @@ def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
     try:
         row = conn.execute(
             "SELECT p.tmux_pane_id FROM panes p "
-            "WHERE NOT EXISTS ("
+            "JOIN containers c ON c.container_id = p.container_id "
+            "WHERE c.active = 1 AND p.active = 1 "
+            "AND NOT EXISTS ("
             "  SELECT 1 FROM agents a "
             "  WHERE a.container_id = p.container_id "
             "    AND a.tmux_pane_id = p.tmux_pane_id "
@@ -569,10 +576,13 @@ def _compute_agent_state_buckets(
         return zeros
     try:
         total = int(conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0])
-        # partially_configured (Clarifications Q2): any of role/capability/label
-        # missing/empty/unknown. The agents schema CHECK-constrains role and
-        # capability to closed sets that include 'unknown' (no empty string
-        # possible at the DB level); `label` defaults to '' and may be empty.
+        # partially_configured (Clarifications Q2 / FR-020): any of
+        # role/capability/label missing/empty/unknown. The agents schema
+        # CHECK-constrains role and capability to closed sets that include
+        # 'unknown' (no empty string possible at the DB level); `label`
+        # defaults to '' and may be empty OR the literal 'unknown' — the
+        # spec lists 'unknown' as a label trigger too (codex P2), so both
+        # the empty string and the literal 'unknown' count here.
         partially_configured = int(
             conn.execute(
                 """
@@ -580,6 +590,7 @@ def _compute_agent_state_buckets(
                 WHERE role = 'unknown'
                    OR capability = 'unknown'
                    OR label = ''
+                   OR label = 'unknown'
                 """
             ).fetchone()[0]
         )
@@ -598,6 +609,7 @@ def _compute_agent_state_buckets(
                   AND a.role != 'unknown'
                   AND a.capability != 'unknown'
                   AND a.label != ''
+                  AND a.label != 'unknown'
                 """
             ).fetchone()[0]
         )
@@ -845,6 +857,16 @@ def _app_dashboard_body(
     # this is purely defensive against double-counting.
     _probe_degraded = {row.name for row in subsystem_rows if row.status != "ok"}
     _all_degraded = _probe_degraded | _aggregator_failed
+    # FEAT-010 routing-worker degradation flag (codex P2). probe_routing_worker
+    # only checks delivery-worker *thread liveness*, so a degraded-but-alive
+    # routing worker (transient routing failures flipped
+    # `_SharedRoutingState.routing_worker_degraded`) wouldn't surface. Honor
+    # the flag here so FR-008's `subsystem_degraded` signal fires for a
+    # stalled/degraded routing worker. `routing_worker` is already in
+    # PROBE_ORDER, so the dedupe/order filter below picks it up.
+    _routing_state = getattr(ctx, "routing_shared_state", None)
+    if getattr(_routing_state, "routing_worker_degraded", False):
+        _all_degraded.add("routing_worker")
     rec_state = recommendations.RecommendationState(
         degraded_subsystems=tuple(
             name for name in recommendations.PROBE_ORDER if name in _all_degraded
@@ -857,7 +879,13 @@ def _app_dashboard_body(
         first_active_container_id=_first_active_container_id(ctx),
         pane_count=pane_counts["total"],
         first_unadopted_pane_id=_first_unadopted_pane_id(ctx),
-        unadopted_pane_count=pane_counts["unregistered"],
+        # Use the active-unmanaged bucket (dau), NOT the v1.0 `unregistered`
+        # count (codex P2). `unregistered` includes inactive-or-stale panes
+        # (p.active=0 / inactive container); counting those would let a dead
+        # pane trigger `unadopted_panes_present` and mask a lower-priority
+        # actionable state. This keeps the recommendation consistent with
+        # `counts.panes.by_state["discovered-and-unmanaged"]` by construction.
+        unadopted_pane_count=pane_state_buckets["discovered-and-unmanaged"],
         oldest_blocked_message_id=_oldest_blocked_message_id(ctx),
         blocked_queue_count=queue_counts.get("blocked", 0),
         route_count=route_counts["enabled"] + route_counts["disabled"],

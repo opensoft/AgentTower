@@ -114,6 +114,19 @@ class SkipCounter:
         # caller sampled ``now_ms``) is not counted as in-window.
         return sum(1 for entry_ms in entries if threshold < entry_ms <= now_ms)
 
+    def reset(self) -> None:
+        """Drop all recorded entries.
+
+        Test-isolation hook (codex P2): the module-level singleton persists
+        across tests in one interpreter, so a routing-worker test that
+        records skips would otherwise leak a nonzero
+        ``recently_skipped_count`` into a later empty-daemon dashboard test.
+        NOT a production API — FR-008 daemon-restart-resets-to-zero is
+        achieved by process restart, never an in-process reset call.
+        """
+        with self._lock:
+            self._entries.clear()
+
 
 # ─── Module-level singleton + convenience functions ─────────────────────────
 #
@@ -143,10 +156,23 @@ def count_in_window(now_ms: int) -> int:
     return _default_counter.count_in_window(now_ms)
 
 
+def reset_default() -> None:
+    """Clear the module-level default counter (test-isolation hook).
+
+    The singleton lives for the life of the interpreter, so tests that
+    drive the production ``record_skip`` path must reset it between tests
+    to avoid cross-test leakage; an autouse fixture in ``tests/conftest.py``
+    calls this before every test. NOT a production API (see
+    ``SkipCounter.reset``).
+    """
+    _default_counter.reset()
+
+
 __all__ = [
     "WINDOW_MS",
     "MAXLEN",
     "SkipCounter",
     "record_skip",
     "count_in_window",
+    "reset_default",
 ]

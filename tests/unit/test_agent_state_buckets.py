@@ -178,6 +178,31 @@ def test_inactive_agent_on_active_container_is_inactive_not_active(
     assert result["active"] + result["inactive"] + result["partially_configured"] == 2
 
 
+@pytest.mark.v1_1
+def test_label_literal_unknown_is_partially_configured_not_active(
+    db_ctx: SimpleNamespace,
+) -> None:
+    """codex P2 / FR-020 + Clarifications Q2: a ``label`` equal to the
+    literal string ``"unknown"`` triggers ``partially_configured`` — the
+    same as ``role``/``capability`` == ``unknown`` — and must NOT count as
+    ``active``. Guards the regression where the query only checked
+    ``label = ''`` and let a ``label='unknown'`` agent through as active."""
+    seed_container(db_ctx.state_conn, container_id="c1", active=1)
+    seed_pane(db_ctx.state_conn, container_id="c1", pane_index=0)
+    seed_agent(
+        db_ctx.state_conn,
+        agent_id="a-label-unknown",
+        container_id="c1",
+        pane_index=0,
+        label="unknown",
+    )
+
+    result = _compute_agent_state_buckets(db_ctx)
+    assert result["partially_configured"] == 1, "label='unknown' → partially_configured"
+    assert result["active"] == 0, "must not be counted active"
+    assert result["inactive"] == 0
+
+
 # ─── Clarifications Q2 — partially_configured definition ───────────────────
 
 

@@ -283,6 +283,25 @@ def test_inactive_pane_with_active_agent_is_stale_not_registered(
     assert sum(result.values()) == 1
 
 
+@pytest.mark.v1_1
+def test_first_unadopted_pane_id_skips_stale_panes(db_ctx: SimpleNamespace) -> None:
+    """codex P2 — the ``unadopted_panes_present`` target must be an
+    *adoptable* (active) pane, never a ``p.active = 0`` stale pane on an
+    active container. ``_first_unadopted_pane_id`` must skip stale panes so
+    the recommendation stays consistent with the ``inactive-or-stale``
+    bucket."""
+    from agenttower.app_contract.dashboard import _first_unadopted_pane_id
+
+    seed_container(db_ctx.state_conn, container_id="c1", active=1)
+    # Only pane is stale (p.active=0) and unadopted → not adoptable.
+    seed_pane(db_ctx.state_conn, container_id="c1", pane_index=0, active=0)
+    assert _first_unadopted_pane_id(db_ctx) is None, "stale pane must not be a target"
+
+    # Add an active unadopted pane → that one becomes the deterministic target.
+    seed_pane(db_ctx.state_conn, container_id="c1", pane_index=1, active=1)
+    assert _first_unadopted_pane_id(db_ctx) == "%1"
+
+
 # ─── Research §PR — partially_configured agent still registers pane ────────
 
 
