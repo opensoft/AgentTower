@@ -2,7 +2,7 @@
 
 **Feature Branch**: `012-flutter-control-panel`
 **Created**: 2026-05-23
-**Status**: Phase 9 — Polish (179/183 tasks done; 3 upstream-blocked on FEAT-011 v1.x: T160b/T166/T167; 1 operator-validation: T153 — cross-OS quickstart, requires real Windows/macOS/Linux workstations + a live agenttowerd. FR-078 fully met (T179 + T180); FR-067 fully met across every Phase 3-9 widget (T165 + T177 + T181 + T182 — T182 swept the last residual surfaces: Settings, Onboarding, and the command palette, on 2026-06-01; a repo-wide grep confirms no hardcoded prose literal remains in any feature surface))
+**Status**: Phase 9 — Polish (180/184 tasks done; 3 upstream-blocked on FEAT-011 v1.x: T160b/T166/T167; 1 operator-validation: T153 — cross-OS quickstart, requires real Windows/macOS/Linux workstations + a live agenttowerd. FR-078 fully met (T179 + T180); FR-067 fully met (T165 + T177 + T181 + T182 + T183 — the sweeps localized every prose surface incl. Settings, Onboarding, command palette, and the shared SafeUrlLauncher widget; **verified by a grep over all of `lib/**.dart`** — the FR-067-completeness criterion, after two over-claims (Round 13/14) traced to features/core-only greps — which now returns zero hardcoded prose literals))
 **Input**: User description: "FEAT-012: Flutter Desktop Control Panel for Local Operator Workspaces — first packaged local Flutter desktop control panel for AgentTower over the FEAT-011 `app.*` backend contract; organized around three operator workspaces (Agent Operations, Project and Specs, Testing and Demo) plus shared notifications and settings; adopt-existing-panes only; managed pane creation deferred to FEAT-013; local-only, no remote SaaS control plane, no scraping of human CLI output."
 
 ## Summary

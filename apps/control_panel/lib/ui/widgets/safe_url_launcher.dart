@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/l10n/app_localizations.dart';
+
 /// FR-079 / FR-001 / Swarm-review H-D1/H-D2/H-D3 / M-15 — single
 /// safe gateway for every `launchUrl` call across Phase 4-6.
 ///
@@ -69,32 +71,29 @@ class SafeUrlLauncher {
       openUri(context, Uri.file(path));
 
   static Future<bool> _doLaunch(BuildContext context, Uri uri) async {
+    final l10n = AppLocalizations.of(context);
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('OS could not open ${_summarize(uri)}')),
+        SnackBar(content: Text(l10n.safeUrlOsCouldNotOpen(_summarize(uri)))),
       );
     }
     return true;
   }
 
   static Future<bool?> _confirmFileLaunch(BuildContext context, Uri uri) {
+    final l10n = AppLocalizations.of(context);
     return showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Open local file?'),
+        title: Text(l10n.safeUrlConfirmTitle),
         content: SizedBox(
           width: 460,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'The daemon supplied a file path to open with the OS '
-                'default handler. Confirm the path is what you expect '
-                'before opening — the app does not constrain which file '
-                'paths the daemon may produce.',
-              ),
+              Text(l10n.safeUrlConfirmBody),
               const SizedBox(height: 12),
               SelectableText(
                 uri.toFilePath(),
@@ -106,11 +105,11 @@ class SafeUrlLauncher {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n.safeUrlCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Open externally'),
+            child: Text(l10n.safeUrlOpenExternally),
           ),
         ],
       ),
@@ -119,8 +118,11 @@ class SafeUrlLauncher {
 
   static void _reject(BuildContext context, String href, String why) {
     if (!context.mounted) return;
+    final l10n = AppLocalizations.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Link rejected ($why): ${_summarize(href)}')),
+      SnackBar(
+        content: Text(l10n.safeUrlLinkRejected(why, _summarize(href))),
+      ),
     );
   }
 

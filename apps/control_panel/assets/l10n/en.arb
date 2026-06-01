@@ -3267,5 +3267,36 @@
   "settingsContractVersionBootstrapPending": " (bootstrap pending or unreachable)",
   "@settingsContractVersionBootstrapPending": {
     "description": "Settings surface (T182 FR-067)."
+  },
+  "safeUrlConfirmTitle": "Open local file?",
+  "@safeUrlConfirmTitle": {
+    "description": "SafeUrlLauncher file-open confirmation title (T182/FR-067)."
+  },
+  "safeUrlConfirmBody": "The daemon supplied a file path to open with the OS default handler. Confirm the path is what you expect before opening — the app does not constrain which file paths the daemon may produce.",
+  "@safeUrlConfirmBody": {
+    "description": "SafeUrlLauncher file-open confirmation body (T182/FR-067)."
+  },
+  "safeUrlCancel": "Cancel",
+  "@safeUrlCancel": {
+    "description": "SafeUrlLauncher confirmation cancel (T182/FR-067)."
+  },
+  "safeUrlOpenExternally": "Open externally",
+  "@safeUrlOpenExternally": {
+    "description": "SafeUrlLauncher confirmation confirm (T182/FR-067)."
+  },
+  "safeUrlOsCouldNotOpen": "OS could not open {target}",
+  "@safeUrlOsCouldNotOpen": {
+    "description": "SafeUrlLauncher launch-failure snackbar (T182/FR-067).",
+    "placeholders": {
+      "target": { "type": "String" }
+    }
+  },
+  "safeUrlLinkRejected": "Link rejected ({why}): {target}",
+  "@safeUrlLinkRejected": {
+    "description": "SafeUrlLauncher scheme-rejected snackbar (T182/FR-067).",
+    "placeholders": {
+      "why": { "type": "String" },
+      "target": { "type": "String" }
+    }
   }
 }

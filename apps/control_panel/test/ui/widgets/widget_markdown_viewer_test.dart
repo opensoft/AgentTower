@@ -2,6 +2,7 @@ import 'package:agenttower_control_panel/ui/widgets/markdown_viewer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 
 /// Widget tests for [MarkdownViewer]. T150 (Phase 9 cross-cutting
 /// widget tests).
@@ -214,6 +215,8 @@ Future<void> _pump(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: SizedBox(
           width: 600,
