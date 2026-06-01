@@ -148,6 +148,36 @@ def test_fr020_strict_configuration_partition(db_ctx: SimpleNamespace) -> None:
     assert total == 5, f"FR-020 partition violated: {result}"
 
 
+@pytest.mark.v1_1
+def test_inactive_agent_on_active_container_is_inactive_not_active(
+    db_ctx: SimpleNamespace,
+) -> None:
+    """codex P2 — a fully-configured agent whose own ``active`` flag is unset
+    (FEAT-006 cascade set ``a.active = 0`` when its bound pane went inactive)
+    on an *active* container is ``inactive``, NOT ``active``. Guards the
+    regression where the active-bucket query keyed only off ``c.active`` and
+    counted deregistered agents as active."""
+    seed_container(db_ctx.state_conn, container_id="c-act", active=1)
+    seed_pane(db_ctx.state_conn, container_id="c-act", pane_index=0, active=1)
+    seed_pane(db_ctx.state_conn, container_id="c-act", pane_index=1, active=0)
+    # Fully configured, active container, but agent's own active flag unset.
+    seed_agent(
+        db_ctx.state_conn,
+        agent_id="a-cascaded-inactive",
+        container_id="c-act",
+        pane_index=1,
+        active=0,
+    )
+    # A genuinely active agent alongside it for contrast.
+    seed_agent(db_ctx.state_conn, agent_id="a-live", container_id="c-act", pane_index=0)
+
+    result = _compute_agent_state_buckets(db_ctx)
+    assert result["active"] == 1, "only the a.active=1 agent counts as active"
+    assert result["inactive"] == 1, "the a.active=0 agent falls to inactive, not active"
+    assert result["partially_configured"] == 0
+    assert result["active"] + result["inactive"] + result["partially_configured"] == 2
+
+
 # ─── Clarifications Q2 — partially_configured definition ───────────────────
 
 

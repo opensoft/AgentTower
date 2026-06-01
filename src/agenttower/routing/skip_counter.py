@@ -108,7 +108,11 @@ class SkipCounter:
         threshold = now_ms - WINDOW_MS
         with self._lock:
             entries = list(self._entries)
-        return sum(1 for entry_ms in entries if entry_ms > threshold)
+        # Half-open ``(now_ms - WINDOW_MS, now_ms]``: clamp the upper edge to
+        # ``now_ms`` too, so an entry recorded "in the future" relative to
+        # this read (a concurrent ``record_skip`` appended just after the
+        # caller sampled ``now_ms``) is not counted as in-window.
+        return sum(1 for entry_ms in entries if threshold < entry_ms <= now_ms)
 
 
 # ─── Module-level singleton + convenience functions ─────────────────────────

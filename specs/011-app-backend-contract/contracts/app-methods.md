@@ -475,22 +475,16 @@ retyped, or removed. Capability flags remain empty (FR-015). The bump is:
 - `app_contract_version`: `"1.0"` → `"1.1"`
 - `supported_minor_range.max`: `"1.0"` → `"1.1"`
 
-**Additive fields on `app.dashboard` success result** (full per-field shape
-+ types + nullability + cross-references in the FEAT-014 wire-shape doc
-linked below):
+**Additive fields on `app.dashboard` success result** (names only — every
+per-field shape, type, nullability, closed-set membership, constant, and
+invariant is defined canonically in the FEAT-014 contract docs linked
+below; this breadcrumb is a pointer, not a second source of truth):
 
-- `counts.panes.by_state` — 4-key `PaneState` closed set alongside the v1.0
-  `{total, registered, unregistered}` panes counts.
-- `counts.agents.by_state` — 5-key `AgentState` closed set alongside the
-  v1.0 `{total, by_role}` agents counts.
+- `counts.panes.by_state`
+- `counts.agents.by_state`
 - `counts.routes.recently_skipped_count` + `counts.routes.recently_skipped_window_ms`
-  — process-local sliding-window count of recent FEAT-010 route-skip events
-  with fixed 300_000 ms window (Clarifications Q6 of FEAT-014).
-- `recommended_next_action` — server-computed operator next-step object
-  (7-code closed set; first-match precedence per FR-010 of FEAT-014).
-- `recommended_next_action_refreshed_at` — ISO-8601 UTC ms wall clock
-  timestamp paired with `recommended_next_action` (paired-null on compute
-  failure per FR-021 of FEAT-014).
+- `recommended_next_action`
+- `recommended_next_action_refreshed_at`
 
 **Canonical FEAT-014 contract docs** (do NOT duplicate or restate here —
 read the originals):

@@ -61,8 +61,8 @@ def seed_pane(
             pane_active, active, first_seen_at, last_scanned_at
         ) VALUES (
             ?, '/tmp/tmux.sock', 'sess', 0, ?, ?,
-            ?, 'brett', ?, '/dev/pts/0',
-            'bash', '/workspace', '', 1, ?, ?, ?
+            ?, 'bench', ?, '/dev/pts/0',
+            'bash', '/srv/work', '', 1, ?, ?, ?
         )
         """,
         (

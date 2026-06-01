@@ -439,15 +439,18 @@ def _compute_pane_state_buckets(
       ``0`` at v1.1 MVP because FR-016a's ``degraded_scan`` is not yet a
       persisted column on the ``containers`` row (same caveat as
       ``_container_counts``). FR-003 mandates the key be present at ``0``.
-    * ``inactive-or-stale`` — pane whose container row has ``active = 0``.
-      The "``last_seen_at`` predates the most recent successful scan" half
-      of the spec's definition (Clarifications Q1) is not implementable
-      until upstream scan-timestamp wiring lands; v1.1 returns the
-      container-inactive contribution only.
-    * ``discovered-and-registered`` — pane with active agent AND active
-      container (FR-019 cross-check; partially_configured agents still
-      count here per the FR-019 carve-out — bucket determined by
-      ``agents.active = 1``, not by role/capability/label completeness).
+    * ``inactive-or-stale`` — pane whose container row has ``active = 0``
+      OR whose own ``active = 0`` (FEAT-004 reconciliation marks a pane
+      inactive when it disappears while its container stays active). The
+      remaining "``last_seen_at`` predates the most recent successful scan"
+      half of the spec's definition (Clarifications Q1) is not implementable
+      until upstream scan-timestamp wiring lands.
+    * ``discovered-and-registered`` — ACTIVE pane (``p.active = 1``) on an
+      active container with an active agent (FR-019 cross-check;
+      partially_configured agents still count here per the FR-019 carve-out
+      — bucket determined by ``agents.active = 1``, not by
+      role/capability/label completeness). ``p.active = 1`` keeps this
+      disjoint from ``inactive-or-stale`` per Research §PB priority.
     * ``discovered-and-unmanaged`` — remaining panes (active container,
       no active agent).
 
@@ -477,24 +480,32 @@ def _compute_pane_state_buckets(
     if conn is None:
         return zeros
     try:
-        # inactive-or-stale: panes on containers with active=0 (container half
-        # of Clarifications Q1; last_seen_at half deferred to upstream wiring).
+        # inactive-or-stale: panes whose container is inactive (c.active=0)
+        # OR whose own active flag is unset (p.active=0). p.active=0 is
+        # honored (codex P2) because FEAT-004 reconciliation marks a pane
+        # inactive when it disappears while its container stays active — a
+        # stale pane, not a discovered-and-unmanaged one. The last_seen_at
+        # half of Clarifications Q1 remains deferred to upstream wiring.
         ios = int(
             conn.execute(
                 """
                 SELECT COUNT(*) FROM panes p
                 JOIN containers c ON c.container_id = p.container_id
-                WHERE c.active = 0
+                WHERE c.active = 0 OR p.active = 0
                 """
             ).fetchone()[0]
         )
-        # discovered-and-registered: pane on active container with active agent.
+        # discovered-and-registered: ACTIVE pane on an active container with
+        # an active agent. p.active=1 keeps this disjoint from inactive-or-
+        # stale (Research §PB priority: inactive-or-stale outranks registered,
+        # so a p.active=0 pane with an active agent counts as stale, not dar).
         dar = int(
             conn.execute(
                 """
                 SELECT COUNT(*) FROM panes p
                 JOIN containers c ON c.container_id = p.container_id
                 WHERE c.active = 1
+                  AND p.active = 1
                   AND EXISTS (
                       SELECT 1 FROM agents a
                       WHERE a.active = 1
@@ -531,8 +542,13 @@ def _compute_agent_state_buckets(
       ``active`` + ``inactive`` + ``partially_configured`` == total agents
         - ``partially_configured`` — Clarifications Q2 — any of ``role``,
           ``capability``, ``label`` missing/empty/``unknown``.
-        - ``active`` — fully configured AND container.active=1.
-        - ``inactive`` — fully configured AND container.active=0.
+        - ``active`` — fully configured AND container.active=1 AND the
+          agent's own ``active`` flag is set (``a.active = 1``).
+        - ``inactive`` — fully configured but NOT active: container.active=0
+          OR the agent's own ``active`` flag is unset (FEAT-006 cascaded it
+          inactive when its bound pane went inactive). Computed as the
+          ``total - active - partially_configured`` remainder so the
+          partition stays exhaustive.
     * **Log-state partition** (orthogonal — FR-006):
       ``log-attached`` + ``log-detached`` == total agents
         - ``log-attached`` — ``log_attachments.status='active'`` row exists.
@@ -567,13 +583,18 @@ def _compute_agent_state_buckets(
                 """
             ).fetchone()[0]
         )
-        # active: fully configured AND on active container.
+        # active: fully configured AND on active container AND the agent's
+        # own active flag is set. a.active is honored (codex P2) because
+        # FEAT-006 cascade_agents_active_from_pane sets a.active=0 when the
+        # agent's bound pane goes inactive even while the container stays
+        # active — such an agent is deregistered, not active.
         active = int(
             conn.execute(
                 """
                 SELECT COUNT(*) FROM agents a
                 JOIN containers c ON c.container_id = a.container_id
                 WHERE c.active = 1
+                  AND a.active = 1
                   AND a.role != 'unknown'
                   AND a.capability != 'unknown'
                   AND a.label != ''

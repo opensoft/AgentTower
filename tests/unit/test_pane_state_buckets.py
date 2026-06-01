@@ -240,6 +240,49 @@ def test_research_pb_priority_inactive_container_wins_over_unmanaged(
     assert result["discovery-degraded"] == 0
 
 
+@pytest.mark.v1_1
+def test_inactive_pane_on_active_container_is_stale_not_unmanaged(
+    db_ctx: SimpleNamespace,
+) -> None:
+    """codex P2 — a pane whose own ``active`` flag is unset (FEAT-004
+    reconciliation marked it inactive when it disappeared) on an *active*
+    container belongs in ``inactive-or-stale``, not
+    ``discovered-and-unmanaged``. Guards the regression where the ios query
+    keyed only off ``c.active`` and let ``p.active = 0`` panes fall through
+    to the adopt-me ``dau`` bucket."""
+    seed_container(db_ctx.state_conn, container_id="c-act", active=1)
+    # Active pane (→ dau, no agent) + an inactive pane on the SAME active
+    # container (→ ios via p.active=0).
+    seed_pane(db_ctx.state_conn, container_id="c-act", pane_index=0, active=1)
+    seed_pane(db_ctx.state_conn, container_id="c-act", pane_index=1, active=0)
+
+    result = _compute_pane_state_buckets(db_ctx)
+    assert result["inactive-or-stale"] == 1, "p.active=0 pane → stale even on active container"
+    assert result["discovered-and-unmanaged"] == 1, "the active no-agent pane stays dau"
+    assert result["discovered-and-registered"] == 0
+    assert result["discovery-degraded"] == 0
+    assert sum(result.values()) == 2, "partition stays exhaustive over both panes"
+
+
+@pytest.mark.v1_1
+def test_inactive_pane_with_active_agent_is_stale_not_registered(
+    db_ctx: SimpleNamespace,
+) -> None:
+    """codex P2 follow-on — a ``p.active = 0`` pane with an active agent on an
+    active container is ``inactive-or-stale`` (§PB priority outranks
+    registered), NOT ``discovered-and-registered``; the ``p.active = 1`` guard
+    on the dar query is what keeps the two buckets disjoint."""
+    seed_container(db_ctx.state_conn, container_id="c1", active=1)
+    seed_pane(db_ctx.state_conn, container_id="c1", pane_index=0, active=0)
+    seed_agent(db_ctx.state_conn, agent_id="a1", container_id="c1", pane_index=0)
+
+    result = _compute_pane_state_buckets(db_ctx)
+    assert result["inactive-or-stale"] == 1
+    assert result["discovered-and-registered"] == 0, "p.active=0 keeps it out of dar"
+    assert result["discovered-and-unmanaged"] == 0
+    assert sum(result.values()) == 1
+
+
 # ─── Research §PR — partially_configured agent still registers pane ────────
 
 

@@ -19,7 +19,7 @@ This file captures the v1.1 entities, closed-set vocabularies, and derived-aggre
 |---|---|
 | `discovered-and-unmanaged` | A pane row exists, but no agent is registered for it. |
 | `discovered-and-registered` | A pane row exists AND an agent is registered for it. (See Research §PR — agent's `partially_configured` status does NOT exclude the pane from this bucket.) |
-| `inactive-or-stale` | A pane row whose owning container is in container state `inactive`, OR whose `last_seen_at` predates the most recent successful pane scan. |
+| `inactive-or-stale` | A pane row whose owning container is in container state `inactive`, OR whose own `active` flag is unset (FEAT-004 reconciliation marks a pane inactive when it disappears while its container stays active), OR whose `last_seen_at` predates the most recent successful pane scan (this `last_seen_at` half is deferred until upstream scan-timestamp wiring lands). |
 | `discovery-degraded` | A pane row whose owning container is in container state `degraded_scan`. |
 
 **Bucket assignment priority** (Research §PB — first match wins):
@@ -49,8 +49,8 @@ The two cross-checks were loosened from strict equality to one-sided invariants 
 
 | Key | Definition |
 |---|---|
-| `active` | Registered agent whose owning container's `state == "active"` AND whose config is complete (i.e., is not `partially_configured`). |
-| `inactive` | Registered agent whose owning container's `state ∈ {"inactive", "degraded_scan"}` AND whose config is complete. |
+| `active` | Registered agent whose owning container's `state == "active"`, whose own `active` flag is set, AND whose config is complete (i.e., is not `partially_configured`). |
+| `inactive` | Registered agent whose config is complete but which is not `active` — i.e., its owning container's `state ∈ {"inactive", "degraded_scan"}` OR its own `active` flag is unset (e.g., FEAT-006 cascaded it inactive when its bound pane went inactive). |
 | `partially_configured` | Registered agent for which one or more of `role`, `capability`, `label` is missing/empty/`unknown`. Mutually exclusive with `active` and `inactive` — a partially-configured agent does NOT contribute to either of those buckets (Clarifications Q5, FR-020). |
 | `log-attached` | Registered agent whose current log-attachment state (per FEAT-007) is attached. Orthogonal to the three buckets above — may co-occur with any of them. |
 | `log-detached` | Registered agent whose current log-attachment state is detached. Orthogonal. |
