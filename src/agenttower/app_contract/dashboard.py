@@ -330,7 +330,27 @@ def _first_active_container_id(ctx: "DaemonContext") -> str | None:
 def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
     """Deterministic first unadopted pane by primary-key order. A pane is
     unadopted iff no agent row exists for it (per the same agent→pane
-    matching the v1.0 ``_pane_counts.registered`` query uses)."""
+    matching the v1.0 ``_pane_counts.registered`` query uses).
+
+    Determinism (post-swarm low): ``ORDER BY`` spans the full FEAT-004
+    composite PK (``container_id, tmux_socket_path, tmux_session_name,
+    tmux_window_index, tmux_pane_index, tmux_pane_id``) so the "first"
+    pane is stable across runs; ordering by ``(container_id, tmux_pane_id)``
+    alone left ties under the same container/pane-id nondeterministic.
+
+    Wire-id caveat (post-swarm low, knowingly retained): the emitted
+    ``target.id`` is the bare ``tmux_pane_id`` (``%N``). Per FEAT-004
+    ``data-model.md`` a pane's identity is the 6-column PK and ``%N`` is
+    only a component — reused across sessions — so this value is not a
+    globally unique pane key. It is retained because the v1.1 ``target.id``
+    contract (``contracts/closed-sets-v1_1.md`` §target.id format,
+    ``data-model.md`` §target.id opacity) requires an *opaque* id with no
+    paths / display strings, and FEAT-004 exposes no opaque surrogate pane
+    key — the composite PK contains ``tmux_socket_path`` (a slash-bearing
+    path) and so cannot itself be the opaque id. Clients resolve
+    ``target.id`` via ``app.<entity>.detail``; minting a unique opaque pane
+    identifier is a contract-level decision deferred to a future minor.
+    """
     conn = getattr(ctx, "state_conn", None)
     if conn is None:
         return None
@@ -343,7 +363,9 @@ def _first_unadopted_pane_id(ctx: "DaemonContext") -> str | None:
             "    AND a.tmux_pane_id = p.tmux_pane_id "
             "    AND a.active = 1"
             ") "
-            "ORDER BY p.container_id, p.tmux_pane_id LIMIT 1"
+            "ORDER BY p.container_id, p.tmux_socket_path, "
+            "p.tmux_session_name, p.tmux_window_index, "
+            "p.tmux_pane_index, p.tmux_pane_id LIMIT 1"
         ).fetchone()
     except Exception:  # noqa: BLE001 — FR-025 fallback
         return None
@@ -675,10 +697,14 @@ def app_dashboard(
     # FR-042 + FR-007: combined host-only + session-token gate.
     from .sessions import gate_session_required  # lazy (circular avoidance)
 
-    # FR-027 / SC-006 latency measurement spans the full handler body
-    # (after the host-only + session-token gate so we don't measure
-    # rejected-call paths). Wall-clock-equivalent monotonic ms; see
-    # Research §TS / §CW for the clock-source convention.
+    # FR-027 / SC-006 latency measurement. ``_t0`` is captured *before* the
+    # host-only + session-token gate, so for an accepted call the measured
+    # latency includes gate/token-validation time, not just the body.
+    # Rejected calls are excluded not by timer placement but by the early
+    # ``return gate`` below short-circuiting before the ``try/finally`` — so
+    # the ``finally`` (and the WARN emission) never runs on a rejected path.
+    # Wall-clock-equivalent monotonic ms; see Research §TS / §CW for the
+    # clock-source convention.
     _t0 = time.monotonic_ns()
 
     gate = gate_session_required(params, peer_uid)

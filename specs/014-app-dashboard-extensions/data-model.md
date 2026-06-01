@@ -141,7 +141,7 @@ The dashboard handler (T020) is responsible for the state-building step (reading
 **Constants** (Python module-level, CONSTANT_CASE per language convention; corrected per analyze M-CONST-CASE):
 
 - `WINDOW_MS: Final[int] = 300_000` (5 minutes; Clarifications Q6 — fixed daemon-side, not client-tunable in v1.1). The wire field stays lowercase `recently_skipped_window_ms` per FR-007; only the Python module identifier is CONSTANT_CASE.
-- `MAXLEN: Final[int] = 10_000` (Research §RB — bounded memory, ~80 KB worst case). Sourced into `collections.deque(maxlen=MAXLEN)` at construction.
+- `MAXLEN: Final[int] = 10_000` (Research §RB — bounded memory, ~400 KB worst case: 10_000 distinct large-int millisecond timestamps at ~32 B each + the deque block array). Sourced into `collections.deque(maxlen=MAXLEN)` at construction.
 
 **Invariants** (FR-008):
 

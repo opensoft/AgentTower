@@ -207,7 +207,7 @@ When a client connects with `client_app_contract_major = 1`, does the v1.1 daemo
 | Option | Description |
 |--------|-------------|
 | A | Always emit v1.1 fields once the daemon advertises v1.1, regardless of `client_app_contract_major`; v1.0 clients ignore unknown fields per existing rules. |
-| B | Suppress v1.1 fields when `client_app_contract_major == 1`; only emit when client also advertises ≥1. |
+| B | Suppress v1.1 fields when `client_app_contract_major == 1`; only emit when client advertises `client_app_contract_major >= 2`. |
 | C | Gate emission on a new `client_app_contract_minor` field in `app.hello` (would require a request-shape change). |
 | Short | Provide a different rule (≤5 words). |
 

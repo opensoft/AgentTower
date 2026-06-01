@@ -4,9 +4,10 @@ Four sub-assertions, each mapped to its FR for traceability per
 tasks.md T021. Every assertion is ``@pytest.mark.v1_1``-marked so T023's
 SC-004 v1.0-compat regression can deselect them via ``pytest -m 'not v1_1'``.
 
-This file is NEW (no `tests/contract/` directory exists in this repo —
-FEAT-014 follows the `tests/unit/` convention per the M4 polish in commit
-``768e2ca``).
+This file is NEW. FEAT-011's app-contract assertions live under
+`tests/unit/` (the repo's `tests/contract/` directory holds only the
+earlier CLI/socket contract tests), so FEAT-014 keeps its app-contract
+tests under `tests/unit/` too, per the M4 polish in commit ``768e2ca``.
 
 Maps to:
 

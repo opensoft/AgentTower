@@ -157,7 +157,7 @@ assert "recently_skipped_count" in result["counts"]["routes"]
 # A "v1.0 client" is a caller that only inspects the v1.0 keys and never
 # accesses anything under `by_state`, `recently_skipped_*`, or `recommended_*`.
 # The daemon still emits those fields; the client simply doesn't read them.
-v1_only = AppClient.connect().call("app.dashboard", {})["result"]
+v1_only = AppClient.connect(token=session_token).call("app.dashboard", {})["result"]
 assert v1_only["counts"]["panes"]["total"]      >= 0
 assert v1_only["counts"]["panes"]["registered"] >= 0
 # No error, no contract violation, no surprise behavior.

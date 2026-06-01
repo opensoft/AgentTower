@@ -35,7 +35,28 @@ import re
 import subprocess
 import sys
 
+import pytest
 
+# Opt-in gate (post-swarm M11). This test spawns a *second* full pytest
+# interpreter over the entire ``tests/unit/test_app_*.py`` contract suite
+# (762 selected) — so a bare ``pytest tests/unit`` would otherwise run that
+# suite roughly twice, paying ~10s of redundant wall-clock on every local
+# invocation for a single boolean SC-004 assertion. The subprocess replay
+# therefore runs only when ``AGENTTOWER_RUN_SC004_REGRESSION`` is set
+# truthy; CI sets it explicitly in the unit-gate step
+# (``.github/workflows/sonarqube.yml``) so SC-004 is still enforced on every
+# CI run, exactly once and as a clearly-budgeted cost.
+_SC004_OPT_IN = os.environ.get("AGENTTOWER_RUN_SC004_REGRESSION")
+
+
+@pytest.mark.skipif(
+    not _SC004_OPT_IN,
+    reason=(
+        "SC-004 v1.0-compat regression spawns a full second pytest over the "
+        "contract suite; opt in with AGENTTOWER_RUN_SC004_REGRESSION=1 "
+        "(CI sets this in the unit-gate step)."
+    ),
+)
 def test_sc004_feat011_v1_0_contract_passes_against_v1_1_daemon() -> None:
     """SC-004 regression: re-runs the full FEAT-011 v1.0 contract test
     suite against the v1.1-advertising daemon, asserting every selected

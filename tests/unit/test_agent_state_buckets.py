@@ -21,6 +21,7 @@ Every assertion is ``@pytest.mark.v1_1`` per tasks.md §Notes 'v1.1 marker rule'
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -42,10 +43,15 @@ from ._v11_fixture_helpers import (
 
 
 @pytest.fixture
-def db_ctx(tmp_path: Path) -> SimpleNamespace:
+def db_ctx(tmp_path: Path) -> Iterator[SimpleNamespace]:
+    # Yield + close on teardown so the SQLite connection isn't leaked until
+    # GC (repo norm; matches the twin fixture in test_pane_state_buckets.py).
     state_db = tmp_path / "registry.db"
     conn, _status = open_registry(state_db, namespace_root=tmp_path)
-    return SimpleNamespace(state_conn=conn)
+    try:
+        yield SimpleNamespace(state_conn=conn)
+    finally:
+        conn.close()
 
 
 # ─── FR-005 / FR-003 — keys present, integer-typed ─────────────────────────

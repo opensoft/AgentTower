@@ -17,6 +17,7 @@ Every assertion is ``@pytest.mark.v1_1`` per tasks.md §Notes 'v1.1 marker rule'
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,11 +34,19 @@ from ._v11_fixture_helpers import seed_agent, seed_container, seed_pane
 
 
 @pytest.fixture
-def db_ctx(tmp_path: Path) -> SimpleNamespace:
-    """Minimal ctx-shaped object: only ``state_conn`` is read by the helper."""
+def db_ctx(tmp_path: Path) -> Iterator[SimpleNamespace]:
+    """Minimal ctx-shaped object: only ``state_conn`` is read by the helper.
+
+    Yields (not returns) so the SQLite connection is explicitly closed on
+    teardown, matching the repo norm (``test_state_schema.py`` etc.);
+    ``tmp_path`` removes the on-disk file but not the live connection object.
+    """
     state_db = tmp_path / "registry.db"
     conn, _status = open_registry(state_db, namespace_root=tmp_path)
-    return SimpleNamespace(state_conn=conn)
+    try:
+        yield SimpleNamespace(state_conn=conn)
+    finally:
+        conn.close()
 
 
 # ─── FR-002 / FR-003 — keys present, integer-typed ─────────────────────────

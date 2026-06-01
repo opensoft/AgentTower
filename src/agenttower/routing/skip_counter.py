@@ -25,8 +25,10 @@ Module constants:
 * :data:`WINDOW_MS` (= ``300_000``) — fixed 5-min sliding window
   (Clarifications Q6; not client-tunable in v1.1 per FR-022).
 * :data:`MAXLEN` (= ``10_000``) — deque hard cap; bounds memory at
-  ~80 KB worst case and prevents resource exhaustion from a
-  misbehaving routing worker (Research §RB; security.md CHK006).
+  ~400 KB worst case (~320 KB for 10_000 distinct large-int millisecond
+  timestamps at ~32 B each, plus the ~83 KB deque block array) and
+  prevents resource exhaustion from a misbehaving routing worker
+  (Research §RB; security.md CHK006).
 
 Lifecycle:
 
@@ -73,7 +75,7 @@ class SkipCounter:
     ``RuntimeError: deque mutated during iteration`` and counts are
     consistent across reads. Critical sections are bounded:
     ``record_skip`` is O(1); the count_in_window snapshot is
-    O(min(len, MAXLEN)) and at MAXLEN=10_000 ints is ~80 KB / sub-ms.
+    O(min(len, MAXLEN)) and at MAXLEN=10_000 ints is ~400 KB / sub-ms.
     """
 
     __slots__ = ("_entries", "_lock")

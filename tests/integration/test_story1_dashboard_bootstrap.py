@@ -711,7 +711,10 @@ def test_t018_us3_acceptance_recommendation_precedence_over_socket(
 # FEAT-014 T024 — SC-006 p95 latency + degraded waiver + FR-027 budget-miss
 #
 # Three sub-tests against a real `agenttowerd` process. Each uses the
-# test-only env-var hooks added to dashboard.py + readiness.py:
+# test-only env-var hooks. Both are read/applied inside the
+# `app.dashboard` handler in dashboard.py (validation/wiring in daemon.py);
+# neither lives in readiness.py — FORCE_DEGRADED is a readiness-probe
+# *override* but is applied in the dashboard handler, not the probe module:
 #   • AGENTTOWER_TEST_INJECT_LATENCY_MS — sleeps that many ms inside
 #     one v1.1 aggregator, pushing the dashboard call past the 500ms
 #     SC-006 budget without needing a real slow daemon.

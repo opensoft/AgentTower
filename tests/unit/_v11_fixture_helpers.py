@@ -137,8 +137,14 @@ def seed_log_attachment(
     container_id: str = "c1",
     pane_index: int = 0,
     status: str = "active",  # closed set: active/superseded/stale/detached
+    log_path: str | None = None,
 ) -> None:
     tmux_pane_id = f"%{pane_index}"
+    # Default a distinct log_path per attachment so two *active* attachments
+    # seeded through this helper don't collide on the partial unique index
+    # `log_attachments(log_path) WHERE status = 'active'` (state/schema.py).
+    if log_path is None:
+        log_path = f"/tmp/log-{attachment_id}"
     conn.execute(
         """
         INSERT INTO log_attachments (
@@ -149,7 +155,7 @@ def seed_log_attachment(
             attached_at, last_status_at, created_at
         ) VALUES (
             ?, ?, ?, '/tmp/tmux.sock', 'sess', 0, ?, ?,
-            '/tmp/log', ?, 'explicit', 'pipe-pane -O cat >/tmp/log',
+            ?, ?, 'explicit', ?,
             ?, ?, ?
         )
         """,
@@ -159,7 +165,9 @@ def seed_log_attachment(
             container_id,
             pane_index,
             tmux_pane_id,
+            log_path,
             status,
+            f"pipe-pane -O cat >{log_path}",
             _ISO_TS,
             _ISO_TS,
             _ISO_TS,

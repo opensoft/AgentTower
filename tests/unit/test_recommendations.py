@@ -423,6 +423,25 @@ def test_subsystem_target_id_is_one_of_closed_set() -> None:
         assert result.target == {"kind": "subsystem", "id": probe}
 
 
+@pytest.mark.v1_1
+def test_subsystem_degraded_unknown_name_yields_null_target() -> None:
+    """recommendations.py ``first_probe is None`` fall-through (Research §SS
+    aggregate-failure case): when ``degraded_subsystems`` is non-empty but
+    holds only names absent from ``PROBE_ORDER`` (e.g. an aggregator-caught
+    failure surfaced under a synthetic name), the engine still emits
+    ``subsystem_degraded`` — but with the literal ``"unknown"`` substitution
+    and ``target=None``, distinct from every known-probe case. Guards against
+    a regression that raised ``StopIteration``, indexed ``[0]``, or fabricated
+    a target from the unknown name."""
+    result = compute_recommendation(
+        _state(degraded_subsystems=("not_a_probe", "also_unknown"))
+    )
+    assert result.code == "subsystem_degraded"
+    assert result.target is None
+    assert "unknown" in result.title.lower()
+    assert result.detail is not None and "unknown" in result.detail.lower()
+
+
 # ─── FR-024 — target.id opacity (no operator-readable display chars) ────────
 
 

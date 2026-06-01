@@ -39,6 +39,6 @@
 ## Plan & Design Alignment (re-verify 2026-05-24)
 
 - [X] CHK015 - Does Research §CO state the additive cost estimate (< 5 ms) with the explicit fixture-scale assumption (FEAT-011 fixture sizes), so the budget headroom claim is testable? [Measurability, Research §CO]
-- [X] CHK016 - Is the ring buffer's worst-case memory (~80 KB at 10 000 entries × ~8 bytes/entry) called out so reviewers can sanity-check the `maxlen` choice? [Clarity, Research §RB]
+- [X] CHK016 - Is the ring buffer's worst-case memory (~400 KB at 10 000 distinct large-int timestamps × ~32 B each, plus the deque block array) called out so reviewers can sanity-check the `maxlen` choice? [Clarity, Research §RB]
 - [X] CHK017 - Does plan.md's "no new background worker" claim reconcile with `skip_counter.record_skip` being called synchronously by the existing FEAT-010 routing worker? [Consistency, Plan §Constraints]
 - [X] CHK018 - Is the cost of recommendation evaluation stated as O(n) over a small named n (panes + agents + routes ≤ a stated bound), not just "fast"? [Clarity, Research §CO]

@@ -134,7 +134,8 @@ def test_count_in_window_filters_mixed_inside_and_outside() -> None:
 @pytest.mark.v1_1
 def test_drop_oldest_on_maxlen_overflow() -> None:
     """Research §RB: when MAXLEN entries are exceeded, the oldest is dropped
-    (deque semantics). Memory is bounded at ~80 KB worst case."""
+    (deque semantics). Memory is bounded at ~400 KB worst case (10_000
+    distinct large-int timestamps at ~32 B each + the deque block array)."""
     counter = SkipCounter()
     for i in range(MAXLEN):
         counter.record_skip(now_ms=i)

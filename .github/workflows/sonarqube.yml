@@ -78,6 +78,12 @@ jobs:
         # which is too heavy + flaky for the main Sonar gate. The
         # fresh-container E2E (tests/e2e/) is similarly out-of-scope
         # for the gate.
+        env:
+          # Opt in to the SC-004 v1.0-compat regression (test_v1_0_compat.py),
+          # which spawns a second pytest over the full contract suite. Gated
+          # off by default (post-swarm M11) so it doesn't double-run on every
+          # local `pytest tests/unit`; enforced here exactly once in CI.
+          AGENTTOWER_RUN_SC004_REGRESSION: "1"
         run: |
           python -m pytest tests/unit \
             --cov \

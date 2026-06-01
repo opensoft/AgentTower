@@ -809,8 +809,11 @@ def _run(args: argparse.Namespace) -> int:
                 detail=(
                     f"AGENTTOWER_TEST_INJECT_LATENCY_MS={_t024_inject_ms} is "
                     "set; app.dashboard will artificially sleep that many ms "
-                    "per call (FR-027 latency-injection test seam). This "
-                    "must not be set on a production daemon."
+                    "per call when the value parses to a positive integer "
+                    "(non-positive or non-numeric values coerce to 0 = no "
+                    "sleep; see dashboard._test_only_injection_ms) — FR-027 "
+                    "latency-injection test seam. This must not be set on a "
+                    "production daemon."
                 ),
             )
         _t024_forced_degraded = os.environ.get(
