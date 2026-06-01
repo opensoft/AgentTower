@@ -257,6 +257,68 @@ def _detail(conn, serializer, layout_id):  # noqa: ANN001
         _clear_request_peer_context()
 
 
+def test_review2_spawn_forwards_stage_timeout_to_retry(
+    conn: sqlite3.Connection, serializer: ContainerSerializer, monkeypatch
+) -> None:
+    """Review #2 (FR-013): spawn_layout_in_background must FORWARD
+    stage_timeout_seconds to run_stage_with_retry for every stage — it
+    previously omitted it, so the 30s per-stage timeout was dead code and
+    a hung docker exec could hold the per-container lock forever.
+
+    The spy is a pass-through that records the forwarded timeout and runs
+    the stage in the MAIN thread (bypassing the executor), so the real
+    backends still drive the panes to ready without cross-thread conn use.
+    """
+    import agenttower.managed_sessions.service as svc
+
+    captured: list[tuple[str, float | None]] = []
+
+    def spy(fn, *, stage_name, timeout_seconds=None):  # noqa: ANN001
+        captured.append((stage_name, timeout_seconds))
+        return fn()
+
+    monkeypatch.setattr(svc, "run_stage_with_retry", spy)
+    adapter = _fake_adapter()
+    result = create_layout(
+        conn=conn, serializer=serializer, container_id=CONTAINER,
+        template_name="1m+2s", tmux_session_name="us1-timeout",
+    )
+    spawn_layout_in_background(
+        result.layout_id, conn=conn, serializer=serializer,
+        tmux_spawn_fn=_prod_spawn(adapter),
+        register_fn=_register_into_agents(conn), log_attach_fn=_log_ok,
+        stage_timeout_seconds=30.0,
+    )
+    assert captured  # stages actually ran
+    assert all(t == 30.0 for _stage, t in captured)
+    assert {s for s, _t in captured} == {"tmux_spawn", "register", "log_attach"}
+
+
+def test_review18_spawn_reentry_on_ready_layout_reports_ready(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review #18: re-running spawn on an already-ready layout (no panes
+    left in 'creating') must report layout_state=READY, not FAILED."""
+    adapter = _fake_adapter()
+    result = create_layout(
+        conn=conn, serializer=serializer, container_id=CONTAINER,
+        template_name="1m+2s", tmux_session_name="us1-reentry",
+    )
+    spawn_layout_in_background(
+        result.layout_id, conn=conn, serializer=serializer,
+        tmux_spawn_fn=_prod_spawn(adapter),
+        register_fn=_register_into_agents(conn), log_attach_fn=_log_ok,
+    )
+    # Re-entry: all panes already ready → nothing in 'creating' to process.
+    outcome = spawn_layout_in_background(
+        result.layout_id, conn=conn, serializer=serializer,
+        tmux_spawn_fn=_prod_spawn(adapter),
+        register_fn=_register_into_agents(conn), log_attach_fn=_log_ok,
+    )
+    assert outcome.pane_states == {}
+    assert outcome.layout_state == ManagedState.READY
+
+
 # NOTE: A real `docker exec` tmux smoke is intentionally NOT a pytest test —
 # `tests/conftest.py::_no_real_docker` forbids real docker suite-wide by
 # policy. Real-bench verification of the production backend is an out-of-band

@@ -328,6 +328,38 @@ def test_create_layout_returns_capacity_exceeded_at_41(
     assert exc.value.details["limit"] == CAPACITY_LIMIT
 
 
+def test_review3_capacity_recheck_inside_tx_catches_race_to_limit(
+    conn: sqlite3.Connection, serializer: ContainerSerializer, monkeypatch
+) -> None:
+    """Review #3: the FR-025 cap must be enforced ATOMICALLY inside the
+    BEGIN IMMEDIATE insert tx, not only at the pre-check — otherwise two
+    concurrent cross-container creates both pass the pre-check and
+    overshoot. Simulate the race: the pre-check count sees limit-1 (pass)
+    but the in-tx re-count sees the limit (a concurrent create landed),
+    and the insert must be rejected with capacity_exceeded."""
+    import agenttower.managed_sessions.service as svc
+
+    calls = {"n": 0}
+
+    def fake_count(_conn) -> int:  # noqa: ANN001
+        calls["n"] += 1
+        # 1st call = pre-check (passes); 2nd = atomic in-tx re-count (at cap).
+        return CAPACITY_LIMIT - 1 if calls["n"] == 1 else CAPACITY_LIMIT
+
+    monkeypatch.setattr(svc, "count_active_layouts", fake_count)
+
+    with pytest.raises(ManagedSessionsError) as exc:
+        create_layout(
+            conn=conn, serializer=serializer, container_id="bench-alpha",
+            template_name="1m+2s", tmux_session_name="race-session",
+        )
+    assert exc.value.code == MANAGED_LAYOUT_CAPACITY_EXCEEDED
+    # The in-tx re-check actually ran (≥2 counts: pre-check + atomic).
+    assert calls["n"] >= 2
+    # And no row leaked from the aborted transaction.
+    assert count_active_layouts(conn) == 0
+
+
 def test_capacity_excludes_removed_layouts(
     conn: sqlite3.Connection, serializer: ContainerSerializer
 ) -> None:

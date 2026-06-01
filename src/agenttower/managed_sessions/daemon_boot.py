@@ -227,6 +227,11 @@ def kickoff_spawn_pipeline(
                 log_attach_fn=backends["log_attach"],
                 event_emitter=event_emitter,
                 tx_lock=tx_lock,
+                # FR-013: enforce the 30s per-stage timeout in production
+                # (a hung docker exec must not hold the per-container lock
+                # forever). Direct test callers default to None to avoid
+                # cross-thread issues with in-memory SQLite.
+                stage_timeout_seconds=STAGE_TIMEOUT_SECONDS,
             )
         except Exception:  # noqa: BLE001 — never let a bg crash leak
             LOG.exception(

@@ -345,7 +345,9 @@ def create_layout(
                     },
                 )
 
-        # 5. FR-025 capacity check.
+        # 5. FR-025 capacity check (cheap fast-path; the authoritative
+        #    atomic re-count runs inside the BEGIN IMMEDIATE insert tx
+        #    below per review #3).
         with tx_guard(tx_lock):
             active = count_active_layouts(conn)
         if active >= CAPACITY_LIMIT:
@@ -433,6 +435,19 @@ def create_layout(
                 conn.commit()
             conn.execute("BEGIN IMMEDIATE")
             try:
+                # review #3: FR-025 is a GLOBAL hard cap (40 layouts across
+                # ALL containers), but create_layout only holds the
+                # per-container lock — two concurrent creates for DIFFERENT
+                # containers would both pass the pre-check at (5) and
+                # overshoot. Re-count INSIDE this BEGIN IMMEDIATE: the
+                # write lock makes the count consistent with the insert and
+                # serializes every inserter, so the cap holds cross-container.
+                active_now = count_active_layouts(conn)
+                if active_now >= CAPACITY_LIMIT:
+                    raise ManagedSessionsError(
+                        MANAGED_LAYOUT_CAPACITY_EXCEEDED,
+                        details={"current_count": active_now, "limit": CAPACITY_LIMIT},
+                    )
                 insert_layout(conn, layout_row)
                 for row in pane_rows:
                     # Per-container label uniqueness enforced by the partial
@@ -639,6 +654,7 @@ def spawn_layout_in_background(
     event_emitter: Optional[EventEmitter] = None,
     clock: Optional[Callable[[], _dt.datetime]] = None,
     tx_lock: Optional[threading.Lock] = None,
+    stage_timeout_seconds: Optional[float] = None,
 ) -> SpawnLayoutOutcome:
     """Run the FEAT-013 spawn pipeline for a previously-inserted layout.
 
@@ -682,16 +698,24 @@ def spawn_layout_in_background(
                 event_emitter=event_emitter,
                 clock=clock,
                 tx_lock=tx_lock,
+                stage_timeout_seconds=stage_timeout_seconds,
             )
             pane_states[pane.id] = final_state
 
         # Aggregate layout state from the now-mutated pane rows. We
         # re-select so the aggregation runs on the persisted truth, not
-        # the in-memory mapping.
+        # the in-memory mapping. Re-select the LAYOUT row too (inside the
+        # lock) so the prev-state baseline reflects any concurrent
+        # remove/recreate/recovery mutation that landed between the
+        # pre-lock read and lock acquisition (review #17 — the pre-lock
+        # `layout.state` could be stale and skip a legitimate update or
+        # emit a wrong prev_state).
         with tx_guard(tx_lock):
             refreshed = select_panes_for_layout(conn, layout_id)
+            layout_fresh = select_layout(conn, layout_id)
+        prev_layout_state = (layout_fresh or layout).state
         new_layout_state = aggregate_layout_state([p.state for p in refreshed])
-        if new_layout_state != layout.state:
+        if new_layout_state != prev_layout_state:
             now = _utc_now_rfc3339(clock)
             # Layout-level failed_stage is set when the aggregate is
             # `failed`; otherwise cleared. (data-model.md §ManagedLayout
@@ -726,15 +750,19 @@ def spawn_layout_in_background(
                         # gives that AND uniqueness.
                         sequence=_layout_sequence_now(),
                         payload={
-                            "prev_state": layout.state.value,
+                            "prev_state": prev_layout_state.value,
                             "new_state": new_layout_state.value,
                         },
                     )
                 )
 
+    # review #18: new_layout_state is always the persisted aggregate truth
+    # (computed from a fresh re-select), even on a no-op re-run where no
+    # pane was in `creating`. The old `if pane_states else FAILED` guard
+    # wrongly reported FAILED for an already-ready layout on re-entry.
     return SpawnLayoutOutcome(
         layout_id=layout_id,
-        layout_state=new_layout_state if pane_states else ManagedState.FAILED,
+        layout_state=new_layout_state,
         pane_states=pane_states,
     )
 
@@ -777,6 +805,7 @@ def _spawn_single_pane(
     event_emitter: Optional[EventEmitter],
     clock: Optional[Callable[[], _dt.datetime]],
     tx_lock: Optional[threading.Lock] = None,
+    stage_timeout_seconds: Optional[float] = None,
 ) -> ManagedState:
     """Drive one pane through tmux → register → log attach. Returns the
     final ``ManagedState`` after persistence.
@@ -848,6 +877,7 @@ def _spawn_single_pane(
     spawn_result = run_stage_with_retry(
         lambda: tmux_spawn_fn(pane),
         stage_name="tmux_spawn",
+        timeout_seconds=stage_timeout_seconds,
     )
     if not spawn_result.get("ok"):
         now = _utc_now_rfc3339(clock)
@@ -883,6 +913,7 @@ def _spawn_single_pane(
     register_result = run_stage_with_retry(
         lambda: register_fn(pane, tmux_pane_id),
         stage_name="register",
+        timeout_seconds=stage_timeout_seconds,
     )
     if not register_result.get("ok"):
         now = _utc_now_rfc3339(clock)
@@ -904,6 +935,7 @@ def _spawn_single_pane(
     log_result = run_stage_with_retry(
         lambda: log_attach_fn(pane, agent_id),
         stage_name="log_attach",
+        timeout_seconds=stage_timeout_seconds,
     )
     log_ok = bool(log_result.get("ok"))
 
