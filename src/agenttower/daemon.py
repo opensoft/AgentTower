@@ -31,6 +31,8 @@ from .socket_api.lifecycle import (
     EVENT_DAEMON_RECOVERING,
     EVENT_DAEMON_SHUTDOWN,
     EVENT_DAEMON_STARTING,
+    EVENT_DASHBOARD_TEST_DEGRADED_FORCED,
+    EVENT_DASHBOARD_TEST_LATENCY_INJECTED,
     EVENT_ERROR_FATAL,
     EVENT_HOST_PEER_CHECK_BYPASSED,
     LifecycleLogger,
@@ -790,6 +792,45 @@ def _run(args: argparse.Namespace) -> int:
                     "AGENTTOWER_TEST_FORCE_HOST_PEER=1 is set; the app.* "
                     "host-only peer check (FR-042) is bypassed process-wide. "
                     "This must not be set on a production daemon."
+                ),
+            )
+
+        # FEAT-014 review-remediation (M4): same auditability pattern for
+        # the two T024 dashboard test seams. Production daemons MUST NOT
+        # have these set; surface as warn-level lifecycle events so an
+        # accidentally-leaked seam is auditable in the daemon log.
+        _t024_inject_ms = os.environ.get("AGENTTOWER_TEST_INJECT_LATENCY_MS", "")
+        if _t024_inject_ms:
+            logger.emit(
+                EVENT_DASHBOARD_TEST_LATENCY_INJECTED,
+                level="warn",
+                pid=os.getpid(),
+                inject_ms=_t024_inject_ms,
+                detail=(
+                    f"AGENTTOWER_TEST_INJECT_LATENCY_MS={_t024_inject_ms} is "
+                    "set; app.dashboard will artificially sleep that many ms "
+                    "per call when the value parses to a positive integer "
+                    "(non-positive or non-numeric values coerce to 0 = no "
+                    "sleep; see dashboard._test_only_injection_ms) — FR-027 "
+                    "latency-injection test seam. This must not be set on a "
+                    "production daemon."
+                ),
+            )
+        _t024_forced_degraded = os.environ.get(
+            "AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS", ""
+        )
+        if _t024_forced_degraded:
+            logger.emit(
+                EVENT_DASHBOARD_TEST_DEGRADED_FORCED,
+                level="warn",
+                pid=os.getpid(),
+                forced_subsystems=_t024_forced_degraded,
+                detail=(
+                    f"AGENTTOWER_TEST_FORCE_DEGRADED_SUBSYSTEMS={_t024_forced_degraded} "
+                    "is set; app.dashboard will force-override the named "
+                    "readiness probes to 'degraded' status (SC-006 degraded "
+                    "waiver test seam). This must not be set on a production "
+                    "daemon."
                 ),
             )
 

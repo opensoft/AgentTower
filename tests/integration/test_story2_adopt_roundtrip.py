@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from agenttower.app_contract import versioning
+
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
@@ -168,7 +170,7 @@ def test_story2_adopt_roundtrip_sc004_within_2s(
         {"app_session_token": token, "wait": True},
     )
     assert "ok" in scan, scan
-    assert scan["app_contract_version"] == "1.0"
+    assert scan["app_contract_version"] == versioning.APP_CONTRACT_VERSION
 
     # 2. pane.list — seeded pane should appear with registered=False.
     pane_list = _one_shot_call(
@@ -348,6 +350,6 @@ def test_story2_re_adopt_same_pane_returns_well_formed_envelope(
     )
     # Either way, the envelope is well-formed.
     assert "ok" in second
-    assert second["app_contract_version"] == "1.0"
+    assert second["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     if not second["ok"]:
         assert isinstance(second["error"]["details"], dict)

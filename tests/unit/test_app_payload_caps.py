@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 
+from agenttower.app_contract import versioning
 from agenttower.socket_api import server as socket_server
 
 
@@ -36,7 +37,9 @@ def test_payload_too_large_envelope_shape() -> None:
     env = socket_server._make_payload_too_large_envelope(observed)
 
     assert env["ok"] is False
-    assert env["app_contract_version"] == "1.0"
+    # Issue #27 cleanup: assert against the current advertised version so
+    # this v1.0-baseline assertion survives v1.x additive evolution.
+    assert env["app_contract_version"] == versioning.APP_CONTRACT_VERSION
     err = env["error"]
     assert set(err.keys()) == {"code", "message", "details"}
     assert err["code"] == "payload_too_large"
@@ -137,7 +140,7 @@ def test_pane_list_response_at_pagination_cap_under_8mib() -> None:
     rows = [_worst_case_pane_row(i) for i in range(200)]
     result = {
         "ok": True,
-        "app_contract_version": "1.0",
+        "app_contract_version": versioning.APP_CONTRACT_VERSION,
         "result": {
             "rows": rows,
             "total": 100000,
@@ -158,7 +161,7 @@ def test_recent_response_at_recent_cap_under_8mib() -> None:
     rows = [_worst_case_pane_row(i) for i in range(50)]
     result = {
         "ok": True,
-        "app_contract_version": "1.0",
+        "app_contract_version": versioning.APP_CONTRACT_VERSION,
         "result": {"rows": rows, "recent_limit": 50},
     }
     encoded = json.dumps(result, separators=(",", ":")).encode("utf-8")

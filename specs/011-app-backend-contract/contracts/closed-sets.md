@@ -380,3 +380,11 @@ Examples: `created_at`, `created_at:asc`, `created_at:desc`. Any other suffix �
 ## Filter Operator Vocabulary at v1.0 (FR-024a)
 
 Exact match only. No `<`, `>`, `<=`, `>=`, `~`, `LIKE`, regex, IN-list, or set-membership operators on filter fields. Time ranges use the paired `since` / `until` unix-ms integer parameters separately from filter exact match. A v1.0 filter value containing operator-like syntax → `validation_failed.details.field == "<offending field>"`.
+
+---
+
+## App Contract Evolution — v1.1 (FEAT-014)
+
+> **Additive breadcrumb only** — per the AGENTS.md §Cross-Feature Spec Dir Editing exception. FEAT-011's v1.0 closed sets above are unchanged.
+
+FEAT-014 introduces new v1.1 closed sets (`PaneState`, `AgentState`, `RecommendationCode`) and extends one existing v1.0 set (`TargetKind` gains the value `subsystem`). The canonical enumeration with per-set Future Evolution governance lives in `specs/014-app-dashboard-extensions/contracts/closed-sets-v1_1.md` — do NOT restate the values here. v1.0 clients silently ignore unknown values per FR-012 of FEAT-014.

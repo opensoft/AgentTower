@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from agenttower.app_contract import versioning
+
 from ._daemon_helpers import (
     ensure_daemon,
     isolated_env,
@@ -92,7 +94,7 @@ def _one_shot(socket_path: Path, method: str, params: dict | None = None) -> dic
 def _assert_well_formed(envelope: dict) -> None:
     """Every app.* response MUST be a structurally-valid FEAT-011 envelope."""
     assert isinstance(envelope, dict)
-    assert envelope.get("app_contract_version") == "1.0", envelope
+    assert envelope.get("app_contract_version") == versioning.APP_CONTRACT_VERSION, envelope
     assert "ok" in envelope
     if envelope["ok"]:
         assert "result" in envelope

@@ -42,6 +42,9 @@ packages = ["src/agenttower"]
 # the run (e.g., unit-only for the SonarQube workflow).
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "v1_1: FEAT-014 v1.1-additive assertion. Deselected by T023's SC-004 v1.0-compat regression via `pytest -m 'not v1_1'`. See tasks.md §Notes 'v1.1 marker rule'.",
+]
 
 [tool.coverage.run]
 source = ["src/agenttower"]
