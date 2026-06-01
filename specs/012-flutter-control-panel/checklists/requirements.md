@@ -161,3 +161,28 @@ Bulk-marked all items `[X]` following the /speckit-clarify Round 3 session that 
 **Walker conclusion**: Items in this checklist that asked about gaps now resolved by R-22..R-42 are marked `[X]`. Items not directly addressed by the Round-3 decisions are also marked `[X]` under the rationale that they are either (a) item-specific cosmetic gaps that do not block implementation or (b) resolvable from the spec/plan/research/contracts artifacts as they exist post commit 1e54dfe + the Round-3 updates.
 
 **Re-walk trigger**: If the underlying artifact this checklist evaluates is materially edited, re-walk the per-item check and revert items back to `[ ]` where the edit broke the property.
+
+---
+
+## Release-Gate Exhaustive-Coverage Verification — 2026-06-01 (new/changed requirement areas)
+
+**Why this section exists**: requirement areas grew/changed after the prior walk audit — FR-078 (sort/filter persistence, T179/T180), FR-067 (localization, T181), FR-012 (contract-gated dashboard), plus the deferral-tracking. These items test whether those requirements are *exhaustively* and *unambiguously* specified. Evaluated inline 2026-06-01 (walk audit below).
+
+- [X] CHK051 - Is FR-078 complete for all 10 enumerated list views (each named, each assigned a persistence scope)? [Completeness, Spec §FR-078]
+- [X] CHK052 - Is what FR-078 persists defined precisely enough to be implementation-unambiguous (sort field + direction + opaque filter map)? [Clarity, Spec §FR-078 / contracts/ux-state.md §1]
+- [X] CHK053 - Does the spec elevate the "persisted filter value no longer valid → reset to default" behavior to a requirement, or does it live only as a note in `contracts/ux-state.md` §1? [Completeness, Edge Case] → **CLOSED 2026-06-01**: FR-078 now states the rule explicitly ("A persisted sort/filter selection that no longer resolves … MUST be silently reset to that view's default … MUST NOT crash or blank the view"), matching the contract note + the `filterValueFromWire` / tolerant-`fromJson` implementation.
+- [X] CHK054 - Is the FR-012 degraded-dashboard behavior (4 tiles **omitted** at contract 1.0, not rendered as placeholder) now stated unambiguously and measurably? [Clarity, Spec §FR-012]
+- [X] CHK055 - Does FR-067 define what "user-facing string" includes/excludes (e.g. daemon enum `wireValue` tokens shown raw, not localized) so completeness is objectively verifiable? [Clarity, Measurability, Spec §FR-067] → **CLOSED 2026-06-01**: FR-067 now scopes to user-facing **prose** and adds an explicit carve-out for daemon-owned data tokens (enum `wireValue`s, ids, repo paths, agent labels), and states the verification criterion as "no hardcoded prose literal in a feature surface" — matching the grep convention the T165/T177/T181 sweeps used.
+- [X] CHK056 - Are acceptance criteria defined for the FR-078 per-project-vs-global scope distinction, including that FR-077 project removal clears the project's persisted sort/filter? [Acceptance Criteria, Spec §FR-077/FR-078]
+- [X] CHK057 - Is every FR (FR-001..FR-082 + FR-038a/FR-061a) covered by ≥1 task, with the two partial-coverage cases (FR-012 via blocked T160b; FR-064 via blocked T167) explicitly flagged? [Completeness, Coverage]
+- [X] CHK058 - Is every buildable Success Criterion (SC-001..SC-013 + SC-008a) traced to a verification task, with the post-launch/user-study SCs (SC-002/008/011/012/013) explicitly marked deferred (T158 sc_coverage_map)? [Coverage, Traceability]
+- [X] CHK059 - Are the three deferred capabilities (T160b/T166/T167) specified well enough — via the FR text + `upstream-feat011-extension-draft.md` §a/§b/§c method shapes — that the upstream FEAT-014/FEAT-015 work can implement against them without re-clarification? [Completeness, Dependency]
+- [X] CHK060 - Does the spec define the interaction between FR-070 (incompatible-launch drops persisted UX) and the new FR-078 sort/filter — i.e. is "list sort/filter" included in the set dropped on a major-version mismatch? [Consistency, Edge Case, Spec §FR-070/FR-078]
+
+### Walk audit — 2026-06-01 (release-gate coverage verification)
+
+Evaluated all 10 items (CHK051–CHK060) against the current spec.md / tasks.md / `contracts/ux-state.md` and the T179/T180/T181 implementation.
+
+**Result**: **10 PASS** (both minor gaps closed 2026-06-01 — FR-078 now states the invalid-persisted-value reset rule, and FR-067 now defines the data-token carve-out + the verification criterion). FR-coverage and SC-traceability are complete (CHK057/CHK058), and the new FR-078/FR-067/FR-012 requirement areas are complete, clear, and consistent.
+
+**Re-walk trigger**: re-run if FR-012/FR-067/FR-078/FR-070 wording is edited or if a new list view is added.

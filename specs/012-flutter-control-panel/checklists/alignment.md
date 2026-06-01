@@ -106,3 +106,33 @@ Bulk-marked items `[X]`, then reverted 5 specific items to `[ ]` with inline fin
 **Marked items (55)**: All other items were judged satisfied by the spec ↔ plan ↔ research ↔ data-model ↔ contracts ↔ quickstart chain as of commits b01ecec / e7ef5dd / 78d3ad8 / 58eac22 plus the post-58eac22 plan.md I2+I3 polish.
 
 **Re-walk trigger**: If spec.md, plan.md, contracts/, or data-model.md is materially edited, re-run a per-item check on the affected sections.
+
+---
+
+## Release-Gate Cross-Artifact Alignment Verification — 2026-06-01 (post-Round-11/12 + T179/T180/T181)
+
+**Why this section exists**: the spec/plan/tasks/contracts were materially edited after the prior walk audits (analyze Round 11/12 remediation; T179 FR-078 persistence; T180 sort/filter affordances; T181 FR-067 sweep; FR-012/FR-052 rewording; deferral-issue filing). Per each file's re-walk trigger, these items re-verify that the changes are *perfectly aligned* across every artifact. Items evaluated inline 2026-06-01 (see walk audit below).
+
+- [X] CHK061 - Is the FR-012 contract-gated-dashboard clause (4 tiles omitted at contract 1.0) consistent across spec.md §FR-012, the `dashboard_view.dart` TODO markers, and the T160b task body? [Consistency, Spec §FR-012]
+- [X] CHK062 - Does the spec.md Status line (178/182) agree with the actual tasks.md checkbox counts (done vs open) and the footer "Total tasks" / "Tasks per phase" arithmetic? [Consistency, Traceability]
+- [X] CHK063 - Is FR-078's per-view sort/filter scope rule (per-project for Drift / Available-Validation / Runs; global for the rest) stated consistently in spec.md §FR-078, `contracts/ux-state.md` §1, and the T179/T180 task bodies? [Consistency]
+- [X] CHK064 - Does `contracts/ux-state.md`'s `schema_version` (1) align with the T179 decision that no schema bump was required, and with plan.md §Storage? [Consistency, Conflict-check]
+- [X] CHK065 - Is the FR-052 attention-queue placement clause (workspace panel, NOT an FR-011 sub-view) consistent with FR-011's 8-sub-view enumeration? [Consistency, Spec §FR-052/FR-011]
+- [X] CHK066 - Are the three upstream-deferred tasks (T160b/T166/T167) traceable to filed tracking issues (#34/#35/#36) in the tasks.md F2 table, with no remaining `_PENDING_` cells? [Traceability]
+- [X] CHK067 - Is FR-067 ("ALL user-facing strings routed through localization") consistently claimed met across the spec Status line + tasks (T165 + T177 + T181), and is that claim aligned with the agent_ops surfaces T181 actually localized? [Consistency, Coverage]
+- [X] CHK068 - Does T180's list of FR-063/FR-078 list views match the 10 views enumerated in FR-063 and FR-078, with each view's `<workspace>/<view>` viewId and scope (global vs per-project) correctly assigned? [Coverage, Traceability]
+- [X] CHK069 - Are the newly-added tasks (T179/T180/T181) reflected in the tasks.md footer "Tasks per phase" Phase-9 count and arithmetic (39→40) and "Total tasks" (181→182)? [Consistency]
+- [X] CHK070 - Are the FR ids cited in the new T179/T180/T181 task bodies (FR-078, FR-067, FR-063) actually defined in spec.md with matching scope? [Traceability]
+- [X] CHK071 - Does the per-surface contract version the app declares (`ContractRegistry`, e.g. `agent_ops/dashboard` at 1.0) align with the FR-012/T160b contract-1.1 dependency statement? [Consistency]
+- [X] CHK072 - Is the FEAT-014 dependency for T160b stated consistently in the T160b body, the F2 table, and `upstream-feat011-extension-draft.md` (§a = dashboard / §b+§c = FEAT-015)? [Consistency, Dependency] → **CLOSED 2026-06-01**: updated all four stale "no upstream artifact filed" references (T160b body, the BLOCKED summary, the Blocked-on-external-FEAT section, the Phase-3 checkpoint cross-ref) to cite **FEAT-014 (`014-app-dashboard-extensions`, 27/27 done, pending merge to `main`, tracked #34)**, and added a "partially superseded" banner to `upstream-feat011-extension-draft.md` splitting §a (FEAT-014, filed) from §b/§c (FEAT-015, unfiled). Now consistent across body ↔ F2 table ↔ draft.
+- [X] CHK073 - Do the T153 manual-validation runbook's acceptance criteria align with quickstart.md's per-step acceptance tables and the FRs they cite? [Consistency, Traceability]
+- [X] CHK074 - Are the bundle-id (T178) and packaging (T148) verification rows that T178 said "MUST be folded into T153" actually present in the T153 runbook (§5)? [Coverage, Traceability]
+- [X] CHK075 - After the Round 11/12 edits, does any FR's spec wording now conflict with the implemented behavior recorded in its task "Done" note (e.g. FR-012 omit-vs-render, FR-052 placement, FR-078 scope, FR-067 coverage)? [Conflict-check] → all aligned except the stale T160b body flagged in CHK072.
+
+### Walk audit — 2026-06-01 (release-gate alignment verification)
+
+Evaluated all 15 items (CHK061–CHK075) against the current artifacts as of commits `fac38ec` (T181) + `79f4da0` (issues) + the uncommitted FR-012/FR-052/dependency edits and the T153 runbook.
+
+**Result**: **15 PASS** (CHK072 GAP closed 2026-06-01 — the stale "no upstream artifact filed" prose was updated everywhere to cite FEAT-014). All Round-11/12 changes are now consistently reflected across spec ↔ plan ↔ tasks ↔ contracts ↔ status lines ↔ implementation Done-notes ↔ the upstream draft.
+
+**Re-walk trigger**: re-run on the next material edit to spec.md / tasks.md / contracts/, or once FEAT-014 merges (which will change CHK061/CHK071/CHK072 inputs).

@@ -1,18 +1,22 @@
-> **Status: DRAFT — operator hand-off outline, not a Spec Kit artifact yet.**
-> This file is a planning sketch for a NEW feature spec that must be promoted
-> via `/speckit.specify` from the root checkout on `main` (per
-> `.specify/memory/constitution.md` and the project CLAUDE.md). It lives in
-> the FEAT-012 worktree only because the worktree is where the dependency was
-> surfaced. **Do not run `/speckit.specify` from this worktree.**
+> **Status: PARTIALLY SUPERSEDED (updated 2026-06-01).** §(a) — the `app.dashboard`
+> field extensions — has since been promoted into **FEAT-014
+> (`014-app-dashboard-extensions`)**, fully implemented (27/27) but not yet merged
+> to `main`; it unblocks T160b (#34). §(b) `app.handoff.draft` and §(c)
+> `app.events.subscribe` streaming are **still unfiled** — promote them as a new
+> feature (proposed **FEAT-015**) via `/speckit.specify` from the root checkout on
+> `main` (per `.specify/memory/constitution.md` and the project CLAUDE.md); they
+> unblock T166 (#35) + T167 (#36). **Do not run `/speckit.specify` from this
+> worktree.** This file remains a planning sketch for the FEAT-015 portion.
 
 # Upstream FEAT-011 Extension for FEAT-012 Unblocking
 
 **Why this exists**: Three open tasks in FEAT-012 (T160b, T166, T167) are
-blocked on backend work that does not exist in FEAT-011 v1.0. /speckit-analyze
-Round 6 + Round 8 + Round 9 (D1) confirmed no upstream artifact is filed
-in-tree. Until that artifact lands, FEAT-012 cannot fully close — three FRs
-(FR-012 dashboard tile parity, FR-072(a) drafted-row recovery, FR-064 live-
-update budget) remain in a documented-degraded state.
+blocked on backend work that does not exist in FEAT-011 v1.0. As of 2026-06-01,
+§(a) is filed (**FEAT-014**, done 27/27, pending merge — unblocks T160b); §(b)
+and §(c) remain unfiled and need a new feature (**FEAT-015**) — unblocking T166
++ T167. Until each lands, the corresponding FRs (FR-012 dashboard tile parity,
+FR-072(a) drafted-row recovery, FR-064 live-update budget) remain in a
+documented-degraded state.
 
 **Suggested feature id**: next sequential after 012 — likely `014` if FEAT-013
 (Managed Session Creation) is already claimed.
