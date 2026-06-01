@@ -168,3 +168,23 @@ def test_is_pane_dead_raises_on_docker_exec_failure() -> None:
         adapter.is_pane_dead(
             container_id="c1", bench_user="u", socket_path="/s", pane_id="%4",
         )
+
+
+def test_kill_pane_treats_vanished_pane_as_idempotent_success() -> None:
+    """review #5 / FR-010: a pane already gone ('can't find pane') is the
+    intended end state → kill_pane returns normally, not a TmuxError."""
+    adapter, _ = _adapter_with_run(1, stderr="can't find pane: %9")
+    # Must NOT raise.
+    adapter.kill_pane(
+        container_id="c1", bench_user="u", socket_path="/s", pane_id="%9",
+    )
+
+
+def test_kill_pane_still_raises_on_real_docker_failure() -> None:
+    adapter, _ = _adapter_with_run(
+        1, stderr="Error response from daemon: no such container"
+    )
+    with pytest.raises(TmuxError):
+        adapter.kill_pane(
+            container_id="c1", bench_user="u", socket_path="/s", pane_id="%9",
+        )

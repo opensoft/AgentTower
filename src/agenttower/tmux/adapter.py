@@ -38,7 +38,7 @@ populate ``message_queue.failure_reason`` (FR-043).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, Union
 

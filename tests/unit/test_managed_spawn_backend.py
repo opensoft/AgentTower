@@ -565,6 +565,28 @@ def test_tmux_kill_backend_unknown_agent_is_noop_success(monkeypatch) -> None:  
     assert kill(_registered_pane("agt_gone0000000")) == {"ok": True}
 
 
+def test_tmux_kill_backend_vanished_pane_is_idempotent_success(monkeypatch) -> None:  # noqa: ANN001
+    """review #15 / FR-010: removing a pane whose tmux pane has already
+    vanished yields ok=True end-to-end through the fake adapter (which now
+    models the idempotent 'pane already gone' path)."""
+    import agenttower.managed_sessions.spawn_backends as sbmod
+    from agenttower.managed_sessions.spawn_backends import make_tmux_kill_backend
+
+    monkeypatch.setattr(
+        sbmod._state_agents, "select_agent_by_id",
+        lambda conn, *, agent_id: SimpleNamespace(
+            tmux_pane_id="%9", tmux_socket_path="/s"
+        ),
+    )
+    adapter = _adapter()
+    adapter.dead_pane_ids.add("%9")  # the pane already exited / is gone
+    kill = make_tmux_kill_backend(
+        adapter=adapter, agent_service=_FakeAgentService(),
+        bench_user_resolver=lambda _cid: BENCH_USER,
+    )
+    assert kill(_registered_pane("agt_aaaaaaaaaaaa")) == {"ok": True}
+
+
 def test_tmux_kill_backend_maps_tmux_error_to_ok_false(monkeypatch) -> None:  # noqa: ANN001
     import agenttower.managed_sessions.spawn_backends as sbmod
     from agenttower.managed_sessions.spawn_backends import make_tmux_kill_backend

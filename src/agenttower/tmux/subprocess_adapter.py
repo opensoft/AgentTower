@@ -347,6 +347,17 @@ class SubprocessTmuxAdapter(TmuxAdapter):
         )
         completed = self._run(argv, container_id=container_id, socket_path=socket_path)
         if completed.returncode != 0:
+            # review #5 / FR-010 idempotent remove: a pane that is already
+            # gone (the NORMAL teardown case — remain-on-exit off destroys
+            # the pane when its process exits) is the operator's intended
+            # end state, so "can't find pane" / "no such pane" is success,
+            # not an error. Without this, kill_pane raised docker_exec_failed
+            # on every clean removal and the documented idempotency contract
+            # was broken.
+            stderr = (completed.stderr or "").lower()
+            for pattern in self._PANE_DISAPPEARED_PATTERNS:
+                if pattern in stderr:
+                    return
             raise TmuxError(
                 code=_classify_tmux_failure(completed.stderr),
                 message=_bound(

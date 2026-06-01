@@ -462,6 +462,12 @@ class FakeTmuxAdapter:
                 "pane_id": pane_id,
             },
         ))
+        # review #15: model the FR-010 idempotent "pane already gone" path
+        # the corrected SubprocessTmuxAdapter produces — a pane in
+        # ``dead_pane_ids`` (vanished, e.g. its launch process exited) is
+        # killed with idempotent success, NOT a TmuxError.
+        if pane_id in self.dead_pane_ids:
+            return
         if self.kill_pane_failures:
             raise self.kill_pane_failures.pop(0)
 
