@@ -245,7 +245,7 @@ def test_app_create_missing_container_id_fails_validation(ctx: Any) -> None:
         tmux_session_name="session-test",
     )
     assert resp["ok"] is False
-    assert resp["app_contract_version"] == "1.0"
+    assert resp["app_contract_version"] == "1.1"
     assert resp["error"]["code"] == "validation_failed"
     assert resp["error"]["details"]["field"] == "container_id"
 
@@ -260,7 +260,7 @@ def test_app_create_unknown_container_returns_container_not_found(
         tmux_session_name="session-test",
     )
     assert resp["ok"] is False
-    assert resp["app_contract_version"] == "1.0"
+    assert resp["app_contract_version"] == "1.1"
     assert resp["error"]["code"] == CONTAINER_NOT_FOUND
     assert resp["error"]["details"] == {"container_id": "bench-unknown"}
 
@@ -273,7 +273,7 @@ def test_app_create_happy_path_returns_feat011_envelope(ctx: Any) -> None:
         tmux_session_name="session-test",
     )
     assert resp["ok"] is True
-    assert resp["app_contract_version"] == "1.0"
+    assert resp["app_contract_version"] == "1.1"
     result = resp["result"]
     assert result["state"] == "creating"
     assert result["intended_pane_count"] == 3
@@ -768,7 +768,7 @@ def test_app_pane_promote_from_adopted_returns_not_implemented(ctx: Any) -> None
         ctx, {"agent_id": "01HZ-ANY-ADOPTED"}, HOST_PEER_UID,
     )
     assert resp["ok"] is False
-    assert resp["app_contract_version"] == "1.0"
+    assert resp["app_contract_version"] == "1.1"
     assert resp["error"]["code"] == "not_implemented"
     assert resp["error"]["details"] == {"reserved_since": "FEAT-013"}
 
