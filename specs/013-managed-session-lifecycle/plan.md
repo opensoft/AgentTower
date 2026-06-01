@@ -18,7 +18,7 @@ FEAT-013 adds operator-driven creation of standard multi-agent tmux layouts insi
 
 The work splits into a new sub-package `src/agenttower/managed_sessions/` plus a single additive SQLite migration adding two tables (`managed_layout`, `managed_pane`) with FKs into the existing agent registry. One new tmux-adapter helper (`tmux_create.py`) composes `new-session` / `split-window` / `kill-pane` invocations through the existing FEAT-004 `docker exec` channel. The app-contract surface (FEAT-011) is extended **additively** with `app.managed_*` methods; the legacy CLI namespace gains a matching `managed_*` set. No FEAT-001..FEAT-012 surface is renamed, deleted, or rewired. **Out of scope for MVP**: non-tmux backends, semantic task planning, cross-host orchestration, adopted-to-managed pane promotion, and cancellation of in-flight layout creation (per spec §FR-018).
 
-> **Provenance**: FR-022 (5-min pending-managed marker TTL), FR-023 (recreate-chain depth ≤ 16), FR-024 (operator YAML overrides), and SC-009 (post-restart visibility ≤ 5s) originated from spec §Clarifications "Session 2026-05-24 (post-plan review)"; their traceability to user stories was confirmed in spec §Clarifications "Session 2026-05-24 (alignment cleanup)" (FR-022 / FR-023 / SC-009 → US3; FR-024 → US1). New FR-025 (capacity ≤ 40 layouts), FR-026 (no-cascade-kill rollback), FR-027 (concurrent-recreate behavior) and amendments to FR-013/015/016/021/024 originate from spec §Clarifications "Session 2026-05-24 (pre-implement walk)".
+> **Provenance**: FR-022 (5-min pending-managed marker TTL), FR-023 (recreate-chain depth ≤ 16), FR-024 (operator YAML overrides), and SC-009 (post-restart visibility ≤ 5s) originated from spec §Clarifications "Session 2026-05-24 (post-plan review)"; their traceability to user stories was confirmed in spec §Clarifications "Session 2026-05-24 (alignment cleanup)" (FR-022 / FR-023 / SC-009 → US3; FR-024 → US1). New FR-025 (capacity ≤ 40 layouts), FR-026 (no-cascade-kill rollback), FR-027 (concurrent-recreate behavior) and amendments to FR-013/015/016/021/024 originate from spec §Clarifications "Session 2026-05-24 (pre-implement walk)". Post-implementation, spec §Clarifications "Session 2026-06-01 (post-implementation review alignment)" amended FR-010/011/016/020/021/022/024/025 (and FR-027) to make the requirement English match the as-built, deep-reviewed behavior — peer-identity trust model (unspoofable cgroup + registry verification), atomic capacity enforcement, kill/recreate idempotency, synchronous template-default resolution, and recovery/sweep aggregate consistency; no code changed in that round (doc-only alignment).
 
 ## Technical Context
 
@@ -56,7 +56,7 @@ The work splits into a new sub-package `src/agenttower/managed_sessions/` plus a
 ```text
 specs/013-managed-session-lifecycle/
 ├── plan.md              # This file (/speckit.plan command output)
-├── spec.md              # Feature specification (Clarifications §Session 2026-05-24, 15 Q/A)
+├── spec.md              # Feature specification (Clarifications: 4 sessions 2026-05-24 [15 Q/A] + 2026-06-01 post-implementation alignment [8 Q/A])
 ├── research.md          # Phase 0 — research decisions for the 13 open questions
 ├── data-model.md        # Phase 1 — entities, SQLite DDL, state machine, closed sets
 ├── contracts/           # Phase 1 — wire-level contracts
@@ -64,7 +64,7 @@ specs/013-managed-session-lifecycle/
 │   ├── state-machine.md     # Formal lifecycle transition graph
 │   └── error-codes.md       # New closed-set additions
 ├── quickstart.md        # Phase 1 — synthetic-client walkthrough for US1
-├── checklists/          # 15 deep-and-wide release-gate checklists + 6 alignment/readiness artifacts (21 files total)
+├── checklists/          # 16 deep-and-wide release-gate checklists + 7 alignment/readiness artifacts (23 files total; isolation.md + coverage-alignment.md added in the 2026-06-01 alignment round)
 └── tasks.md             # Phase 2 — created by /speckit.tasks, NOT by this command
 ```
 
