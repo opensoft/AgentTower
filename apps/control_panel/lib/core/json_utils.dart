@@ -9,12 +9,11 @@
 /// single canonical helper here drops the camelCase variant — the
 /// daemon contract is snake_case-only per FEAT-011.
 ///
-/// Migration status: `project_specs/providers.dart`,
-/// `project_specs/handoff/providers.dart`, and
-/// `project_specs/drift/providers.dart` import this file and call
-/// `withAsOfDefault`. Still carrying un-migrated local `_withAsOf`
-/// copies: `features/agent_ops/providers.dart` (camelCase-divergent)
-/// and `features/project_specs/handoff/submit_flow.dart`.
+/// Migration status: COMPLETE. Every former call site —
+/// `project_specs/providers.dart`, `project_specs/handoff/providers.dart`,
+/// `project_specs/drift/providers.dart`, `agent_ops/providers.dart`, and
+/// `project_specs/handoff/submit_flow.dart` — now imports this file and
+/// calls `withAsOfDefault`. No local `_withAsOf` copies remain.
 
 Map<String, dynamic> withAsOfDefault(Map<String, dynamic> raw, DateTime asOf) {
   // Guard on a *usable* value, not mere key presence: a present-but-null,

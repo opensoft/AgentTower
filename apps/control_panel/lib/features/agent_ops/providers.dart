@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/json_utils.dart';
 import '../../core/providers.dart';
 import '../../domain/models/adopted_agent.dart';
 import '../../domain/models/container.dart' as model;
@@ -37,7 +38,7 @@ final containerListProvider =
   // Consumer to rebuild on every refetch.
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => model.Container.fromJson(_withAsOf(m, asOf)))
+      .map((m) => model.Container.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
@@ -47,7 +48,7 @@ final containerDetailProvider =
     final raw = await ref
         .watch(appClientProvider)
         .containerDetail(containerId);
-    return model.Container.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
+    return model.Container.fromJson(withAsOfDefault(raw, DateTime.now().toUtc()));
   },
 );
 
@@ -57,14 +58,14 @@ final paneListProvider = FutureProvider.autoDispose<List<Pane>>((ref) async {
   final page = await ref.watch(appClientProvider).paneList();
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => Pane.fromJson(_withAsOf(m, asOf)))
+      .map((m) => Pane.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
 final paneDetailProvider =
     FutureProvider.autoDispose.family<Pane, String>((ref, paneId) async {
   final raw = await ref.watch(appClientProvider).paneDetail(paneId);
-  return Pane.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
+  return Pane.fromJson(withAsOfDefault(raw, DateTime.now().toUtc()));
 });
 
 // ================================================================== Agents
@@ -74,7 +75,7 @@ final agentListProvider =
   final page = await ref.watch(appClientProvider).agentList();
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => AdoptedAgent.fromJson(_withAsOf(m, asOf)))
+      .map((m) => AdoptedAgent.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
@@ -82,7 +83,7 @@ final agentDetailProvider =
     FutureProvider.autoDispose.family<AdoptedAgent, String>(
   (ref, agentId) async {
     final raw = await ref.watch(appClientProvider).agentDetail(agentId);
-    return AdoptedAgent.fromJson(_withAsOf(raw, DateTime.now().toUtc()));
+    return AdoptedAgent.fromJson(withAsOfDefault(raw, DateTime.now().toUtc()));
   },
 );
 
@@ -93,7 +94,7 @@ final eventListProvider =
   final page = await ref.watch(appClientProvider).eventList();
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => model.Event.fromJson(_withAsOf(m, asOf)))
+      .map((m) => model.Event.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
@@ -104,7 +105,7 @@ final queueListProvider =
   final page = await ref.watch(appClientProvider).queueList();
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => QueueRow.fromJson(_withAsOf(m, asOf)))
+      .map((m) => QueueRow.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
@@ -115,7 +116,7 @@ final routeListProvider =
   final page = await ref.watch(appClientProvider).routeList();
   final asOf = DateTime.now().toUtc();
   return page.items
-      .map((m) => model.Route.fromJson(_withAsOf(m, asOf)))
+      .map((m) => model.Route.fromJson(withAsOfDefault(m, asOf)))
       .toList(growable: false);
 });
 
@@ -126,16 +127,11 @@ final readinessProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
 );
 
 // ====================================================== Internal helpers
-
-/// Stamps a SHARED `asOf` field onto an entity payload if the daemon
-/// didn't supply one. The freezed models all require `asOf`; the
-/// caller passes a single page-fetch timestamp so every row in the
-/// page shares it. Per-row `DateTime.now()` calls would defeat freezed
-/// equality across rebuilds (review fix H3 / arch lane).
-Map<String, dynamic> _withAsOf(Map<String, dynamic> raw, DateTime asOf) {
-  if (raw.containsKey('as_of') || raw.containsKey('asOf')) return raw;
-  return {
-    ...raw,
-    'as_of': asOf.toIso8601String(),
-  };
-}
+//
+// `as_of` stamping is centralized in `core/json_utils.dart`
+// (`withAsOfDefault`). A SHARED page-fetch `asOf` is passed so every row
+// in a page shares one timestamp (per-row `DateTime.now()` would defeat
+// freezed equality across rebuilds — review fix H3 / arch lane). The
+// shared helper guards on a *usable* value, not mere key presence, so a
+// present-but-empty `as_of` degrades to a stamped default instead of
+// throwing inside the freezed `DateTime.parse`.

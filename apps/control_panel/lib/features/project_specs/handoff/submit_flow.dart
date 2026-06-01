@@ -1,4 +1,5 @@
 import '../../../core/daemon/app_client.dart';
+import '../../../core/json_utils.dart';
 import '../../../domain/helper_policy/helper_policy.dart';
 import '../../../domain/models/common_enums.dart';
 import '../../../domain/models/handoff.dart';
@@ -64,7 +65,7 @@ Future<Handoff> submitHandoff({
     generatedPromptText: generatedPromptText,
   );
   final row = await appClient.handoffSubmit(draft: draft);
-  return Handoff.fromJson(_withAsOf(row, DateTime.now().toUtc()));
+  return Handoff.fromJson(withAsOfDefault(row, DateTime.now().toUtc()));
 }
 
 Map<String, dynamic> _serializeDraft({
@@ -110,9 +111,4 @@ Map<String, dynamic> _serializeDraft({
     'helper_policy_snapshot': helperPolicySnapshot.toJson(),
     'generated_prompt_text': generatedPromptText,
   };
-}
-
-Map<String, dynamic> _withAsOf(Map<String, dynamic> raw, DateTime asOf) {
-  if (raw.containsKey('as_of')) return raw;
-  return {...raw, 'as_of': asOf.toIso8601String()};
 }
