@@ -65,14 +65,14 @@ The legacy v1.0 fields on `app.dashboard` (`counts.panes.{total,registered,unreg
 ```text
 specs/014-app-dashboard-extensions/
 ├── plan.md              # This file
-├── spec.md              # Feature specification (Clarifications §Session 2026-05-24, 12 Q/A + 5 notes)
+├── spec.md              # Feature specification (Clarifications: 4 sessions — base 2026-05-24 + R1/R2/R3)
 ├── research.md          # Phase 0 — open-question resolutions surfaced by checklist audit
 ├── data-model.md        # Phase 1 — entities, closed sets, aggregation rules
 ├── contracts/
 │   ├── dashboard-v1_1.md   # Wire-level shape for the v1.1 additions on app.dashboard
 │   └── closed-sets-v1_1.md # PaneState, AgentState, recommendation codes, target.kind v1.1 addition
 ├── quickstart.md        # Synthetic-client walkthrough exercising the v1.1 fields
-├── checklists/          # 11 domain checklists (from /speckit.checklist max-coverage re-verify)
+├── checklists/          # 13 domain checklists (from /speckit.checklist max-coverage re-verify)
 └── tasks.md             # Phase 2 — created by /speckit.tasks, NOT by this command
 ```
 
