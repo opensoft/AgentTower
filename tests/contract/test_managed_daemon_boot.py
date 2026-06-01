@@ -39,8 +39,10 @@ from agenttower.managed_sessions.dao import (
     ManagedPaneRow,
     insert_layout,
     insert_pane,
+    select_layout,
     select_pane,
 )
+from agenttower.managed_sessions.pending_marker import sweep
 from agenttower.managed_sessions.serializer import ContainerSerializer
 from agenttower.managed_sessions.state_machine import ManagedState
 from agenttower.state.schema import _apply_migration_v9
@@ -178,13 +180,14 @@ def test_reconcile_at_boot_runs_when_backend_is_provided(
 def test_reconcile_at_boot_is_fail_soft_when_backend_raises(
     conn: sqlite3.Connection,
 ) -> None:
-    """A backend that raises (e.g. transient docker_exec failure) must
-    NOT crash daemon startup — return None and continue."""
+    """A backend that raises (e.g. transient docker_exec failure) must NOT
+    crash daemon startup. Per review #7 the raising container is SKIPPED
+    (its rows left untouched) and reconcile still COMPLETES — so other
+    containers are reconciled and already-changed layouts still aggregate.
+    (Previously any raise aborted the whole reconcile to None.)"""
     serializer = make_managed_serializer()
-    # Seed a non-terminal layout so the reconcile actually queries the
-    # backend (with no layouts, reconcile early-returns without calling
-    # the backend at all).
     layout_id = str(uuid.uuid4())
+    pane_id = str(uuid.uuid4())
     insert_layout(
         conn,
         ManagedLayoutRow(
@@ -198,7 +201,7 @@ def test_reconcile_at_boot_is_fail_soft_when_backend_raises(
     insert_pane(
         conn,
         ManagedPaneRow(
-            id=str(uuid.uuid4()), layout_id=layout_id,
+            id=pane_id, layout_id=layout_id,
             container_id="bench-alpha", agent_id=None,
             role="master", capability="orchestrator", label="m1",
             launch_command_ref=None,
@@ -218,7 +221,10 @@ def test_reconcile_at_boot_is_fail_soft_when_backend_raises(
         conn=conn, serializer=serializer,
         tmux_list_panes_fn=angry_backend, tx_lock=None,
     )
-    assert outcome is None
+    # Reconcile completes (not aborted to None); the skipped container's
+    # row is left untouched (still READY, not spuriously failed).
+    assert outcome is not None
+    assert select_pane(conn, pane_id).state == ManagedState.READY
 
 
 def test_reconcile_at_boot_with_production_channel_reattaches_survivors(
@@ -299,6 +305,102 @@ def test_reconcile_at_boot_with_production_channel_reattaches_survivors(
     assert missing.state == ManagedState.FAILED
     assert missing.failed_stage is not None
     assert missing.failed_stage.value == "recovery_reattach"
+
+
+def _seed_failed_pane_layout(conn, *, layout_id, pane_id, container_id, session):  # noqa: ANN001
+    conn.execute(
+        "INSERT OR IGNORE INTO containers (container_id, active) VALUES (?, 1)",
+        (container_id,),
+    )
+    insert_layout(
+        conn,
+        ManagedLayoutRow(
+            id=layout_id, container_id=container_id, template_name="1m+2s",
+            intended_pane_count=1, state=ManagedState.READY, failed_stage=None,
+            idempotency_key=None, created_at=_ts(), updated_at=_ts(),
+        ),
+    )
+    insert_pane(
+        conn,
+        ManagedPaneRow(
+            id=pane_id, layout_id=layout_id, container_id=container_id,
+            agent_id=None, role="master", capability="orchestrator", label="m1",
+            launch_command_ref=None, tmux_session_name=session, tmux_pane_index=0,
+            pending_marker_token=None, state=ManagedState.READY, failed_stage=None,
+            predecessor_id=None, chain_depth=0, created_at=_ts(), updated_at=_ts(),
+        ),
+    )
+
+
+def test_review7_reconcile_per_container_listpanes_failure_does_not_abort(
+    conn: sqlite3.Connection,
+) -> None:
+    """Review #7: a raising tmux_list_panes_fn for one container must SKIP
+    that container only — the OTHER container's pane->failed transition AND
+    its layout-aggregate recompute must still complete (not be aborted,
+    leaving a layout stuck stale)."""
+    serializer = make_managed_serializer()
+    _seed_failed_pane_layout(
+        conn, layout_id="L-A", pane_id="P-A", container_id="cA", session="sA",
+    )
+    _seed_failed_pane_layout(
+        conn, layout_id="L-B", pane_id="P-B", container_id="cB", session="sB",
+    )
+    conn.commit()
+
+    def flaky(container_id: str):
+        if container_id == "cB":
+            raise RuntimeError("transient docker exec failure")
+        return []  # cA: no live panes → its pane is gone → failed
+
+    outcome = reconcile_managed_state_at_boot(
+        conn=conn, serializer=serializer, tmux_list_panes_fn=flaky, tx_lock=None,
+    )
+    # Reconcile completed (not aborted to None) despite cB raising.
+    assert outcome is not None
+    # cA fully reconciled: pane failed AND layout aggregate consistent.
+    assert select_pane(conn, "P-A").state == ManagedState.FAILED
+    assert select_layout(conn, "L-A").state == ManagedState.FAILED
+
+
+def test_review12_sweep_recomputes_layout_aggregate(
+    conn: sqlite3.Connection,
+) -> None:
+    """Review #12: when sweep fails a stale creating pane, it must also
+    recompute the parent layout's aggregate (the sweep is the terminal
+    transition for a crashed spawn — no live thread will aggregate it),
+    so managed_layout.state isn't left stale relative to its panes."""
+    insert_layout(
+        conn,
+        ManagedLayoutRow(
+            id="L-sweep", container_id="cA", template_name="1m+2s",
+            intended_pane_count=1, state=ManagedState.CREATING, failed_stage=None,
+            idempotency_key=None, created_at=_ts(), updated_at=_ts(),
+        ),
+    )
+    insert_pane(
+        conn,
+        ManagedPaneRow(
+            id="P-sweep", layout_id="L-sweep", container_id="cA", agent_id=None,
+            role="master", capability="orchestrator", label="m1",
+            launch_command_ref=None, tmux_session_name="sweep-sess",
+            tmux_pane_index=0, pending_marker_token="stale-marker-token",
+            state=ManagedState.CREATING, failed_stage=None, predecessor_id=None,
+            chain_depth=0,
+            # created_at well before now → marker is past the 5-min TTL.
+            created_at="2026-05-25T00:00:00.000000Z",
+            updated_at="2026-05-25T00:00:00.000000Z",
+        ),
+    )
+    conn.commit()
+
+    out = sweep(conn)
+    assert out.panes_swept == 1
+    assert select_pane(conn, "P-sweep").state == ManagedState.FAILED
+    # The layout aggregate was recomputed, not left at 'creating'.
+    layout = select_layout(conn, "L-sweep")
+    assert layout.state == ManagedState.FAILED
+    assert layout.failed_stage is not None and layout.failed_stage.value == "pane_create"
 
 
 # ─── start_pending_marker_sweep ──────────────────────────────────────────

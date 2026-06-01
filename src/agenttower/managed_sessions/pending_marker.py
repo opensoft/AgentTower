@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Callable, Final, Optional
 
 from ._tx import tx_guard
+from .state_machine import ManagedState, aggregate_layout_state
 
 # Marker TTL — research §R5, codified in FR-022.
 MARKER_TTL_SECONDS: Final[int] = 5 * 60
@@ -170,7 +171,7 @@ def sweep(
     # from the SELECT, which RETURNING doesn't help with.
     with tx_guard(tx_lock):
         cur = conn.execute(
-            "SELECT id, agent_id "
+            "SELECT id, agent_id, layout_id "
             "FROM managed_pane "
             "WHERE state = 'creating' "
             "  AND pending_marker_token IS NOT NULL "
@@ -182,7 +183,8 @@ def sweep(
     pane_create_failures = 0
     registration_failures = 0
     panes_actually_swept = 0
-    for pane_id, agent_id in stale_rows:
+    affected_layouts: set[str] = set()
+    for pane_id, agent_id, layout_id in stale_rows:
         if agent_id is None:
             failed_stage = "pane_create"
         else:
@@ -205,10 +207,44 @@ def sweep(
             )
         if cur.rowcount and cur.rowcount > 0:
             panes_actually_swept += 1
+            affected_layouts.add(layout_id)
             if agent_id is None:
                 pane_create_failures += 1
             else:
                 registration_failures += 1
+
+    # review #12: recompute each affected layout's aggregate state. The
+    # sweep is the TERMINAL transition for a crashed / never-wired spawn
+    # pipeline (no live spawn thread will aggregate the layout), so without
+    # this the managed_layout row stays stale (e.g. 'creating') while its
+    # panes are 'failed' — managed.layout.detail would report a state
+    # inconsistent with its panes. Mirrors spawn_layout_in_background's
+    # aggregate write (failed_stage = first failed pane's stage).
+    for layout_id in affected_layouts:
+        with tx_guard(tx_lock):
+            pane_rows = conn.execute(
+                "SELECT state, failed_stage FROM managed_pane WHERE layout_id = ?",
+                (layout_id,),
+            ).fetchall()
+            if not pane_rows:
+                continue
+            agg = aggregate_layout_state([ManagedState(r[0]) for r in pane_rows])
+            layout_row = conn.execute(
+                "SELECT state FROM managed_layout WHERE id = ?", (layout_id,)
+            ).fetchone()
+            if layout_row is None or ManagedState(layout_row[0]) == agg:
+                continue
+            layout_failed_stage = None
+            if agg == ManagedState.FAILED:
+                for st, fs in pane_rows:
+                    if st == ManagedState.FAILED.value and fs is not None:
+                        layout_failed_stage = fs
+                        break
+            conn.execute(
+                "UPDATE managed_layout SET state = ?, failed_stage = ?, "
+                "updated_at = ? WHERE id = ?",
+                (agg.value, layout_failed_stage, now_str, layout_id),
+            )
 
     return SweepOutcome(
         panes_examined=len(stale_rows),

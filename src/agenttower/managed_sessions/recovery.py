@@ -22,8 +22,15 @@ Recovery rules (from state-machine.md §Recovery, step 3):
    ``(tmux_session_name, tmux_pane_index)``:
 
    - **Match** (pane is alive in tmux):
-     - ``creating`` + marker still set + age < TTL → resume in
-       ``creating`` (the original spawn task or a retry will continue).
+     - ``creating`` + marker still set + age < TTL → left in ``creating``.
+       review #11: the original spawn thread died with the previous
+       daemon process and is NOT re-driven at boot (re-running the spawn
+       pipeline would re-issue ``new-session``/``split-window`` against a
+       pane that already exists). The row is kept in ``creating`` only
+       until its marker ages past the TTL, at which point the periodic
+       ``pending_marker.sweep`` transitions it to ``failed``. (Driving an
+       alive-but-unregistered pane through register/log-attach only — a
+       true continuation — is a tracked follow-up, not a boot behavior.)
      - ``creating`` + marker still set + age ≥ TTL → move to ``failed``
        with ``failed_stage = recovery_reattach``.
      - ``ready`` / ``degraded`` → keep state, emit
@@ -57,6 +64,7 @@ outcome without extra plumbing. The test for SC-009 is in
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -81,6 +89,9 @@ from .events import (
 from .pending_marker import MARKER_TTL_SECONDS
 from .serializer import ContainerSerializer
 from .state_machine import FailedStage, ManagedState, aggregate_layout_state
+
+
+LOG = logging.getLogger(__name__)
 
 
 # Backend protocol — same shape as the spawn task's injectable backends.
@@ -154,7 +165,24 @@ def reconcile(
             # Build the live-tmux set for the container. The list-panes
             # RPC happens OUTSIDE tx_lock so its docker-exec latency
             # doesn't block FEAT-009 worker writes.
-            live = tmux_list_panes_fn(container_id)
+            #
+            # review #7: a raising list-panes (transient docker/tmux
+            # failure) must SKIP this container only — not abort the whole
+            # reconcile. If it propagated, containers already processed in
+            # this loop would keep their committed pane->failed transitions
+            # while their layout-aggregate recompute (a separate phase
+            # below) never runs, leaving managed_layout.state permanently
+            # inconsistent with its panes (FR-026 / SC-009). Skipping leaves
+            # this container's rows untouched for the next reconcile.
+            try:
+                live = tmux_list_panes_fn(container_id)
+            except Exception:  # noqa: BLE001 — fail-soft per container
+                LOG.warning(
+                    "managed_sessions: reconcile list-panes failed for "
+                    "container=%s; skipping (rows untouched)",
+                    container_id,
+                )
+                continue
             live_keys: set[tuple[str, int]] = set()
             for entry in live:
                 session = str(entry.get("tmux_session_name", ""))
@@ -295,8 +323,9 @@ def _classify(
         return _RECOVERY_REATTACHED
 
     if pane.state == ManagedState.CREATING:
-        # Check marker TTL. If marker is fresh (<TTL), resume creating;
-        # if stale, move to failed with recovery_reattach.
+        # Check marker TTL. If marker is fresh (<TTL), leave in creating
+        # (NOT re-driven at boot — review #11; the TTL sweep will fail it
+        # if it never settles). If stale, move to failed now.
         if pane.pending_marker_token is None:
             # Defensive — creating without a marker is a bug. Treat as
             # failed so we don't loop.

@@ -392,9 +392,18 @@ def create_layout(
 
             # Pick launch profile: explicit override > template default.
             override_key = f"{tmpl_pane.role}:{label}"
+            explicit_override = launch_overrides.get(override_key)
             profile_name: Optional[str] = (
-                launch_overrides.get(override_key) or tmpl_pane.default_launch_command_ref
+                explicit_override or tmpl_pane.default_launch_command_ref
             )
+            # review #14: explicit overrides were resolved up-front (step 2);
+            # also resolve a TEMPLATE-DEFAULT ref synchronously so a missing
+            # default profile surfaces as managed_launch_command_not_found at
+            # create time (M1 contract) instead of as a delayed background
+            # pane failure. (Built-in templates use None, so this only bites
+            # operator-authored override templates per FR-024.)
+            if explicit_override is None and profile_name is not None:
+                resolve_profile(profile_name, override_dir=profile_override_dir)
             marker_token = idempotency_key or new_marker_token()
 
             pane_id = str(uuid.uuid4())

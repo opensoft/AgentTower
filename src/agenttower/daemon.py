@@ -1056,7 +1056,19 @@ def _run(args: argparse.Namespace) -> int:
                     pass
             if worker_conn is not None:
                 try:
-                    worker_conn.close()
+                    # review #13: close under worker_tx_lock so any in-flight
+                    # tx_guard-protected statement (a FEAT-013 background
+                    # spawn thread or an in-progress sweep tick that slipped
+                    # past its shutdown-event check) completes first —
+                    # otherwise close() can race it and raise
+                    # ProgrammingError ("Cannot operate on a closed
+                    # database") mid-transaction.
+                    _wtl = locals().get("worker_tx_lock")
+                    if _wtl is not None:
+                        with _wtl:
+                            worker_conn.close()
+                    else:
+                        worker_conn.close()
                 except Exception:  # pragma: no cover — defensive
                     pass
             # Always stop the reader thread, regardless of which phase of

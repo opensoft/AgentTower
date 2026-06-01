@@ -768,3 +768,35 @@ def test_review9_same_session_name_across_containers_is_allowed(
     assert first.state == ManagedState.CREATING
     assert second.state == ManagedState.CREATING
     assert first.layout_id != second.layout_id
+
+
+def test_review14_missing_template_default_launch_ref_rejected_synchronously(
+    conn: sqlite3.Connection, serializer: ContainerSerializer, tmp_path
+) -> None:
+    """Review #14: a template whose default_launch_command_ref points to a
+    missing profile must fail create synchronously with
+    managed_launch_command_not_found (M1 contract) — not insert 'creating'
+    panes that only fail later in the background spawn task."""
+    tdir = tmp_path / "templates"
+    tdir.mkdir()
+    (tdir / "custom-default.yaml").write_text(
+        "name: custom-default\n"
+        "panes:\n"
+        "  - role: master\n"
+        "    capability: orchestrator\n"
+        '    label_pattern: "m{ordinal}"\n'
+        "    default_launch_command_ref: does-not-exist-profile\n",
+        encoding="utf-8",
+    )
+    pdir = tmp_path / "profiles"
+    pdir.mkdir()  # empty → the referenced profile cannot be resolved
+
+    with pytest.raises(ManagedSessionsError) as exc:
+        create_layout(
+            conn=conn, serializer=serializer, container_id="bench-alpha",
+            template_name="custom-default", tmux_session_name="s14",
+            template_override_dir=tdir, profile_override_dir=pdir,
+        )
+    assert exc.value.code == "managed_launch_command_not_found"
+    # Synchronous rejection → no rows leaked.
+    assert count_active_layouts(conn) == 0
