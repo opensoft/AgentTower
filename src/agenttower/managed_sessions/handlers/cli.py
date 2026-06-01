@@ -117,19 +117,61 @@ def _peer_container_id(ctx: "DaemonContext", peer_uid: int) -> str | None:
         return None  # verified host — allow cross-container access
     # Bench-container peer. The peer_detection module returns:
     #   - None for verified host (handled above)
-    #   - container_id string for verified bench peer
+    #   - the canonical registry container_id for a verified bench peer
+    #     whose kernel cgroup hash uniquely matches a registered container
     #   - UNRESOLVED_PEER sentinel when we can't determine the peer's
-    #     container id (fail closed)
+    #     container id or it doesn't match a registered container (fail closed)
     from ...agents.peer_detection import (
         UNRESOLVED_PEER,
         resolve_peer_container_id,
     )
     try:
-        return resolve_peer_container_id(pid)
+        return resolve_peer_container_id(
+            pid, container_matcher=_registered_container_matcher(ctx)
+        )
     except Exception:  # noqa: BLE001 — defensive: peer detection is best-effort
         # Any unexpected error → fail closed, NOT host. Pre-fix this
         # returned ``None`` which silently elevated the caller to host.
         return UNRESOLVED_PEER
+
+
+def _registered_container_matcher(ctx: "DaemonContext"):  # noqa: ANN202
+    """Build a matcher mapping a raw kernel cgroup hash to the canonical
+    FEAT-003 registry ``container_id`` (or ``None`` on no/ambiguous match).
+
+    This is what makes the R12 gate trustworthy: the daemon only accepts
+    a peer identity that corresponds to a *registered* container, and it
+    normalizes the short(12)/long(64) hex forms so the equality check in
+    the handlers compares like-for-like. Returns ``None`` when the state
+    DB isn't wired (the resolver then falls back to the raw hash).
+    """
+    conn = _state_conn(ctx)
+    if conn is None:
+        return None
+    from .._tx import tx_guard as _tx_guard
+
+    try:
+        with _tx_guard(getattr(ctx, "state_tx_lock", None)):
+            rows = conn.execute("SELECT container_id FROM containers").fetchall()
+    except sqlite3.OperationalError:
+        return None
+    ids = [str(r[0]) for r in rows]
+
+    def match(raw: str) -> str | None:
+        if not raw:
+            return None
+        if raw in ids:
+            return raw
+        # 12-char short hash ↔ 64-char full id (either may be the prefix).
+        cands = [
+            cid for cid in ids
+            if (len(raw) >= 12 and cid.startswith(raw))
+            or (len(cid) >= 12 and raw.startswith(cid))
+        ]
+        uniq = list(dict.fromkeys(cands))
+        return uniq[0] if len(uniq) == 1 else None
+
+    return match
 
 
 def _state_conn(ctx: "DaemonContext") -> sqlite3.Connection | None:
@@ -240,10 +282,9 @@ def _managed_layout_create(
         return _err(
             "host_only",
             "bench-container peers may only target their own container",
-            details={
-                "peer_container_id": peer_container,
-                "requested_container_id": container_id,
-            },
+            # FR-034a: host_only details MUST be {} — never echo the
+            # resolved peer id or a foreign target id (enumeration oracle).
+            details={},
         )
 
     # 3. container_not_found pre-check (handler-layer concern; service
@@ -445,10 +486,7 @@ def _scope_to_peer_container(
         return None, _err(
             "host_only",
             "bench-container peers may only list their own container",
-            details={
-                "peer_container_id": peer_container,
-                "requested_container_id": requested_container_id,
-            },
+            details={},  # FR-034a: host_only details MUST be {}
         )
     return peer_container, None
 
@@ -536,10 +574,7 @@ def _managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
         return _err(
             "host_only",
             "bench-container peers may only read their own container's layouts",
-            details={
-                "peer_container_id": peer_container,
-                "layout_container_id": layout_row.container_id,
-            },
+            details={},  # FR-034a: host_only details MUST be {}
         )
 
     panes = select_panes_for_layout(conn, layout_id)
@@ -646,10 +681,7 @@ def _managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
         return _err(
             "host_only",
             "bench-container peers may only read their own container's panes",
-            details={
-                "peer_container_id": peer_container,
-                "pane_container_id": row.container_id,
-            },
+            details={},  # FR-034a: host_only details MUST be {}
         )
 
     payload = _pane_view_to_payload(_pane_row_to_view(row))
@@ -700,10 +732,7 @@ def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             return _err(
                 "host_only",
                 "bench-container peers may only remove panes in their own container",
-                details={
-                    "peer_container_id": peer_container,
-                    "pane_container_id": pane_row.container_id,
-                },
+                details={},  # FR-034a: host_only details MUST be {}
             )
 
     # Service performs the actual lifecycle work + raises closed-set errors.
@@ -778,10 +807,7 @@ def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             return _err(
                 "host_only",
                 "bench-container peers may only recreate panes in their own container",
-                details={
-                    "peer_container_id": peer_container,
-                    "pane_container_id": predecessor.container_id,
-                },
+                details={},  # FR-034a: host_only details MUST be {}
             )
 
     try:

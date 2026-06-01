@@ -299,6 +299,86 @@ def test_h6_peer_detection_unresolved_denies_cross_container(
     assert UNRESOLVED_PEER == "<unresolved>"
 
 
+def _write_fake_proc(root, pid: int, *, cgroup_id, hostname):
+    """Build a minimal fake /proc/<pid> tree for the peer resolver."""
+    base = root / "proc" / str(pid)
+    (base / "root").mkdir(parents=True, exist_ok=True)
+    (base / "root" / ".dockerenv").write_text("")  # container marker
+    cgroup_line = (
+        f"0::/system.slice/docker-{cgroup_id}.scope\n" if cgroup_id else "0::/\n"
+    )
+    (base / "cgroup").write_text(cgroup_line)
+    if hostname is not None:
+        (base / "root" / "etc").mkdir(parents=True, exist_ok=True)
+        (base / "root" / "etc" / "hostname").write_text(hostname + "\n")
+
+
+def _patch_proc_root(monkeypatch, pd, tmp_path):
+    import pathlib
+    monkeypatch.setattr(
+        pd, "Path",
+        lambda p: (tmp_path / "proc") if str(p) == "/proc" else pathlib.Path(p),
+    )
+
+
+def test_review1_peer_resolver_ignores_spoofed_hostname_uses_cgroup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Review #1 (CRITICAL): /etc/hostname is attacker-controlled and MUST
+    NOT be used as identity. The resolver derives identity from the kernel
+    cgroup hash and canonicalizes it against the registry, so a hostile
+    bench that sets ``--hostname <victim>`` still resolves to its OWN
+    container — defeating the spoof."""
+    import agenttower.agents.peer_detection as pd
+
+    monkeypatch.delenv("AGENTTOWER_TEST_FORCE_HOST_PEER", raising=False)
+    attacker_full, victim_full, pid = "a" * 64, "b" * 64, 4242
+    _write_fake_proc(tmp_path, pid, cgroup_id=attacker_full, hostname=victim_full)
+    _patch_proc_root(monkeypatch, pd, tmp_path)
+
+    registry = {attacker_full, victim_full}
+    resolved = pd.resolve_peer_container_id(
+        pid, container_matcher=lambda raw: raw if raw in registry else None
+    )
+    assert resolved == attacker_full and resolved != victim_full
+
+
+def test_review16_peer_resolver_canonicalizes_short_cgroup_to_full_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Review #16: a 12-char cgroup hash must canonicalize to the full
+    64-char registry container_id so a legitimate same-container peer is
+    not denied."""
+    import agenttower.agents.peer_detection as pd
+
+    monkeypatch.delenv("AGENTTOWER_TEST_FORCE_HOST_PEER", raising=False)
+    full, pid = "c" * 64, 4343
+    _write_fake_proc(tmp_path, pid, cgroup_id=full[:12], hostname=None)
+    _patch_proc_root(monkeypatch, pd, tmp_path)
+
+    def matcher(raw):
+        return full if len(raw) >= 12 and full.startswith(raw) else None
+
+    assert pd.resolve_peer_container_id(pid, container_matcher=matcher) == full
+
+
+def test_review1_peer_resolver_unmatched_cgroup_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A cgroup hash matching no registered container → UNRESOLVED_PEER
+    (fail closed), never host-equivalent or a raw-id pass."""
+    import agenttower.agents.peer_detection as pd
+    from agenttower.agents.peer_detection import UNRESOLVED_PEER
+
+    monkeypatch.delenv("AGENTTOWER_TEST_FORCE_HOST_PEER", raising=False)
+    pid = 4444
+    _write_fake_proc(tmp_path, pid, cgroup_id="d" * 64, hostname="e" * 64)
+    _patch_proc_root(monkeypatch, pd, tmp_path)
+    assert pd.resolve_peer_container_id(
+        pid, container_matcher=lambda raw: None
+    ) == UNRESOLVED_PEER
+
+
 # ─── M3: idempotency_key validation ───────────────────────────────────
 
 

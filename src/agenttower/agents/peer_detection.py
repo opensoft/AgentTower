@@ -37,11 +37,15 @@ Behavior
   no cgroup line containing a documented container prefix). Handlers
   read ``None`` as "host peer, allow cross-container".
 - A *non-empty string* when the peer is verifiably in a bench
-  container AND AgentTower can identify which one. Identification
-  comes from the container's own ``/etc/hostname`` read via
-  ``/proc/<pid>/root/etc/hostname`` (Docker sets the container's
-  hostname to the container id's short hash by default), with cgroup
-  hash extraction as a fallback.
+  container AND AgentTower can identify which one. Identification uses
+  the **kernel-derived cgroup hash** read from ``/proc/<pid>/cgroup``
+  (set by the container runtime, NOT writable by the container), which
+  is then canonicalized against the FEAT-003 container registry via the
+  injected ``container_matcher``. The container's own ``/etc/hostname``
+  is **deliberately NOT trusted** as identity: it is fully
+  attacker-controlled (``docker run --hostname <victim>``), so trusting
+  it would let a hostile bench impersonate another container and defeat
+  the R12 cross-container gate.
 - :data:`UNRESOLVED_PEER` (== ``"<unresolved>"``) when the peer is in a
   container but its identity could not be derived. Handlers compare
   this sentinel against the target ``container_id`` and the
@@ -65,7 +69,14 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Final, Optional
+from typing import Callable, Final, Optional
+
+# A matcher mapping a raw, kernel-derived container id (the cgroup hash,
+# 12- or 64-char hex) to the canonical ``container_id`` recorded in the
+# FEAT-003 registry, or ``None`` when it does not uniquely match a
+# registered container. The handler builds this from the live registry
+# so the daemon never trusts an attacker-suppliable identity string.
+ContainerMatcher = Callable[[str], Optional[str]]
 
 
 # Sentinel returned when the peer is in a container but the
@@ -98,13 +109,25 @@ _CGROUP_ID_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
-def resolve_peer_container_id(pid: int) -> Optional[str]:
+def resolve_peer_container_id(
+    pid: int,
+    *,
+    container_matcher: Optional[ContainerMatcher] = None,
+) -> Optional[str]:
     """Resolve the bench container_id (if any) for the AF_UNIX peer pid.
 
-    Returns ``None`` for verified host peers; a non-empty string for
-    container peers whose id could be determined; or
+    Returns ``None`` for verified host peers; the canonical registry
+    ``container_id`` for a container peer whose kernel-derived cgroup
+    hash uniquely matches a registered container; or
     :data:`UNRESOLVED_PEER` for container peers whose id could not be
-    determined. See module docstring for full semantics.
+    derived or did not uniquely match a registered container. See module
+    docstring for full semantics.
+
+    ``container_matcher`` maps the raw cgroup hash to the canonical
+    registry ``container_id`` (or ``None`` on no/ambiguous match). When
+    omitted (legacy callers / unit tests without a registry) the raw
+    cgroup hash is returned as a best-effort fallback — production
+    callers MUST pass a matcher so the returned id is registry-verified.
     """
     if pid is None or pid <= 0:
         # No peer pid — caller couldn't even read the credentials. Fail
@@ -159,27 +182,24 @@ def resolve_peer_container_id(pid: int) -> Optional[str]:
         return None
 
     # --- Stage 2: container-id resolution ------------------------------
-    # Preferred source: the container's own /etc/hostname, which
-    # Docker / Podman / containerd all set to the short container id
-    # by default. The thin-client connects to the daemon's socket from
-    # inside that container, so /proc/<pid>/root/etc/hostname is the
-    # bench container's hostname.
-    hostname_path = root_dir / "etc" / "hostname"
-    try:
-        hostname = hostname_path.read_text(encoding="utf-8", errors="replace").strip()
-        if hostname:
-            return hostname
-    except OSError:
-        pass
+    # The ONLY trusted identity source is the kernel-derived cgroup hash
+    # (set by the container runtime, not writable from inside the
+    # container). ``/etc/hostname`` is intentionally NOT consulted: it is
+    # attacker-controlled and trusting it would let a hostile bench set
+    # ``--hostname <victim_id>`` and impersonate another container,
+    # defeating the R12 gate. With no cgroup hash there is no unspoofable
+    # identity, so we fail closed.
+    if not cgroup_id:
+        return UNRESOLVED_PEER
 
-    # Fallback: the cgroup-derived id (typically the 64-char full hash;
-    # callers map both 12-char short and 64-char long ids to their
-    # AgentTower container_id via FEAT-003's discovery service).
-    if cgroup_id:
+    if container_matcher is None:
+        # No registry to canonicalize against (legacy / unit tests).
+        # Return the raw hash best-effort; production passes a matcher.
         return cgroup_id
 
-    # Container marker present, no id derivable. Fail closed.
-    return UNRESOLVED_PEER
+    canonical = container_matcher(cgroup_id)
+    # No / ambiguous registry match → fail closed.
+    return canonical if canonical else UNRESOLVED_PEER
 
 
-__all__ = ["resolve_peer_container_id", "UNRESOLVED_PEER"]
+__all__ = ["resolve_peer_container_id", "UNRESOLVED_PEER", "ContainerMatcher"]
