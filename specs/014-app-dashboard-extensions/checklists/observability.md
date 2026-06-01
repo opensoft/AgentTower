@@ -12,7 +12,7 @@
 
 ## Resolution & Freshness
 
-- [X] CHK004 - Is `recommended_next_action_refreshed_at` specified with timezone, precision (ms/µs), and clock source? [Ambiguity, Spec §Clarifications Q8]
+- [X] CHK004 - Is `recommended_next_action_refreshed_at` specified with timezone, precision (ms/µs), and clock source? [Ambiguity, Research §TS]
 - [X] CHK005 - Is the dashboard explicitly poll-based with no push/subscribe requirements in v1.1? [Clarity, Spec §Assumptions, §FR-018]
 
 ## Degraded-State Observability
@@ -40,7 +40,7 @@
 
 ## Cross-Field Observability Invariants
 
-- [X] CHK017 - Is the observable invariant `discovered-and-registered == registered_v1.0` stated as a property an operator (or test) can verify directly? [Measurability, Spec §FR-019]
+- [X] CHK017 - Is the observable invariant `discovered-and-registered ≤ registered_v1.0` (one-sided, per the FR-019 loosening in Clarifications §Session 2026-05-25-r3 Q1) stated as a property an operator (or test) can verify directly? [Measurability, Spec §FR-019]
 - [X] CHK018 - Is the observable invariant `active + inactive + partially_configured == total_agents` stated similarly? [Measurability, Spec §FR-020]
 
 ## Plan & Design Alignment (re-verify 2026-05-24)

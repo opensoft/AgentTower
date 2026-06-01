@@ -9,13 +9,13 @@ The Clarifications session in `spec.md` (2026-05-24) already resolved 12 questio
 ## §TS — Timestamp Format for `recommended_next_action_refreshed_at`
 
 - **Decision**: ISO-8601 UTC string with millisecond precision, e.g., `"2026-05-24T17:23:45.123Z"`. Wall-clock source (`time.time()`-derived), not monotonic.
-- **Rationale**: Matches FEAT-011's existing timestamp convention for `app.dashboard` `recents[].at` and `hints[].at` (uniform serialization across the contract). Monotonic clocks are correct for *interval* measurement (where the skip-counter window arithmetic already uses them — see §CW) but wrong for *publishing* timestamps that other systems may compare across processes or hosts.
+- **Rationale**: Matches FEAT-011's existing timestamp convention for `app.dashboard` (the `recent.{events,queue,routes}[].timestamp` rows — note the top-level container is the singular `recent` object and the per-row key is `timestamp`; `Hint` objects carry no timestamp), giving uniform serialization across the contract. Monotonic clocks are correct for *interval* measurement (where the skip-counter window arithmetic already uses them — see §CW) but wrong for *publishing* timestamps that other systems may compare across processes or hosts.
 - **Alternatives considered**: epoch milliseconds (rejected: existing field shape is ISO string), monotonic seconds (rejected: not comparable across daemon restarts).
 - **Resolves**: `requirements.md` CHK009, `observability.md` CHK004.
 
 ## §CW — Clock Source for `recently_skipped_window_ms` Boundary Arithmetic
 
-- **Decision**: `time.monotonic_ns()` for both insertion timestamps in `skip_counter.py` and the per-call read filter. Each ring-buffer entry stores `monotonic_ms` (computed once at `record_skip()` time). The dashboard reads `now_ms = time.monotonic_ns() // 1_000_000` and counts entries with `entry_ms > now_ms - 300_000`.
+- **Decision**: `time.monotonic_ns()` for both insertion timestamps in `skip_counter.py` and the per-call read filter. The deque and a module-level `threading.Lock` are co-owned by `skip_counter.py`; `record_skip()` appends under the lock, and `count_in_window()` takes a snapshot (`list(buf)`) under the lock and filters the snapshot outside it — the writer (FEAT-010 routing-worker thread) and reader (`ThreadingUnixStreamServer` request-handler thread) cross threads, so the snapshot-under-lock is required to avoid `RuntimeError: deque mutated during iteration`. Each ring-buffer entry stores `monotonic_ms` (computed once at `record_skip()` time). The dashboard reads `now_ms = time.monotonic_ns() // 1_000_000` and counts snapshot entries in the half-open interval `now_ms - 300_000 < entry_ms <= now_ms` (strict `>` lower edge; `<= now_ms` upper clamp excludes a "future" entry whose `now_ms` was sampled by a concurrent `record_skip` after the reader sampled its own). Lock contention is negligible (single-digit concurrent clients, ≪1 skip/sec) so this does not threaten the §CO 500 ms budget.
 - **Rationale**: The window is a *bounded interval* check, not a wall-clock publish. Monotonic avoids drift from `ntp`/`systemd-timesyncd` jumps and avoids edge cases where wall-clock-backward could double-count or skip events. Daemon restart resets the monotonic origin anyway — the ring buffer dies with the process per FR-008, so cross-restart comparability is not a requirement.
 - **Alternatives considered**: wall clock (rejected: NTP step / DST can corrupt counts), event timestamps from FEAT-010 (rejected: introduces a contract coupling between FEAT-010 event schema and this counter — better to record on receipt).
 - **Resolves**: `requirements.md` CHK009, `testing-strategy.md` CHK015.
@@ -45,7 +45,7 @@ The Clarifications session in `spec.md` (2026-05-24) already resolved 12 questio
 
 - **Decision**: Bucket precedence is checked top-down in this order, first match wins:
   1. `discovery-degraded` (container in `degraded_scan` state)
-  2. `inactive-or-stale` (container `inactive` OR `last_seen_at` predates the most recent successful scan)
+  2. `inactive-or-stale` (container `inactive`, OR the pane's own `active` flag unset via FEAT-004 reconciliation, OR `last_seen_at` predates the most recent successful scan)
   3. `discovered-and-registered` (pane row + agent registered)
   4. `discovered-and-unmanaged` (pane row, no agent)
 
@@ -72,6 +72,7 @@ The Clarifications session in `spec.md` (2026-05-24) already resolved 12 questio
 
 - **Decision**: When `app.dashboard` end-to-end latency exceeds `_LATENCY_BUDGET_MS` (= 500), the handler emits a single WARN log line with the stable event name `app_dashboard_latency_exceeded` and includes the actual measured latency in milliseconds plus the budget value: `app_dashboard_latency_exceeded latency_ms=<N> budget_ms=500`. The response is returned best-effort — no error code, no missing v1.1 fields, no abort of the response path. The WARN emission lives in a `try/finally` block around the full handler body so it fires regardless of success/error/exception paths.
 - **Rationale**: FR-027 mandates "best-effort response + WARN log". Stable event name is required so operators can write alerts / dashboards that grep for it. Per-call emission (not throttled) is intended — each budget miss is an operator-visible datum. The WARN level (not ERROR) matches §FE's posture for the recommendation-compute-failed event: the dashboard remained operational; the latency is telemetry, not a failure.
+- **Interaction with the SC-006 `subsystem_degraded` waiver**: the SC-006 budget "waiver" during `subsystem_degraded` (spec.md SC-006, dashboard-v1_1.md §Latency Budget) applies to the **p95 ≤ 500 ms assertion** — that assertion is not made while degraded. It does NOT suppress this WARN: `app_dashboard_latency_exceeded` still fires on any >500 ms call, degraded or not, because it is operator telemetry rather than a hard gate (so operators can see slow degraded calls). The WARN's emission is therefore unconditional on latency alone, with no daemon-state predicate. T024's degraded sub-test documents this (the waiver concerns the assertion, not the WARN).
 - **Alternatives considered**: 
   - error envelope (`latency_budget_exceeded` code) — rejected: violates FR-027 best-effort.
   - throttled WARN (one-per-N-seconds) — rejected: operators want the per-call latency datum for tail-distribution analysis; FEAT-011's audit-stderr throttle exists for a different problem (sustained JSONL write failure, not per-call telemetry).

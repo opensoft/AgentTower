@@ -17,7 +17,7 @@
 
 ## Resource Consumption
 
-- [X] CHK006 - Is the worst-case in-memory size of the recently-skipped ring buffer bounded (300_000 ms × maximum-skips-per-second)? [Gap, Spec §FR-008]
+- [X] CHK006 - Is the worst-case in-memory size of the recently-skipped ring buffer bounded by a fixed `maxlen` (drop-oldest, independent of skip rate — Research §RB `deque(maxlen=10_000)`), not merely by window × rate? [Gap, Spec §FR-008]
 - [X] CHK007 - Are memory bounds specified for the recommendation engine (stateless, no caching, just a function over current daemon state)? [Gap, Spec §Clarifications Q8]
 
 ## Degradation Under Load

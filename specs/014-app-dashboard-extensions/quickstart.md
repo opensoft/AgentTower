@@ -87,7 +87,11 @@ assert (
     + by_state["inactive-or-stale"]
     + by_state["discovery-degraded"]
 ) >= panes_v1["unregistered"]
-# Total-sum invariant remains STRICT — the v1.1 partition is exhaustive.
+# Total-sum invariant — STRICT on the healthy path this walkthrough assumes
+# (a populated, non-degraded daemon). It (and the Step 4 agent-partition
+# equalities below) is SUSPENDED on the FR-025 aggregator-failure path, where
+# by_state zero-fills while panes_v1["total"] stays nonzero; detect that case
+# via recommended_next_action.code == "subsystem_degraded" before asserting.
 assert sum(by_state.values()) == panes_v1["total"]
 ```
 
@@ -127,16 +131,16 @@ For each fixture state in `tests/unit/test_recommendations.py` the recommendatio
 | Healthy daemon, no problems | `all_clear` |
 | Healthy daemon, no routes | `no_routes_configured` |
 | Healthy daemon, no routes, queue has blocked row | `blocked_queue_drain` |
-| Healthy daemon, no routes, blocked queue, unadopted panes | `unadopted_panes_present` |
-| Healthy daemon, no routes, blocked queue, unadopted panes, no panes discovered | `no_panes_discovered` |
-| Healthy daemon, no routes, blocked queue, unadopted panes, no panes, no containers | `no_containers` |
+| Healthy daemon, no routes, blocked queue, panes discovered but unadopted | `unadopted_panes_present` |
+| Healthy daemon, containers present but zero panes discovered | `no_panes_discovered` |
+| Healthy daemon, zero containers | `no_containers` |
 | Any of the above, plus a subsystem degraded | `subsystem_degraded` |
 
-This is SC-003 in observable form: the higher-precedence code wins regardless of how many lower-precedence conditions are simultaneously true. SC-003 (b) specifically requires the adjacent-pair check (`no_containers` beats `no_panes_discovered`), which `tests/unit/test_recommendations.py` exercises directly.
+This is SC-003 in observable form: the higher-precedence code wins regardless of how many lower-precedence conditions are simultaneously true. The first four rows above stack genuinely-coexisting conditions; the last three are *independent minimal states*, because `unadopted_panes_present` (requires `pane_count > 0`), `no_panes_discovered` (`pane_count == 0`), and `no_containers` (`container_count == 0`) are mutually exclusive and cannot be stacked. SC-003 (b) specifically requires the adjacent-pair check (`no_containers` beats `no_panes_discovered`), which `tests/unit/test_recommendations.py` exercises directly.
 
 ## Step 6 — Force compute failure (negative path, FR-021)
 
-A test fixture that monkeypatches `agenttower.app_contract.recommendations.compute_recommendation` to raise (or, equivalently, breaks one of the state-builder inputs) drives the FR-021 compute-failure pathway. The try/except boundary lives in **the dashboard handler** (`dashboard.py::app_dashboard`), NOT inside `compute_recommendation` itself — the recommendation function is pure and its return type is non-optional `RecommendedNextAction`; the wire-null pathway is the dashboard's responsibility per Research §FE. Calling `app.dashboard` with the monkeypatch active:
+A test fixture that monkeypatches `agenttower.app_contract.recommendations.compute_recommendation` to raise drives the FR-021 compute-failure pathway. (Breaking a *state-builder accessor* does NOT reach this path: per FR-025 the v1.1 aggregators catch their own failures, return all-zeros, and flip the recommendation to `subsystem_degraded` — a non-null result — rather than raising.) The try/except boundary lives in **the dashboard handler** (`dashboard.py::app_dashboard`), NOT inside `compute_recommendation` itself — the recommendation function is pure and its return type is non-optional `RecommendedNextAction`; the wire-null pathway is the dashboard's responsibility per Research §FE. Calling `app.dashboard` with the monkeypatch active:
 
 ```python
 result = c.call("app.dashboard", {})["result"]

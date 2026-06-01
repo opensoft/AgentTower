@@ -48,4 +48,4 @@
 ## Post-Remediation Audit (commit 457d5c2)
 
 - [X] CHK021 - Does T026's prescription to add an "App Contract Evolution — v1.1 (FEAT-014)" subsection to `specs/011-app-backend-contract/contracts/app-methods.md` cross a feature-spec boundary that may require a coordinated PR (FEAT-014 PR editing FEAT-011's specs dir vs. a separate FEAT-011-side follow-up PR)? [Boundary, Tasks T026, Spec Kit Convention]
-- [X] CHK022 - Does T023's new file `tests/contract/test_v1_0_compat.py` collide with any FEAT-011 test file naming convention, and does its "parametrized over `test_app_*.py` modules" selector correctly exclude the FEAT-014 extensions to those same files (avoiding circular re-run)? [Risk, Tasks T023, FEAT-011 Source Code]
+- [X] CHK022 - Does T023's new file `tests/unit/test_v1_0_compat.py` collide with any FEAT-011 test file naming convention, and does its `pytest … -m 'not v1_1'` marker-deselect over the `test_app_*.py` modules correctly exclude the FEAT-014 extensions to those same files (avoiding circular re-run)? [Risk, Tasks T023, FEAT-011 Source Code]

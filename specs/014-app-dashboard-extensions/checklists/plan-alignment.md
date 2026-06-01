@@ -9,7 +9,7 @@ This file complements the per-domain checklists in this folder by examining alig
 
 ## Spec → Plan Traceability
 
-- [X] CHK001 - Does plan.md identify every FR (FR-001..FR-021) with the module that owns it, or explicitly mark it out-of-scope per FR-018? [Traceability, Plan §Source Code]
+- [X] CHK001 - Does plan.md identify every FR (FR-001..FR-028) with the module that owns it, or explicitly mark it out-of-scope per FR-018? [Traceability, Plan §Source Code]
 - [X] CHK002 - Does plan.md identify every SC (SC-001..SC-007) with the test file that asserts it? [Traceability, Plan §Source Code tests/, Spec §SC-*]
 - [X] CHK003 - Are all four User Stories (US1–US4) mapped to named integration tests in plan.md? [Traceability, Plan §Source Code tests/integration]
 - [X] CHK004 - Does every Clarifications Q-A pair have a corresponding plan/research decision pointer (i.e., is each clarification honored in the design surface)? [Consistency, Spec §Clarifications, Plan + Research §*]

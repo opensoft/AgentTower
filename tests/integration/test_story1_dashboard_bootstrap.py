@@ -710,11 +710,12 @@ def test_t018_us3_acceptance_recommendation_precedence_over_socket(
 # ═════════════════════════════════════════════════════════════════════════
 # FEAT-014 T024 — SC-006 p95 latency + degraded waiver + FR-027 budget-miss
 #
-# Three sub-tests against a real `agenttowerd` process. Each uses the
-# test-only env-var hooks. Both are read/applied inside the
-# `app.dashboard` handler in dashboard.py (validation/wiring in daemon.py);
-# neither lives in readiness.py — FORCE_DEGRADED is a readiness-probe
-# *override* but is applied in the dashboard handler, not the probe module:
+# Three sub-tests against a real `agenttowerd` process. The steady-state
+# p95 test uses no hooks; the other two use test-only env-var hooks. Both
+# env vars are read/applied inside the `app.dashboard` handler in
+# dashboard.py (validation/wiring in daemon.py); neither lives in
+# readiness.py — FORCE_DEGRADED is a readiness-probe *override* but is
+# applied in the dashboard handler, not the probe module:
 #   • AGENTTOWER_TEST_INJECT_LATENCY_MS — sleeps that many ms inside
 #     one v1.1 aggregator, pushing the dashboard call past the 500ms
 #     SC-006 budget without needing a real slow daemon.
@@ -830,12 +831,17 @@ def test_t024_sc006_degraded_state_waiver_over_socket(
         latencies.append(latency_ms)
 
     assert len(latencies) >= 100, "SC-006 needs >=100 samples"
-    # Degraded recommendation expected on (almost) every call. Strict ==
-    # 100 would be brittle; allow a small jitter floor in case of probe
-    # timing variance.
-    assert degraded_count >= 95, (
+    # The FORCE_DEGRADED override is applied post-probe and is deterministic
+    # per call (it does NOT depend on probe timing), and compute_recommendation
+    # resolves subsystem_degraded as precedence #1 — so every one of the 100
+    # calls MUST be degraded. Anything <100 means the FR-021 compute-failure
+    # branch nulled the recommendation on some call, i.e. the exact
+    # intermittent regression this loop should catch — so assert == 100, not a
+    # >=95 tolerance that would silently mask up to 5 such failures (swarm).
+    assert degraded_count == 100, (
         f"degraded waiver: only {degraded_count}/100 calls returned "
-        "subsystem_degraded; expected ≥95"
+        "subsystem_degraded; the forced-degraded override is deterministic "
+        "per-call, so anything <100 indicates a recommendation-compute regression"
     )
     # Latency p95 RECORDED but not asserted (Clarifications R1 Q11).
     p95 = _p95_ms(latencies)

@@ -26,8 +26,8 @@ Each item below verifies one of the 9 edits and asks whether the fix is congruen
 
 ## U1 — T023 Pinned to pytest Fixture
 
-- [X] CHK008 - Does T023's new test file name `tests/contract/test_v1_0_compat.py` conflict with any existing or planned FEAT-011 test file under `tests/contract/`? [Boundary, Tasks T023, Plan §Source Code]
-- [X] CHK009 - Does T023's "parametrized over the existing `tests/contract/test_app_*.py` modules from FEAT-011" claim correctly identify the FEAT-011 v1.0 contract test set, or could it accidentally include FEAT-014's own test extensions (`test_app_dashboard.py` post-T005/T011/T017) and create a circular re-run? [Risk, Tasks T023, Plan §Source Code tests/contract]
+- [X] CHK008 - Does T023's new test file name `tests/unit/test_v1_0_compat.py` conflict with any existing or planned FEAT-011 test file under `tests/unit/`? [Boundary, Tasks T023, Plan §Source Code]
+- [X] CHK009 - Does T023's marker-filtered replay (`pytest tests/unit/test_app_*.py -m 'not v1_1'`) correctly identify the FEAT-011 v1.0 contract test set, or could it accidentally include FEAT-014's own test extensions (`test_app_dashboard.py` post-T005/T011/T017) and create a circular re-run? [Risk, Tasks T023, Plan §Source Code tests/unit]
 
 ## C1 — T021 Per-Assertion FR Mapping
 

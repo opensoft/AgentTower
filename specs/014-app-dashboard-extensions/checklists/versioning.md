@@ -39,7 +39,7 @@
 
 ## Scope Boundary
 
-- [X] CHK016 - Is the boundary "FEAT-014 introduces v1.1 only, not v1.2 or v2.0 plans" stated, to prevent scope creep into adjacent minors? [Gap, Spec §FR-018]
+- [ ] CHK016 - Is the boundary "FEAT-014 introduces v1.1 only, not v1.2 or v2.0 plans" stated, to prevent scope creep into adjacent minors? (No single clause states this; the closest are the scattered "deferred to a future minor" notes and the §FR-028 capability-flag governance — not §FR-018, which is the FEAT-012 UI/push/custom-rules/persisted-history exclusion.) [Gap, Spec §FR-028, future-minor deferral notes]
 
 ## Plan & Design Alignment (re-verify 2026-05-24)
 

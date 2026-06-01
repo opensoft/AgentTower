@@ -45,7 +45,7 @@
 - [X] CHK022 - Does plan.md's tests/ layout name a test file for every FR-001..FR-021, directly or as part of a named omnibus test? [Traceability, Plan §Source Code tests/]
 - [X] CHK023 - Are the two new unit test files (`test_recommendations.py`, `test_skip_counter.py`) described in plan.md with specific assertion targets that map to FRs/SCs? [Completeness, Plan §Source Code tests/unit]
 - [X] CHK024 - Is the SC-003 (b) adjacent-pair coverage explicitly called out in plan.md's `test_recommendations.py` description? [Traceability, Plan §Source Code tests/unit, Spec §SC-003]
-- [X] CHK025 - Does the extended `test_app_dashboard.py` description name the FR-019 cross-check, FR-020 partition, and FR-021 null-fallback as separate assertion targets, not bundled? [Measurability, Plan §Source Code tests/contract]
+- [X] CHK025 - Does the extended `test_app_dashboard.py` description name the FR-019 cross-check, FR-020 partition, and FR-021 null-fallback as separate assertion targets, not bundled? [Measurability, Plan §Source Code tests/unit]
 - [X] CHK026 - Is the SC-006 latency assertion in `test_story1_dashboard_bootstrap.py` consistent with FEAT-011's existing latency assertion (same fixture, same measurement methodology)? [Consistency, Plan §Source Code tests/integration]
 - [X] CHK027 - Are all four scenario classes (Primary, Alternate, Exception, Recovery) named in plan.md's test descriptions, or only the Primary path? [Coverage, Plan §Source Code tests/*]
 - [X] CHK028 - Is the determinism property for concurrent dashboard calls (Research §CC) named in any test file in plan.md? [Gap, Research §CC, Plan §Source Code tests/]

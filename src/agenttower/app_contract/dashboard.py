@@ -524,6 +524,15 @@ def _compute_pane_state_buckets(
         )
         total = int(conn.execute("SELECT COUNT(*) FROM panes").fetchone()[0])
         # discovered-and-unmanaged = remainder (total - ios - dar - dd=0).
+        # Best-effort, NOT transactionally atomic (swarm low): ios/dar/total
+        # are three separate autocommit reads on a WAL connection, so a
+        # concurrent FEAT-004 pane insert/delete between them can skew the
+        # remainder (the max(...,0) clamp hides an under-count). Accepted per
+        # FR-018 ("counts read sequentially with no global lock; slight
+        # inter-surface inconsistency is acceptable") — the dashboard is
+        # best-effort and any skew self-corrects on the next poll. Not pinned
+        # to a single snapshot because the panes/agents/containers writers run
+        # on separate connections that the worker tx-lock doesn't cover.
         dau = max(total - ios - dar, 0)
         return {
             "discovered-and-unmanaged": dau,

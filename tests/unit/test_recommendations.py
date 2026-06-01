@@ -424,22 +424,28 @@ def test_subsystem_target_id_is_one_of_closed_set() -> None:
 
 
 @pytest.mark.v1_1
-def test_subsystem_degraded_unknown_name_yields_null_target() -> None:
+def test_subsystem_degraded_unattributed_yields_null_target_template() -> None:
     """recommendations.py ``first_probe is None`` fall-through (Research §SS
     aggregate-failure case): when ``degraded_subsystems`` is non-empty but
     holds only names absent from ``PROBE_ORDER`` (e.g. an aggregator-caught
-    failure surfaced under a synthetic name), the engine still emits
-    ``subsystem_degraded`` — but with the literal ``"unknown"`` substitution
-    and ``target=None``, distinct from every known-probe case. Guards against
-    a regression that raised ``StopIteration``, indexed ``[0]``, or fabricated
-    a target from the unknown name."""
+    failure surfaced under a synthetic name), the engine emits
+    ``subsystem_degraded`` with ``target=None`` and the FIXED null-target
+    template from closed-sets-v1_1.md — NOT a ``{subsystem_name}``
+    substitution of the literal ``"unknown"`` (which is not a member of the
+    closed set; swarm finding). Guards against a regression that raised
+    ``StopIteration``, indexed ``[0]``, fabricated a target, or re-introduced
+    the non-closed-set ``"unknown"`` prose."""
     result = compute_recommendation(
         _state(degraded_subsystems=("not_a_probe", "also_unknown"))
     )
     assert result.code == "subsystem_degraded"
     assert result.target is None
-    assert "unknown" in result.title.lower()
-    assert result.detail is not None and "unknown" in result.detail.lower()
+    assert result.title == "Subsystem health degraded"
+    assert result.detail is not None
+    assert "could not be attributed" in result.detail
+    # Must NOT leak the non-closed-set literal "unknown" onto the wire.
+    assert "unknown" not in result.title.lower()
+    assert "unknown" not in result.detail.lower()
 
 
 # ─── FR-024 — target.id opacity (no operator-readable display chars) ────────
@@ -511,6 +517,28 @@ def test_return_type_is_recommended_next_action_with_required_fields() -> None:
     assert result.target is None or isinstance(result.target, dict)
 
 
+# The two {N}-templated codes (unadopted_panes_present / blocked_queue_drain)
+# are the ONLY ones whose title/detail length is variable, so the cap tests
+# below exercise them with a large count (swarm finding).
+_BIG_N = 10**9
+_VARIABLE_LENGTH_STATES = (
+    _state(
+        container_count=1,
+        first_active_container_id="c",
+        pane_count=3,
+        first_unadopted_pane_id="p",
+        unadopted_pane_count=_BIG_N,
+    ),
+    _state(
+        container_count=1,
+        first_active_container_id="c",
+        pane_count=1,
+        oldest_blocked_message_id="m",
+        blocked_queue_count=_BIG_N,
+    ),
+)
+
+
 @pytest.mark.v1_1
 def test_title_size_cap_128_chars() -> None:
     """FR-011: ``title`` ≤ 128 chars."""
@@ -518,6 +546,7 @@ def test_title_size_cap_128_chars() -> None:
         _state(),
         _state(degraded_subsystems=("docker",)),
         _state(container_count=1, first_active_container_id="c"),
+        *_VARIABLE_LENGTH_STATES,
     ):
         result = compute_recommendation(state)
         assert len(result.title) <= 128
@@ -530,6 +559,7 @@ def test_detail_size_cap_512_chars() -> None:
         _state(),
         _state(degraded_subsystems=("routing_worker",)),
         _state(container_count=1, first_active_container_id="c"),
+        *_VARIABLE_LENGTH_STATES,
     ):
         result = compute_recommendation(state)
         if result.detail is not None:

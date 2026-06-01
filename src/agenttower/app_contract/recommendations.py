@@ -111,6 +111,19 @@ def _subsystem_degraded_detail(subsystem_name: str) -> str:
     )
 
 
+# Unattributed/aggregate degradation (Research §SS): target is null and there
+# is no {subsystem_name} closed-set value to substitute. Use the fixed
+# null-target template from closed-sets-v1_1.md §Per-code Templates verbatim —
+# NOT _subsystem_degraded_title("unknown"), since "unknown" is not a member of
+# the {subsystem_name} closed set (swarm finding).
+_SUBSYSTEM_DEGRADED_UNATTRIBUTED_TITLE: Final[str] = "Subsystem health degraded"
+_SUBSYSTEM_DEGRADED_UNATTRIBUTED_DETAIL: Final[str] = (
+    "One or more readiness subsystems are reporting degraded health, but the "
+    "specific subsystem could not be attributed. Inspect daemon readiness "
+    "before relying on other dashboard signals."
+)
+
+
 _NO_CONTAINERS_TITLE: Final[str] = "No bench containers"
 _NO_CONTAINERS_DETAIL: Final[str] = (
     "The daemon does not see any bench containers. Start a container "
@@ -172,11 +185,13 @@ def compute_recommendation(state: RecommendationState) -> RecommendedNextAction:
         if first_probe is None:
             # Caller passed only non-PROBE_ORDER subsystem names; emit
             # the code with target=None (Research §SS aggregate-failure
-            # case). Title/detail use a generic substitution.
+            # case). Use the fixed null-target template — NOT a
+            # {subsystem_name} substitution of "unknown" (which isn't a
+            # closed-set value; see closed-sets-v1_1.md §Per-code Templates).
             return RecommendedNextAction(
                 code="subsystem_degraded",
-                title=_subsystem_degraded_title("unknown"),
-                detail=_subsystem_degraded_detail("unknown"),
+                title=_SUBSYSTEM_DEGRADED_UNATTRIBUTED_TITLE,
+                detail=_SUBSYSTEM_DEGRADED_UNATTRIBUTED_DETAIL,
                 target=None,
             )
         return RecommendedNextAction(

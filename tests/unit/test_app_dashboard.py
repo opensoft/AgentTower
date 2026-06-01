@@ -1084,15 +1084,20 @@ def test_dashboard_v1_1_fr027_warn_when_latency_exceeds_budget(
 
     from agenttower.app_contract import dashboard as dashboard_mod
 
-    # Fake a 600 ms latency without real sleep: each call to monotonic_ns
-    # in the latency bookend advances by 600 ms. Sequence: first call
-    # captures _t0 = 0; second call (in the finally block) returns
-    # 600_000_000 ns → _latency_ms = 600 > 500 ms budget → WARN.
-    _calls: list[int] = []
+    # Fake a 600 ms latency without real sleep. The handler reads
+    # monotonic_ns THREE times on the success path: the _t0 capture
+    # (dashboard.py), the skip-window clock inside the body
+    # (skip_counter.count_in_window), and the finally-block bookend. Only
+    # the FIRST read must be t=0; every later read returns t0+600ms so the
+    # finally computes _latency_ms = 600 > 500 ms budget → WARN. Keyed off an
+    # explicit iterator (not call positions) so the test does not depend on
+    # how many interior reads the body makes, nor on _t0 being literally the
+    # 1st-and-only pre-body read (swarm: the old comment mis-counted the calls
+    # as a 2-call bookend).
+    _values = iter([0])  # _t0
 
     def _fake_monotonic_ns() -> int:
-        _calls.append(len(_calls))
-        return 0 if len(_calls) == 1 else 600_000_000
+        return next(_values, 600_000_000)  # every read after _t0 → 600 ms
 
     monkeypatch.setattr(
         dashboard_mod.time, "monotonic_ns", _fake_monotonic_ns
@@ -1317,10 +1322,10 @@ def test_dashboard_v1_1_fr012_daemon_ignores_unknown_request_fields(
 # ═════════════════════════════════════════════════════════════════════════
 # FEAT-014 T017 — US3 wire-level assertions (recommended_next_action)
 #
-# All assertions are @pytest.mark.v1_1. EXPECTED to fail RED with KeyError
-# on 'recommended_next_action' until T020 wires compute_recommendation into
-# the dashboard.py envelope assembly. Once T020 lands, these turn GREEN
-# alongside the FR-021 compute-failure null pathway.
+# All assertions are @pytest.mark.v1_1. They pin the US3 wire-level contract
+# for `recommended_next_action` (now wired in dashboard.py envelope assembly,
+# alongside the FR-021 compute-failure null pathway); any future regression
+# that omits the field would be caught here.
 # ═════════════════════════════════════════════════════════════════════════
 
 
@@ -1457,15 +1462,24 @@ def test_dashboard_v1_1_fr026_non_suppression_during_subsystem_degraded(
     5-key vocabularies. Count values may be best-effort during
     degradation, but the keys themselves are unconditional.
 
-    Note: on a freshly-constructed test ctx without a real readiness probe
-    suite reporting degraded, this test verifies the structural guarantee:
-    by_state is always emitted regardless of recommendation code."""
+    This drives an ACTUAL degraded state (swarm: the test must enter the
+    `subsystem_degraded` branch it is named for, not pass vacuously on a
+    healthy ctx). Setting `routing_shared_state.routing_worker_degraded`
+    makes the dashboard union `routing_worker` into `degraded_subsystems`, so
+    `compute_recommendation` returns `subsystem_degraded` (precedence #1)."""
+    from types import SimpleNamespace as _NS
+
+    daemon_ctx_with_db.routing_shared_state = _NS(routing_worker_degraded=True)
     host_peer, token = host_session
     env = _dashboard_call(daemon_ctx_with_db, host_peer, token=token)
     result = env["result"]
 
-    # by_state keys MUST be present unconditionally — independent of the
-    # recommendation code.
+    # The recommendation MUST actually be subsystem_degraded here — otherwise
+    # the by_state assertions below would be vacuous (true on every code).
+    assert result["recommended_next_action"]["code"] == "subsystem_degraded"
+
+    # by_state keys MUST be present unconditionally — and specifically still
+    # present DURING degradation (FR-026 non-suppression).
     panes_by_state = result["counts"]["panes"]["by_state"]
     agents_by_state = result["counts"]["agents"]["by_state"]
     assert set(panes_by_state.keys()) == set(PANE_STATE_KEYS)
@@ -1516,11 +1530,11 @@ def test_dashboard_v1_1_fr021_compute_failure_leaves_other_v1_1_fields_intact(
 # FEAT-014 T011 — US2 wire-level assertions (recently_skipped_*)
 #
 # All assertions below are @pytest.mark.v1_1 per the v1.1 marker rule. They
-# are EXPECTED to fail (KeyError) until T015 wires
-# counts.routes.recently_skipped_count + .recently_skipped_window_ms into
-# the dashboard.py response envelope. T013 creates the underlying
-# skip_counter module; T011 is the contract-level RED test for the wire
-# surface FR-007 / FR-008 demand.
+# pin the US2 wire-level contract for
+# counts.routes.recently_skipped_count + .recently_skipped_window_ms (now
+# wired into the dashboard.py response envelope, backed by the skip_counter
+# module); any regression that drops these fields would be caught here —
+# the wire surface FR-007 / FR-008 demand.
 # ═════════════════════════════════════════════════════════════════════════
 
 

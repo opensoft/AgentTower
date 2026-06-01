@@ -155,23 +155,26 @@ When a Claude or Codex session starts INSIDE the project's devBench container
 (as opposed to the host shell), the host-path rule's prescription to "run
 codebase commands inside the devBench container" is already satisfied — no
 separate routing step (no `docker exec`, no `devbench` wrapper) is required.
-Detect "in devBench" deterministically by checking ALL of:
+Detect "in devBench" deterministically by requiring BOTH structural signals,
+treating the env var as confirming-but-optional:
 
-1. `/.dockerenv` exists — any Docker container.
-2. `REMOTE_CONTAINERS=true` env var is set — VS Code devcontainer family.
-3. The project workspace is mounted at `/workspace/…` — the devBench layout.
+1. `/.dockerenv` exists — any Docker container. (required)
+2. The project workspace is mounted at `/workspace/…` — the devBench layout. (required)
+3. `REMOTE_CONTAINERS=true` is set — confirms a VS Code devcontainer launch, but
+   may be absent for `docker exec`, `tmux`/SSH attach, or `cta`-launched shells
+   that are nonetheless inside the container. (optional, confirming-only)
 
-When all three signals hold, run codebase commands directly: `python3`,
+When both required structural signals hold, run codebase commands directly: `python3`,
 `pytest`, `pip`, the project's CLI, etc. From inside the container, the
 in-container shell IS the runner; the host-path concerns Rule 1 protects
 against don't apply, because the container's filesystem layout is stable
 across host machines, WSL configurations, and mount-point reshuffles.
 
-When ANY of the three signals is missing, treat the current shell as a host
+When either required structural signal is missing, treat the current shell as a host
 shell: either route the codebase command through the appropriate devBench
 invocation (typical from the host: `docker exec <bench-name> …`) or stop and
 ask the user how to route before defaulting to the host.
 
-In this repo's devBench the bench is named `py-Bench`. That name is not
+In this repo's devBench the bench is named `py-bench`. That name is not
 visible from inside the container, so do NOT try to verify it programmatically
-— verify "in devBench" via the three structural signals above.
+— verify "in devBench" via the two required structural signals above.

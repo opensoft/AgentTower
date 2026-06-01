@@ -57,11 +57,12 @@ Values for `recommended_next_action.code` (exactly 7, snake_case, in precedence 
 
 ### Per-code `title` / `detail` Templates
 
-The daemon emits `title` and `detail` strings per recommendation code from the following **fixed templates**. `{N}` is the relevant integer count appearing in the matching state bucket; `{subsystem_name}` is one of the values from §TargetKind's `target.kind == subsystem` row. Templates MUST NOT be altered free-form by daemon implementers — all v1.1 daemons emit identical prose for the same code so two operators observing the same daemon state see identical recommendation text (this is what FR-011 §Per-code title/detail Templates incorporates by reference).
+The daemon emits `title` and `detail` strings per recommendation code from the following **fixed templates**. `{N}` is the per-code count source defined in `data-model.md` §RecommendedNextAction `RecommendationState` (for `unadopted_panes_present`, the unadopted-pane total `unadopted_pane_count` = v1.0 `counts.panes.unregistered`, **not** the `discovered-and-unmanaged` `by_state` bucket — the §PB priority rule can route unregistered panes on degraded/inactive containers into other buckets, so the bucket value can be strictly smaller; for `blocked_queue_drain`, `blocked_queue_count` = v1.0 `counts.queue.blocked`, which has no `by_state` bucket). `{subsystem_name}` is one of the values from §TargetKind's `target.kind == subsystem` row. Templates MUST NOT be altered free-form by daemon implementers — all v1.1 daemons emit identical prose for the same code so two operators observing the same daemon state see identical recommendation text (this is what FR-011 §Per-code title/detail Templates incorporates by reference).
 
 | Code | `title` (≤ 128 chars) | `detail` (≤ 512 chars or `null`) |
 |---|---|---|
-| `subsystem_degraded` | `"Subsystem degraded: {subsystem_name}"` | `"The {subsystem_name} subsystem is reporting degraded health. Inspect daemon readiness or the relevant subsystem before relying on other dashboard signals."` |
+| `subsystem_degraded` (target non-null — attributed) | `"Subsystem degraded: {subsystem_name}"` | `"The {subsystem_name} subsystem is reporting degraded health. Inspect daemon readiness or the relevant subsystem before relying on other dashboard signals."` |
+| `subsystem_degraded` (target null — unattributed, Research §SS) | `"Subsystem health degraded"` | `"One or more readiness subsystems are reporting degraded health, but the specific subsystem could not be attributed. Inspect daemon readiness before relying on other dashboard signals."` |
 | `no_containers` | `"No bench containers"` | `"The daemon does not see any bench containers. Start a container (or check Docker connectivity)."` |
 | `no_panes_discovered` | `"No panes discovered"` | `"Containers exist but no tmux panes were discovered. Check tmux discovery health and the container's bench user."` |
 | `unadopted_panes_present` | `"Unadopted panes need attention"` | `"{N} pane(s) are discovered but not yet registered with an agent. Adopt them to enable routing."` |
@@ -73,6 +74,7 @@ The daemon emits `title` and `detail` strings per recommendation code from the f
 
 - `{N}` — the daemon performs integer substitution once per response with the actual count. There is no plural agreement on the wire ("pane(s)" / "row(s)" is literal); clients localize for plural if they wish.
 - `{subsystem_name}` — drawn from §TargetKind `target.kind == subsystem` row. When multiple subsystems are degraded, the daemon picks the first in that probe-name order (deterministic per Research §SS).
+- `subsystem_degraded` with `target == null` (the unattributed/aggregate case, Research §SS) carries **no** substitution token: it uses the fixed null-target template above verbatim (no `{subsystem_name}`), satisfying the "`title` Never null" rule without inventing a non-closed-set subsystem name.
 
 **Future evolution**: v1.x MAY refine the prose but MUST keep the `code` → `(title template, detail template)` mapping deterministic per-code (no per-call randomness, no localization in v1.x — English only).
 

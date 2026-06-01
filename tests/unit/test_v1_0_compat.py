@@ -39,9 +39,10 @@ import pytest
 
 # Opt-in gate (post-swarm M11). This test spawns a *second* full pytest
 # interpreter over the entire ``tests/unit/test_app_*.py`` contract suite
-# (762 selected) — so a bare ``pytest tests/unit`` would otherwise run that
-# suite roughly twice, paying ~10s of redundant wall-clock on every local
-# invocation for a single boolean SC-004 assertion. The subprocess replay
+# (the full ``test_app_*`` set) — so a bare ``pytest tests/unit`` would
+# otherwise run that suite roughly twice, paying several minutes of redundant
+# wall-clock on every local invocation for a single boolean SC-004 assertion
+# (the replay alone measured ~222s). The subprocess replay
 # therefore runs only when ``AGENTTOWER_RUN_SC004_REGRESSION`` is set
 # truthy; CI sets it explicitly in the unit-gate step
 # (``.github/workflows/sonarqube.yml``) so SC-004 is still enforced on every
@@ -97,33 +98,44 @@ def test_sc004_feat011_v1_0_contract_passes_against_v1_1_daemon() -> None:
         "— the FEAT-011 contract suite appears to be missing or moved."
     )
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            *contract_test_files,
-            "-m",
-            "not v1_1",
-            "--no-header",
-            "--tb=short",
-            "-p",
-            "no:cacheprovider",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=repo_root,
-        env=env,
-        timeout=300,
-    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                *contract_test_files,
+                "-m",
+                "not v1_1",
+                "--no-header",
+                "--tb=short",
+                "-p",
+                "no:cacheprovider",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            env=env,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Convert the raw TimeoutExpired into the SC-004 failure message so a
+        # CI timeout still points at this regression rather than surfacing as
+        # an opaque error traceback (swarm finding). 600s leaves headroom over
+        # the measured multi-minute inner-suite runtime on a loaded runner.
+        pytest.fail(
+            f"SC-004 v1.0-compat regression timed out after {exc.timeout}s\n"
+            f"---STDOUT---\n{exc.stdout!r}\n---STDERR---\n{exc.stderr!r}"
+        )
 
     # SC-004 requires the v1.0 baseline to PASS, not merely "not fail."
     # Parse the post-filter `selected` count — NOT total `collected`.
     # pytest prints "collected N items / M deselected / K selected" when
     # anything is deselected; `collected` counts the deselected v1_1 items
-    # too, so a run that deselects EVERY v1.0 assertion (the over-applied-
-    # marker regression this guard exists to catch) still exits 0 with a
-    # positive `collected`. Only `selected` reflects what actually ran.
+    # too. If EVERY v1.0 assertion were mis-marked v1_1, pytest would collect
+    # 0 selected and exit 5 (EXIT_NOTESTSCOLLECTED), NOT 0 — so check
+    # `selected` FIRST to surface the over-marker diagnostic before the
+    # generic exit-code assert swallows it.
     selected_match = re.search(r"(\d+) selected", result.stdout)
     if selected_match is not None:
         selected = int(selected_match.group(1))
@@ -133,19 +145,18 @@ def test_sc004_feat011_v1_0_contract_passes_against_v1_1_daemon() -> None:
         collected_match = re.search(r"collected (\d+) items?", result.stdout)
         selected = int(collected_match.group(1)) if collected_match else 0
 
-    assert result.returncode == 0, (
-        f"SC-004 v1.0-compat regression failed: subprocess pytest exit "
-        f"code {result.returncode} (expected 0)\n"
-        f"---STDOUT---\n{result.stdout}\n"
-        f"---STDERR---\n{result.stderr}"
-    )
     assert selected > 0, (
         f"SC-004 v1.0-compat regression SELECTED zero tests — the "
         f"'-m not v1_1' filter or the test_app_*.py glob deselected "
-        f"everything, so the regression proves nothing. Check that the "
-        f"FEAT-011 contract test files still exist and that the v1.1 "
-        f"marker rule has not been over-applied to v1.0 baseline "
-        f"assertions.\n"
+        f"everything (pytest exit {result.returncode}), so the regression "
+        f"proves nothing. Check that the FEAT-011 contract test files still "
+        f"exist and that the v1.1 marker rule has not been over-applied to "
+        f"v1.0 baseline assertions.\n"
+        f"---STDOUT---\n{result.stdout}\n---STDERR---\n{result.stderr}"
+    )
+    assert result.returncode == 0, (
+        f"SC-004 v1.0-compat regression failed: subprocess pytest exit "
+        f"code {result.returncode} (expected 0)\n"
         f"---STDOUT---\n{result.stdout}\n"
         f"---STDERR---\n{result.stderr}"
     )

@@ -105,6 +105,20 @@ def test_fr025_second_half_failed_subsystems_collects_sqlite() -> None:
     assert failed == {"sqlite"}
 
 
+@pytest.mark.v1_1
+def test_fr025_no_state_conn_does_not_flag_subsystem() -> None:
+    """FR-025 second-half boundary (mirrors the pane-state suite): a missing
+    ``state_conn`` is a daemon bring-up signal (FEAT-011 ``probe_sqlite``),
+    NOT a runtime aggregator failure — ``failed_subsystems`` is left
+    untouched so the dashboard handler doesn't double-flag what readiness
+    already flagged. Guards a refactor that moved the ``.add("sqlite")``
+    above the ``conn is None`` guard."""
+    failed: set[str] = set()
+    result = _compute_agent_state_buckets(SimpleNamespace(), failed)
+    assert result == {k: 0 for k in AGENT_STATE_KEYS}
+    assert failed == set()
+
+
 # ─── FR-020 — strict configuration partition ───────────────────────────────
 
 

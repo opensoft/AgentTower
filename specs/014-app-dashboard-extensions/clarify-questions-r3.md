@@ -45,8 +45,8 @@ The MVP implementation (commit `dbd1f3e`) follows Research §PB priority — a r
 
 | Option | Description |
 |--------|-------------|
-| A | **Revise Research §PB priority** so `discovered-and-registered` outranks `inactive-or-stale`. Registered panes always show in `dar` regardless of container state. v1.1 implementation needs a small SQL change (drop the `c.active = 1` join from `_compute_pane_state_buckets`'s `dar` query). FR-019 strict `==` invariant holds. |
-| B | **Loosen FR-019** from strict `==` to `dar ≤ v1.0 counts.panes.registered`, with the gap equal to "panes whose registered agent is on an inactive or degraded container." Document the gap rule explicitly in FR-019. MVP impl is correct as-is; no code change. (matches current behavior) |
+| A | **Revise Research §PB priority** so `discovered-and-registered` outranks `inactive-or-stale`. Registered panes always show in `dar` regardless of container state. v1.1 implementation needs an SQL change in `_compute_pane_state_buckets`: drop the `c.active = 0` leg from the `inactive-or-stale` query AND the `c.active = 1` condition from the `dar` query (and relax the `dar` `p.active = 1` filter) so both predicates move together — changing only `dar` would double-count inactive registered panes and underflow the `dau = total - ios - dar` remainder. FR-019 strict `==` invariant holds. |
+| B | **Loosen FR-019** from strict `==` to `dar ≤ v1.0 counts.panes.registered`, with the gap equal to the registered panes §PB routes to `inactive-or-stale`/`discovery-degraded` — i.e. container `inactive`/`degraded_scan`, the pane's own `active` flag unset (FEAT-004 reconciliation, even on an active container), or stale `last_seen_at`. Document the gap rule explicitly in FR-019. MVP impl is correct as-is; no code change. (matches current behavior) |
 | C | **Introduce a new 5th bucket** `registered-but-stale` for registered-pane-on-inactive-container. Preserves both FR-019 strict equality AND priority distinction. Requires v1.2 minor (new closed-set value) and refactoring the existing 4-key vocabulary. Most disruptive. |
 | Short | Different rule (≤ 5 words). |
 
@@ -55,7 +55,7 @@ The MVP implementation (commit `dbd1f3e`) follows Research §PB priority — a r
 - `research.md` §PB priority list reordered
 - `data-model.md` §PaneState priority section reordered
 - `spec.md` FR-002 priority chain reordered (the FR-002 sentence currently lists `discovery-degraded > inactive-or-stale > discovered-and-registered > discovered-and-unmanaged`)
-- `src/agenttower/app_contract/dashboard.py::_compute_pane_state_buckets` SQL change (drop one JOIN condition)
+- `src/agenttower/app_contract/dashboard.py::_compute_pane_state_buckets` SQL change: drop the `c.active = 0` leg from the `inactive-or-stale` query AND the `c.active = 1` condition from the `dar` query (both predicates must move together, else the two buckets overlap and `dau = total - ios - dar` double-counts / underflows). Note `c.active` is a WHERE condition, not a JOIN condition.
 - Existing US1 acceptance test still passes (only active containers)
 
 ### Affected artifacts if Option B chosen (recommended)

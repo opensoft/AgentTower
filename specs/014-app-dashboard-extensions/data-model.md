@@ -31,7 +31,7 @@ This file captures the v1.1 entities, closed-set vocabularies, and derived-aggre
 
 **Invariants** (FR-019, post-R3):
 
-- `discovered-and-registered` ≤ v1.0 `counts.panes.registered`. The gap, if any, equals the count of panes whose registered agent is on an inactive or `degraded_scan` container; the Research §PB priority rule routes those panes to `inactive-or-stale` / `discovery-degraded` instead.
+- `discovered-and-registered` ≤ v1.0 `counts.panes.registered`. The gap, if any, equals the count of registered panes that the Research §PB priority rule routes to `inactive-or-stale` / `discovery-degraded` instead — i.e. panes whose container is `inactive`/`degraded_scan`, whose own `active` flag is unset (FEAT-004 reconciliation), or whose `last_seen_at` is stale.
 - `discovered-and-unmanaged + inactive-or-stale + discovery-degraded` ≥ v1.0 `counts.panes.unregistered` (the opposite side of the same gap).
 - Sum of all four == v1.0 `counts.panes.total` (strict — the partition is exhaustive).
 
@@ -98,7 +98,7 @@ The two cross-checks were loosened from strict equality to one-sided invariants 
 |---|---|
 | `subsystem_degraded` | `{kind: "subsystem", id: <subsystem_name>}` when attributable; `null` otherwise (Research §SS). |
 | `no_containers` | `null`. |
-| `no_panes_discovered` | `null` if no containers, else `{kind: "container", id: <first_active_container_id>}`. |
+| `no_panes_discovered` | `{kind: "container", id: <first_active_container_id>}`; `null` when containers exist but none is active (best-effort, no resolvable container id — the `no_containers` branch at higher precedence already handles the zero-container case). |
 | `unadopted_panes_present` | `{kind: "pane", id: <first_unadopted_pane_id>}` (first by FEAT-004 default ordering). |
 | `blocked_queue_drain` | `{kind: "message", id: <oldest_blocked_queue_message_id>}`. |
 | `no_routes_configured` | `null`. |
@@ -121,7 +121,11 @@ The recommendation engine lives in `src/agenttower/app_contract/recommendations.
 
 The dashboard handler (T020) is responsible for the state-building step (reading SQLite rows + readiness probes and packing them into a `RecommendationState`) AND for the try/except around `compute_recommendation`. The state-building step is INTENTIONALLY outside the recommendation module to keep `compute_recommendation` a pure function over its input dataclass, making it trivially testable (see T016 tests for the canonical fixture pattern).
 
+**`{N}` gate + floor** (codex P2 / FR-025): `unadopted_panes_present` and `blocked_queue_drain` are gated on `count > 0 OR <id> is not None` (not `count` alone), and substitute `{N} = count if count > 0 else 1`. So at the reachable best-effort boundary where the count lookup degraded to `0` but the id query still returned a value (FR-025), the code still fires and `{N}` is floored to `1` — the wire prose never reads `"0 pane(s)"` / `"0 queue row(s)"`.
+
 **`target.id` opacity** (FR-011, Clarifications R1 Q14): `target.id` values are opaque internal identifiers in FEAT-003 / FEAT-004 / FEAT-006 / FEAT-008 / FEAT-009 / FEAT-010 internal-id format (whichever corresponds to `target.kind`), or — for `target.kind == "subsystem"` — one of the FEAT-011 readiness probe names per Research §SS. They MUST NOT carry operator-readable display names, host metadata, paths, credentials, or PII. Clients render `target.id` opaquely or resolve it to a display name via separate `app.<entity>.detail` calls.
+
+For `target.kind == "pane"` specifically, FEAT-004 exposes no opaque scalar pane id — pane identity is a 6-column composite PK that includes `tmux_socket_path` (a path) and `tmux_session_name` (operator free text), both of which FR-024 forbids on the wire. v1.1 therefore emits the pane's `tmux_pane_id` (`%N`) as `target.id`: it satisfies the opacity floor (no path/PII) but is **not** globally unique (a reused `%N` in a different session/window is a distinct pane per FEAT-004 FR-007), so it is best-effort-resolvable only. Minting a stable, unique, opaque pane surrogate over the FEAT-004 composite key — and a corresponding `app.pane.detail` resolution path — is deferred to a future minor; until then clients SHOULD treat a `pane` `target.id` as a hint, not a guaranteed-resolvable handle. (For `kind == "subsystem"` there is no `app.<entity>.detail` method; the probe-name `target.id` is the human-facing label and is rendered as-is.)
 
 ---
 
@@ -147,7 +151,7 @@ The dashboard handler (T020) is responsible for the state-building step (reading
 
 - `count_in_window(now_ms)` returns a non-negative integer.
 - Restart of the daemon process makes the first post-restart read return `0` (no persistence — Clarifications Q7).
-- Skip events at exactly the window edge (`entry_ms == now_ms - 300_000`) are *not* counted; the inclusion test is strict `>` not `>=` (Research §CW).
+- Skip events are counted iff `now_ms - 300_000 < entry_ms <= now_ms` (half-open interval `(now_ms - WINDOW_MS, now_ms]`). An entry at exactly the lower edge (`entry_ms == now_ms - 300_000`) is *not* counted (strict `>`, not `>=`); an entry recorded "in the future" relative to the read's independently sampled `now_ms` (a concurrent `record_skip` on the routing-worker thread) is also excluded by the `<= now_ms` upper clamp (Research §CW).
 
 ---
 
@@ -158,7 +162,7 @@ The dashboard handler (T020) is responsible for the state-building step (reading
 | Field | v1.0 value | v1.1 value |
 |---|---|---|
 | `daemon_app_contract_version` | `"1.0"` | `"1.1"` |
-| `supported_minor_range_max` (per FEAT-011 plan §versioning) | `1` (i.e., 1.0) | `1` (i.e., max minor = 1.1) |
+| `supported_minor_range.max` (per FEAT-011 §versioning; nested `{min, max}` object of version **strings**) | `"1.0"` | `"1.1"` |
 | `capability_flags` | `{}` | `{}` (unchanged — FR-015) |
 
 A v1.1 daemon advertises `"1.1"` and emits the v1.1 additive fields on every `app.dashboard` response regardless of the calling client's `client_app_contract_major` (Clarifications Q10, FR-013).
