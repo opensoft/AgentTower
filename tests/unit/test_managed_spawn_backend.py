@@ -231,3 +231,30 @@ def test_register_backend_threads_resolved_socket() -> None:
     key = captured["pane_composite_key"]
     assert key["tmux_socket_path"] == EXPECTED_SOCKET
     assert key["tmux_pane_id"] == "%7"
+
+
+def test_register_backend_maps_socket_resolution_tmuxerror_to_ok_false() -> None:
+    """A TmuxError from socket resolution (resolve_uid) must become a clean
+    {ok: False} — TmuxError is a frozen dataclass and would raise
+    FrozenInstanceError if it propagated through the spawn pipeline's
+    tx_guard contextmanager."""
+    from agenttower.managed_sessions.spawn_backends import make_register_backend
+
+    adapter = FakeTmuxAdapter(
+        {"containers": {CONTAINER: {"id_u_failure": "docker_exec_failed"}}}
+    )
+
+    class _NeverCalledAgentService:
+        def register_agent(self, params, socket_peer_uid):  # noqa: ANN001
+            raise AssertionError("register_agent should not be reached")
+
+    register = make_register_backend(
+        _NeverCalledAgentService(),
+        adapter=adapter,
+        bench_user_resolver=lambda _cid: BENCH_USER,
+    )
+    result = register(_pane(index=0, label="m1"), "%0")
+    assert result == {
+        "ok": False,
+        "error": {"code": "docker_exec_failed", "message": "fake docker_exec_failed"},
+    }

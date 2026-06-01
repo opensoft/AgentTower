@@ -256,13 +256,23 @@ def make_register_backend(
     def register(pane: ManagedPaneRow, tmux_pane_id: str) -> dict[str, Any]:
         from ..agents.errors import RegistrationError
 
+        # Socket resolution can hit the adapter (resolve_uid → docker exec);
+        # a TmuxError here must become a clean {ok: False} failure, NOT
+        # propagate — TmuxError is a frozen dataclass and would raise
+        # FrozenInstanceError if it bubbled through the spawn pipeline's
+        # tx_guard contextmanager.
+        try:
+            socket_path = _socket_for(pane)
+        except TmuxError as exc:
+            return {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+
         # FEAT-013 single-window layout: window_index=0 (built-in
         # templates are single-window; richer layouts are a later feature).
         params: dict[str, Any] = {
             "container_id": pane.container_id,
             "pane_composite_key": {
                 "container_id": pane.container_id,
-                "tmux_socket_path": _socket_for(pane),
+                "tmux_socket_path": socket_path,
                 "tmux_session_name": pane.tmux_session_name,
                 "tmux_window_index": 0,
                 "tmux_pane_index": pane.tmux_pane_index,
