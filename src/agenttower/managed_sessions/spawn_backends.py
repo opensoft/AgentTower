@@ -24,19 +24,20 @@ the FR-016 ``managed_session_name_conflict`` gate before the first
 ``new-session`` of a layout. Pane targeting uses the ``%N`` id (not a
 numeric index) so it is immune to tmux pane-index renumbering.
 
-**Deferred to T057b** (tracked, not silently dropped): fine-grained
-launch-exit detection (research §R8's 1-second post-spawn poll →
-``degraded`` / ``failed_stage=launch_command``). This backend currently
-returns ``launch_alive=True`` on a successful spawn; the ``degraded``
-transition for an immediately-exiting launch command is already exercised
-by the fake-backend pipeline tests (T027) but is not yet *detected*
-against a live pane. The bench-container integration test bodies
-(``test_story1``) are the other T057b deliverable.
+**Status (T057b)**: fine-grained launch-exit detection (research §R8) is
+now wired. After a successful spawn the backend settles for
+``launch_probe_delay_s`` (1s by default) then queries ``#{pane_dead}``
+once via the new ``is_pane_dead`` adapter verb; a pane whose launch
+command has already exited reports ``launch_alive=False`` so the spawn
+task drives ``degraded`` / ``failed_stage=launch_command``. An
+indeterminate probe (docker-exec failure) is swallowed as "assume-alive"
+so it never spuriously downgrades a pane that genuinely spawned.
 """
 
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
@@ -65,6 +66,11 @@ BenchUserResolver = Callable[[str], str]
 DEFAULT_SOCKET_NAME = "default"
 DEFAULT_WINDOW_NAME = "agenttower"
 DEFAULT_SPLIT_DIRECTION = "h"
+
+# Research §R8: a launch command that exits within ~1s of spawn is a
+# failed launch (→ degraded / failed_stage=launch_command). After
+# spawning we settle for this long, then probe ``#{pane_dead}`` once.
+DEFAULT_LAUNCH_PROBE_DELAY_S = 1.0
 
 
 def _default_bench_user_resolver(
@@ -108,6 +114,40 @@ def _resolve_launch(
     return (), None, {}
 
 
+def _probe_launch_alive(
+    adapter: TmuxAdapter,
+    *,
+    container_id: str,
+    bench_user: str,
+    socket_path: str,
+    pane_id: str,
+    delay_s: float,
+    sleep_fn: Callable[[float], None],
+) -> bool:
+    """Research §R8 launch-exit probe: is the pane still alive after settle?
+
+    Settles for ``delay_s`` seconds (so an immediately-exiting launch
+    command has reset the pane to dead / destroyed) then queries
+    ``#{pane_dead}`` once. Returns ``True`` (alive) when ``delay_s <= 0``
+    (probe disabled) or when the probe itself raises a :class:`TmuxError`
+    — an indeterminate probe must not spuriously downgrade a pane that
+    genuinely spawned.
+    """
+    if delay_s <= 0:
+        return True
+    sleep_fn(delay_s)
+    try:
+        dead = adapter.is_pane_dead(
+            container_id=container_id,
+            bench_user=bench_user,
+            socket_path=socket_path,
+            pane_id=pane_id,
+        )
+    except TmuxError:
+        return True
+    return not dead
+
+
 # ─── Tmux spawn backend (T057) ──────────────────────────────────────────
 
 
@@ -120,6 +160,8 @@ def make_tmux_spawn_backend(
     socket_name: str = DEFAULT_SOCKET_NAME,
     window_name: str = DEFAULT_WINDOW_NAME,
     split_direction: str = DEFAULT_SPLIT_DIRECTION,
+    launch_probe_delay_s: float = DEFAULT_LAUNCH_PROBE_DELAY_S,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> TmuxSpawnFn:
     """Build a production ``TmuxSpawnFn`` over a FEAT-004 ``TmuxAdapter``.
 
@@ -133,11 +175,23 @@ def make_tmux_spawn_backend(
            For later panes: ``split-window`` against the session.
         4. Stamps the ``@MANAGED:<token>:<label>`` marker title on the
            new ``%N`` pane (FR-014 / research §R1).
-        5. Returns ``{ok, tmux_pane_id, launch_alive, socket_path}``.
+        5. Runs the research §R8 launch-exit probe: settles for
+           ``launch_probe_delay_s`` then queries ``#{pane_dead}`` once.
+           A pane that has already exited reports ``launch_alive=False``
+           so the spawn task drives ``degraded`` /
+           ``failed_stage=launch_command``.
+        6. Returns ``{ok, tmux_pane_id, launch_alive, socket_path}``.
 
     Any :class:`TmuxError` (or launch-profile ``ManagedSessionsError``)
     becomes ``{ok: False, error: {code, message}}`` so the spawn task can
     drive the ``failed_stage=pane_create`` transition.
+
+    The launch-exit probe is bypassed when ``launch_probe_delay_s <= 0``
+    (returns ``launch_alive=True`` immediately) — used by callers that
+    don't want the post-spawn settle. A probe that raises
+    :class:`TmuxError` (docker exec failure) is swallowed and treated as
+    ``launch_alive=True`` so a transient probe error never spuriously
+    downgrades a pane that actually spawned.
     """
     env_map = dict(env if env is not None else os.environ)
     resolve_bench_user = bench_user_resolver or _default_bench_user_resolver(env_map)
@@ -200,10 +254,20 @@ def make_tmux_spawn_backend(
                 title=marker_title,
             )
 
+            launch_alive = _probe_launch_alive(
+                adapter,
+                container_id=pane.container_id,
+                bench_user=bench_user,
+                socket_path=socket_path,
+                pane_id=tmux_pane_id,
+                delay_s=launch_probe_delay_s,
+                sleep_fn=sleep_fn,
+            )
+
             return {
                 "ok": True,
                 "tmux_pane_id": tmux_pane_id,
-                "launch_alive": True,  # T057b: live launch-exit detection
+                "launch_alive": launch_alive,
                 "socket_path": socket_path,
             }
         except ManagedSessionsError as exc:
@@ -348,6 +412,7 @@ def build_spawn_backends(
     bench_user_resolver: Optional[BenchUserResolver] = None,
     env: Optional[Mapping[str, str]] = None,
     profile_override_dir: Optional[Path] = None,
+    launch_probe_delay_s: float = DEFAULT_LAUNCH_PROBE_DELAY_S,
 ) -> dict[str, Any]:
     """Assemble the three concrete backends as the dict the daemon stores.
 
@@ -361,6 +426,7 @@ def build_spawn_backends(
             bench_user_resolver=bench_user_resolver,
             env=env,
             profile_override_dir=profile_override_dir,
+            launch_probe_delay_s=launch_probe_delay_s,
         ),
         "register": make_register_backend(
             agent_service,

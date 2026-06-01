@@ -348,3 +348,27 @@ class TmuxAdapter(Protocol):
         Raises :class:`TmuxError` on failure; callers treat a
         pane-already-gone signal as idempotent success.
         """
+
+    def is_pane_dead(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+    ) -> bool:
+        """Return whether ``pane_id``'s foreground process has exited.
+
+        Invokes ``docker exec ... tmux -S <socket> display-message -p -t
+        <pane_id> '#{pane_dead}'`` — the research §R8 launch-exit probe.
+        Returns ``True`` when tmux reports ``pane_dead == 1`` *or* when the
+        pane no longer exists (with tmux's default ``remain-on-exit off`` a
+        launch command that exits immediately destroys its pane, which
+        tmux reports as a "can't find pane" non-zero exit). Returns
+        ``False`` when the pane is alive (``pane_dead == 0``).
+
+        Raises :class:`TmuxError` only when ``docker exec`` itself fails;
+        the spawn backend treats such an indeterminate probe as
+        "assume-alive" so a transient probe error never spuriously
+        downgrades a freshly-spawned pane to ``degraded``.
+        """

@@ -357,6 +357,43 @@ class SubprocessTmuxAdapter(TmuxAdapter):
                 tmux_socket_path=socket_path,
             )
 
+    def is_pane_dead(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+    ) -> bool:
+        argv = self._argv(
+            "exec", *self._exec_env_args(),
+            "-u", bench_user, container_id,
+            "tmux", "-S", socket_path,
+            "display-message", "-p", "-t", pane_id, "#{pane_dead}",
+        )
+        completed = self._run(argv, container_id=container_id, socket_path=socket_path)
+        if completed.returncode == 0:
+            # `#{pane_dead}` is "1" for a dead (remain-on-exit) pane, "0"
+            # for a live one. Any other stdout is treated as alive.
+            return (completed.stdout or "").strip() == "1"
+        stderr = (completed.stderr or "").lower()
+        # A vanished pane is the common launch-exit signal (default
+        # remain-on-exit off destroys the pane when its process exits).
+        for pattern in self._PANE_DISAPPEARED_PATTERNS:
+            if pattern in stderr:
+                return True
+        # docker exec itself failed → indeterminate; let the caller
+        # assume-alive rather than spuriously downgrade the pane.
+        raise TmuxError(
+            code=_classify_tmux_failure(completed.stderr),
+            message=_bound(
+                f"tmux display-message #{{pane_dead}} exited "
+                f"{completed.returncode}: {completed.stderr.strip()}"
+            ),
+            container_id=container_id,
+            tmux_socket_path=socket_path,
+        )
+
     @staticmethod
     def _tmux_env_args(env: Mapping[str, str] | None) -> list[str]:
         """Build the ``-e KEY=VALUE`` argv items for a managed launch env.

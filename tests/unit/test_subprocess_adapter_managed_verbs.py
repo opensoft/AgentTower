@@ -133,3 +133,38 @@ def test_set_pane_title_and_kill_pane_target_pane_id() -> None:
         container_id="c1", bench_user="u", socket_path="/s", pane_id="%9",
     )
     assert "kill-pane" in calls2[0] and "%9" in calls2[0]
+
+
+def test_is_pane_dead_argv_queries_pane_dead_format() -> None:
+    adapter, calls = _adapter_with_run(0, stdout="0\n")
+    dead = adapter.is_pane_dead(
+        container_id="c1", bench_user="u", socket_path="/s", pane_id="%4",
+    )
+    assert dead is False
+    argv = calls[0]
+    assert "display-message" in argv and "-p" in argv
+    assert "%4" in argv and "#{pane_dead}" in argv
+
+
+def test_is_pane_dead_true_when_format_reports_one() -> None:
+    adapter, _ = _adapter_with_run(0, stdout="1\n")
+    assert adapter.is_pane_dead(
+        container_id="c1", bench_user="u", socket_path="/s", pane_id="%4",
+    ) is True
+
+
+def test_is_pane_dead_true_when_pane_vanished() -> None:
+    adapter, _ = _adapter_with_run(1, stderr="can't find pane: %4")
+    assert adapter.is_pane_dead(
+        container_id="c1", bench_user="u", socket_path="/s", pane_id="%4",
+    ) is True
+
+
+def test_is_pane_dead_raises_on_docker_exec_failure() -> None:
+    adapter, _ = _adapter_with_run(
+        1, stderr="Error response from daemon: no such container"
+    )
+    with pytest.raises(TmuxError):
+        adapter.is_pane_dead(
+            container_id="c1", bench_user="u", socket_path="/s", pane_id="%4",
+        )

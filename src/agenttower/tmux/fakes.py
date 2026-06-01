@@ -82,6 +82,11 @@ class FakeTmuxAdapter:
         self.has_session_failures: list["TmuxError"] = []
         self.set_pane_title_failures: list["TmuxError"] = []
         self.kill_pane_failures: list["TmuxError"] = []
+        self.is_pane_dead_failures: list["TmuxError"] = []
+        # Pane ids the R8 launch-exit probe should report as dead. Any
+        # pane id NOT in this set is reported alive (the default —
+        # interactive shells and long-running launch commands).
+        self.dead_pane_ids: set[str] = set()
         self.created_pane_ids: list[str] = []
         self._pane_counter = 0
 
@@ -459,6 +464,27 @@ class FakeTmuxAdapter:
         ))
         if self.kill_pane_failures:
             raise self.kill_pane_failures.pop(0)
+
+    def is_pane_dead(
+        self,
+        *,
+        container_id: str,
+        bench_user: str,
+        socket_path: str,
+        pane_id: str,
+    ) -> bool:
+        self.managed_calls.append((
+            "is_pane_dead",
+            {
+                "container_id": container_id,
+                "bench_user": bench_user,
+                "socket_path": socket_path,
+                "pane_id": pane_id,
+            },
+        ))
+        if self.is_pane_dead_failures:
+            raise self.is_pane_dead_failures.pop(0)
+        return pane_id in self.dead_pane_ids
 
 
 def _normalize_failure(

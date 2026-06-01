@@ -64,6 +64,10 @@ def _pane(
 
 
 def _backend(adapter: FakeTmuxAdapter, **kw):
+    # Default the §R8 launch-exit probe OFF so the spawn-composition
+    # tests don't sleep and don't add an ``is_pane_dead`` verb to the
+    # call log; the probe has its own dedicated tests below.
+    kw.setdefault("launch_probe_delay_s", 0.0)
     return make_tmux_spawn_backend(
         adapter=adapter,
         bench_user_resolver=lambda _cid: BENCH_USER,
@@ -174,7 +178,9 @@ def test_tmux_error_maps_to_ok_false() -> None:
 
 def test_default_bench_user_resolver_uses_env_user() -> None:
     adapter = _adapter()
-    spawn = make_tmux_spawn_backend(adapter=adapter, env={"USER": "alice"})
+    spawn = make_tmux_spawn_backend(
+        adapter=adapter, env={"USER": "alice"}, launch_probe_delay_s=0.0
+    )
 
     spawn(_pane(index=0, label="m1"))
 
@@ -198,6 +204,7 @@ def test_build_spawn_backends_returns_three_callable_keys() -> None:
         agent_service=_StubAgentService(),
         log_service=_StubLogService(),
         bench_user_resolver=lambda _cid: BENCH_USER,
+        launch_probe_delay_s=0.0,
     )
 
     assert set(backends) == {"tmux_spawn", "register", "log_attach"}
@@ -258,3 +265,60 @@ def test_register_backend_maps_socket_resolution_tmuxerror_to_ok_false() -> None
         "ok": False,
         "error": {"code": "docker_exec_failed", "message": "fake docker_exec_failed"},
     }
+
+
+# ─── §R8 launch-exit probe (T057b) ──────────────────────────────────────
+
+
+def test_launch_probe_disabled_skips_is_pane_dead_and_assumes_alive() -> None:
+    adapter = _adapter()
+    spawn = _backend(adapter, launch_probe_delay_s=0.0)
+
+    result = spawn(_pane(index=0, label="m1"))
+
+    assert result["launch_alive"] is True
+    assert "is_pane_dead" not in [name for name, _ in adapter.managed_calls]
+
+
+def test_launch_probe_reports_alive_when_pane_survives() -> None:
+    adapter = _adapter()
+    slept: list[float] = []
+    spawn = _backend(
+        adapter, launch_probe_delay_s=1.0, sleep_fn=slept.append
+    )
+
+    result = spawn(_pane(index=0, label="m1"))
+
+    # Settled for the §R8 window, probed exactly once, pane alive.
+    assert slept == [1.0]
+    assert result["launch_alive"] is True
+    probe_calls = [kw for name, kw in adapter.managed_calls if name == "is_pane_dead"]
+    assert len(probe_calls) == 1
+    assert probe_calls[0]["pane_id"] == "%0"
+    assert probe_calls[0]["socket_path"] == EXPECTED_SOCKET
+
+
+def test_launch_probe_reports_dead_drives_launch_alive_false() -> None:
+    adapter = _adapter()
+    # The spawned pane (%0) has already exited by probe time.
+    adapter.dead_pane_ids.add("%0")
+    spawn = _backend(adapter, launch_probe_delay_s=1.0, sleep_fn=lambda _s: None)
+
+    result = spawn(_pane(index=0, label="m1", launch_ref=None))
+
+    assert result["ok"] is True
+    assert result["launch_alive"] is False
+
+
+def test_launch_probe_tmuxerror_is_swallowed_as_alive() -> None:
+    adapter = _adapter()
+    adapter.is_pane_dead_failures.append(
+        TmuxError(code="docker_exec_failed", message="probe boom", container_id=CONTAINER)
+    )
+    spawn = _backend(adapter, launch_probe_delay_s=1.0, sleep_fn=lambda _s: None)
+
+    result = spawn(_pane(index=0, label="m1"))
+
+    # Indeterminate probe must not downgrade a pane that genuinely spawned.
+    assert result["ok"] is True
+    assert result["launch_alive"] is True
