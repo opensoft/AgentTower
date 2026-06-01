@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../domain/models/common_enums.dart';
 import 'onboarding_provider.dart';
 
@@ -17,56 +18,62 @@ import 'onboarding_provider.dart';
 class OnboardingFlow extends ConsumerWidget {
   const OnboardingFlow({super.key});
 
-  static const _milestoneCopy = {
-    OnboardingMilestone.daemonReachable: (
-      label: 'Connect to the daemon',
-      hint: 'Make sure `agenttowerd` is running on this host.',
-    ),
-    OnboardingMilestone.benchContainerCheck: (
-      label: 'See a bench container',
-      hint: 'Launch any bench container — it will appear in the Containers view.',
-    ),
-    OnboardingMilestone.paneDiscoveryCheck: (
-      label: 'See a tmux pane',
-      hint: 'Start a tmux pane inside the container — Panes view will list it.',
-    ),
-    OnboardingMilestone.firstPaneAdoption: (
-      label: 'Adopt your first pane',
-      hint: 'From Panes → Adopt, give the pane a label, role, and capability.',
-    ),
-    OnboardingMilestone.firstAgentRegistration: (
-      label: 'See your agent on the Agents view',
-      hint: 'The newly-adopted pane shows up as a registered agent.',
-    ),
-    OnboardingMilestone.firstLogAttachment: (
-      label: 'Attach a log',
-      hint: 'From the agent row, click "Attach log" — events start flowing.',
-    ),
-    OnboardingMilestone.firstDirectSend: (
-      label: 'Send your first prompt',
-      hint: 'Use the "Send" button on the agent row to push a prompt.',
-    ),
-    OnboardingMilestone.firstRouteCreation: (
-      label: 'Create your first route',
-      hint: 'From Routes → Add route, wire one event class to a target.',
-    ),
-  };
+  static String _milestoneLabel(AppLocalizations l10n, OnboardingMilestone m) =>
+      switch (m) {
+        OnboardingMilestone.daemonReachable =>
+          l10n.onboardingMilestoneDaemonReachableLabel,
+        OnboardingMilestone.benchContainerCheck =>
+          l10n.onboardingMilestoneBenchContainerLabel,
+        OnboardingMilestone.paneDiscoveryCheck =>
+          l10n.onboardingMilestonePaneDiscoveryLabel,
+        OnboardingMilestone.firstPaneAdoption =>
+          l10n.onboardingMilestoneFirstPaneAdoptionLabel,
+        OnboardingMilestone.firstAgentRegistration =>
+          l10n.onboardingMilestoneFirstAgentRegistrationLabel,
+        OnboardingMilestone.firstLogAttachment =>
+          l10n.onboardingMilestoneFirstLogAttachmentLabel,
+        OnboardingMilestone.firstDirectSend =>
+          l10n.onboardingMilestoneFirstDirectSendLabel,
+        OnboardingMilestone.firstRouteCreation =>
+          l10n.onboardingMilestoneFirstRouteCreationLabel,
+      };
+
+  static String _milestoneHint(AppLocalizations l10n, OnboardingMilestone m) =>
+      switch (m) {
+        OnboardingMilestone.daemonReachable =>
+          l10n.onboardingMilestoneDaemonReachableHint,
+        OnboardingMilestone.benchContainerCheck =>
+          l10n.onboardingMilestoneBenchContainerHint,
+        OnboardingMilestone.paneDiscoveryCheck =>
+          l10n.onboardingMilestonePaneDiscoveryHint,
+        OnboardingMilestone.firstPaneAdoption =>
+          l10n.onboardingMilestoneFirstPaneAdoptionHint,
+        OnboardingMilestone.firstAgentRegistration =>
+          l10n.onboardingMilestoneFirstAgentRegistrationHint,
+        OnboardingMilestone.firstLogAttachment =>
+          l10n.onboardingMilestoneFirstLogAttachmentHint,
+        OnboardingMilestone.firstDirectSend =>
+          l10n.onboardingMilestoneFirstDirectSendHint,
+        OnboardingMilestone.firstRouteCreation =>
+          l10n.onboardingMilestoneFirstRouteCreationHint,
+      };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final completed = ref.watch(onboardingProgressProvider);
     final notifier = ref.read(onboardingProgressProvider.notifier);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Onboarding'),
+        title: Text(l10n.onboardingTitle),
         actions: [
           TextButton(
             onPressed: () {
               notifier.skip();
               Navigator.of(context).maybePop();
             },
-            child: const Text('Skip'),
+            child: Text(l10n.onboardingSkip),
           ),
         ],
       ),
@@ -74,9 +81,7 @@ class OnboardingFlow extends ConsumerWidget {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            'Walk through these 8 milestones to confirm AgentTower is wired '
-            'end-to-end on this machine. Each step ticks itself the moment we '
-            'detect it — you never need to manually mark progress.',
+            l10n.onboardingIntro,
             style: Theme.of(context).textTheme.bodyLarge,
           ),
           const SizedBox(height: 16),
@@ -84,8 +89,8 @@ class OnboardingFlow extends ConsumerWidget {
             _MilestoneTile(
               milestone: m,
               completed: completed.contains(m),
-              label: _milestoneCopy[m]!.label,
-              hint: _milestoneCopy[m]!.hint,
+              label: _milestoneLabel(l10n, m),
+              hint: _milestoneHint(l10n, m),
             ),
         ],
       ),

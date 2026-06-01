@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../l10n/app_localizations.dart';
+
 /// Global command palette opened with Ctrl/Cmd+K. T035 + research R-20.
 ///
 /// Per FR-075 + R-20, the palette MUST cover at minimum:
@@ -122,6 +124,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final all = ref.watch(commandRegistryProvider);
     final filtered = _query.isEmpty
         ? all
@@ -136,9 +139,9 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
             child: TextField(
               controller: _controller,
               autofocus: true,
-              decoration: const InputDecoration(
-                hintText: 'Type a command…',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                hintText: l10n.commandPaletteHint,
+                border: const OutlineInputBorder(),
               ),
             ),
           ),

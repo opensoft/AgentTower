@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/l10n/app_localizations.dart';
 import '../../domain/models/common_enums.dart';
 import 'onboarding_provider.dart';
 
@@ -18,6 +19,7 @@ class DashboardNudges extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
     final completed = ref.watch(onboardingProgressProvider);
     final pending = OnboardingMilestone.values.firstWhere(
       (m) => !completed.contains(m),
@@ -31,25 +33,36 @@ class DashboardNudges extends ConsumerWidget {
       color: scheme.secondaryContainer,
       child: ListTile(
         leading: const Icon(Icons.flag_outlined),
-        title: Text('Onboarding: ${_label(pending)}'),
+        title: Text(l10n.onboardingNudgeTitle(_label(l10n, pending))),
         subtitle: Text(
-          '${completed.length} of ${OnboardingMilestone.values.length} '
-          'milestones complete',
+          l10n.onboardingNudgeProgress(
+            completed.length,
+            OnboardingMilestone.values.length,
+          ),
         ),
-        trailing: const Chip(label: Text('onboarding')),
+        trailing: Chip(label: Text(l10n.onboardingNudgeChipLabel)),
         onTap: () => Navigator.of(context).pushNamed('/onboarding'),
       ),
     );
   }
 
-  static String _label(OnboardingMilestone m) => switch (m) {
-        OnboardingMilestone.daemonReachable => 'Connect to the daemon',
-        OnboardingMilestone.benchContainerCheck => 'See a bench container',
-        OnboardingMilestone.paneDiscoveryCheck => 'See a tmux pane',
-        OnboardingMilestone.firstPaneAdoption => 'Adopt your first pane',
-        OnboardingMilestone.firstAgentRegistration => 'See agent in Agents view',
-        OnboardingMilestone.firstLogAttachment => 'Attach a log',
-        OnboardingMilestone.firstDirectSend => 'Send your first prompt',
-        OnboardingMilestone.firstRouteCreation => 'Create your first route',
+  static String _label(AppLocalizations l10n, OnboardingMilestone m) =>
+      switch (m) {
+        OnboardingMilestone.daemonReachable =>
+          l10n.onboardingNudgeLabelDaemonReachable,
+        OnboardingMilestone.benchContainerCheck =>
+          l10n.onboardingNudgeLabelBenchContainer,
+        OnboardingMilestone.paneDiscoveryCheck =>
+          l10n.onboardingNudgeLabelPaneDiscovery,
+        OnboardingMilestone.firstPaneAdoption =>
+          l10n.onboardingNudgeLabelFirstPaneAdoption,
+        OnboardingMilestone.firstAgentRegistration =>
+          l10n.onboardingNudgeLabelFirstAgentRegistration,
+        OnboardingMilestone.firstLogAttachment =>
+          l10n.onboardingNudgeLabelFirstLogAttachment,
+        OnboardingMilestone.firstDirectSend =>
+          l10n.onboardingNudgeLabelFirstDirectSend,
+        OnboardingMilestone.firstRouteCreation =>
+          l10n.onboardingNudgeLabelFirstRouteCreation,
       };
 }

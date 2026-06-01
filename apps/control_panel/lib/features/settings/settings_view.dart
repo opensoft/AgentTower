@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/daemon/contract_version.dart';
+import '../../core/l10n/app_localizations.dart';
 import '../../core/persistence/paths.dart';
 import '../../core/providers.dart';
 import '../../core/update/release_feed_check.dart';
@@ -75,13 +76,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final settings = ref.watch(settingsProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(l10n.settingsTitle)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _SectionHeader('Display', key: _displayKey),
+          _SectionHeader(l10n.settingsGroupDisplay, key: _displayKey),
           _ThemeSelector(value: settings.theme, onChanged: (v) {
             ref.read(settingsProvider.notifier).update(
                   (s) => s.copyWith(theme: v),
@@ -94,14 +96,11 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           }),
           const Divider(height: 32),
 
-          _SectionHeader('Notifications', key: _notificationsKey),
+          _SectionHeader(l10n.settingsGroupNotifications,
+              key: _notificationsKey),
           SwitchListTile(
-            title: const Text('Group similar notifications'),
-            subtitle: const Text(
-              'FR-057: collapse N ≥ 3 consecutive low-severity '
-              'notifications sharing event_class + agent_id within '
-              '60 s. High and critical never grouped.',
-            ),
+            title: Text(l10n.settingsGroupSimilarLabel),
+            subtitle: Text(l10n.settingsGroupSimilarSubtitle),
             value: settings.notificationsGrouping,
             onChanged: (v) =>
                 ref.read(settingsProvider.notifier).update(
@@ -109,11 +108,8 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                     ),
           ),
           SwitchListTile(
-            title: const Text('OS-native notifications'),
-            subtitle: const Text(
-              'FR-058: opt-in. When enabled, the app may fire a '
-              'system notification for high/critical severities.',
-            ),
+            title: Text(l10n.settingsOsNativeLabel),
+            subtitle: Text(l10n.settingsOsNativeSubtitle),
             value: settings.osNativeNotifications,
             onChanged: (v) =>
                 ref.read(settingsProvider.notifier).update(
@@ -122,7 +118,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           ),
           const Divider(height: 32),
 
-          _SectionHeader('Connection', key: _connectionKey),
+          _SectionHeader(l10n.settingsGroupConnection, key: _connectionKey),
           _SocketPathField(
             value: settings.daemonSocketPath,
             onChanged: (v) =>
@@ -136,13 +132,10 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const VersionDisplayTile(),
           const Divider(height: 32),
 
-          _SectionHeader('Privacy + diagnostics', key: _privacyKey),
+          _SectionHeader(l10n.settingsGroupPrivacy, key: _privacyKey),
           SwitchListTile(
-            title: const Text('Debug logging'),
-            subtitle: const Text(
-              'R-26: when enabled, debug-level events are written '
-              'to the rotating log file. Always local, never uploaded.',
-            ),
+            title: Text(l10n.settingsDebugLoggingLabel),
+            subtitle: Text(l10n.settingsDebugLoggingSubtitle),
             value: settings.debugLogging,
             onChanged: (v) =>
                 ref.read(settingsProvider.notifier).update(
@@ -151,27 +144,20 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           ),
           ListTile(
             leading: const Icon(Icons.folder_open),
-            title: const Text('Open log folder'),
-            subtitle: const Text('FR-074: rotating log file location.'),
+            title: Text(l10n.settingsOpenLogFolder),
+            subtitle: Text(l10n.settingsOpenLogFolderSubtitle),
             onTap: () => _onOpenLogFolder(context, ref),
           ),
           ListTile(
             leading: const Icon(Icons.archive),
-            title: const Text('Copy diagnostics bundle'),
-            subtitle: const Text(
-              'FR-074 + R-31: zips logs (redacted) + doctor report + '
-              'context. Operator picks save destination via OS picker.',
-            ),
+            title: Text(l10n.settingsCopyDiagnostics),
+            subtitle: Text(l10n.settingsCopyDiagnosticsSubtitle),
             onTap: () => _onCopyDiagnostics(context, ref),
           ),
           ListTile(
             leading: const Icon(Icons.medical_services_outlined),
-            title: const Text('Run doctor / preflight'),
-            subtitle: const Text(
-              'FR-009: six checks (socket reachable, peer UID, '
-              'contract version, app-data writable, log file '
-              'writable, OS notification permission).',
-            ),
+            title: Text(l10n.settingsRunDoctor),
+            subtitle: Text(l10n.settingsRunDoctorSubtitle),
             onTap: () => _onRunDoctor(context, ref),
           ),
         ],
@@ -185,6 +171,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
   }
 
   Future<void> _onCopyDiagnostics(BuildContext context, WidgetRef ref) async {
+    final l10n = AppLocalizations.of(context);
     final paths = ref.read(appPathsProvider);
     final doctor = await _runDoctor(ref, paths);
     // Round-3 analyze I1: read live app version + daemon contract
@@ -209,7 +196,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     await showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Diagnostics bundle preview'),
+        title: Text(l10n.settingsDiagnosticsPreviewTitle),
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
@@ -222,19 +209,19 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(l10n.settingsClose),
           ),
           FilledButton(
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: previewText));
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Bundle preview copied')),
+                  SnackBar(content: Text(l10n.settingsBundlePreviewCopied)),
                 );
                 Navigator.of(context).pop();
               }
             },
-            child: const Text('Copy preview to clipboard'),
+            child: Text(l10n.settingsCopyPreviewToClipboard),
           ),
         ],
       ),
@@ -242,13 +229,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
   }
 
   Future<void> _onRunDoctor(BuildContext context, WidgetRef ref) async {
+    final l10n = AppLocalizations.of(context);
     final paths = ref.read(appPathsProvider);
     final report = await _runDoctor(ref, paths);
     if (!context.mounted) return;
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Doctor report'),
+        title: Text(l10n.settingsDoctorReportTitle),
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
@@ -261,7 +249,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(l10n.settingsClose),
           ),
         ],
       ),
@@ -297,12 +285,13 @@ class _ThemeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           const SizedBox(width: 16),
-          const Text('Theme'),
+          Text(l10n.settingsThemeLabel),
           const SizedBox(width: 24),
           for (final m in ThemeMode.values)
             Padding(
@@ -326,12 +315,13 @@ class _DensitySelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           const SizedBox(width: 16),
-          const Text('Density'),
+          Text(l10n.settingsDensityLabel),
           const SizedBox(width: 24),
           for (final m in DensityMode.values)
             Padding(
@@ -369,14 +359,14 @@ class _SocketPathFieldState extends State<_SocketPathField> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: TextField(
         controller: _ctrl,
-        decoration: const InputDecoration(
-          labelText: 'Daemon socket path',
-          helperText:
-              'FR-001: local Unix socket only. Restart required to apply.',
+        decoration: InputDecoration(
+          labelText: l10n.settingsDaemonSocketPathLabel,
+          helperText: l10n.settingsDaemonSocketPathHelper,
         ),
         onSubmitted: widget.onChanged,
       ),
@@ -392,15 +382,16 @@ class _ContractVersionDisplay extends ConsumerWidget {
     // Round-3 analyze I2: read live runtime contract-compat so
     // operators can diagnose mismatches from Settings instead of
     // having to navigate back to the Dashboard.
+    final l10n = AppLocalizations.of(context);
     final compat = ref.watch(runtimeStateProvider).contractCompat;
     final daemonV = compat?.daemonVersion.toString() ?? 'unknown';
     final appMin = compat?.appMinimum.toString() ?? '1.0';
     return ListTile(
       leading: const Icon(Icons.handshake_outlined),
-      title: const Text('Contract version'),
+      title: Text(l10n.settingsContractVersionLabel),
       subtitle: Text(
-        'Daemon advertises: $daemonV · App requires ≥ $appMin'
-        '${compat == null ? " (bootstrap pending or unreachable)" : ""}',
+        l10n.settingsContractVersionValue(daemonV, appMin) +
+            (compat == null ? l10n.settingsContractVersionBootstrapPending : ''),
       ),
     );
   }

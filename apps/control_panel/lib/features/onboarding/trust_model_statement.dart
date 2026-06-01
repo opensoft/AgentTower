@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_localizations.dart';
+
 /// First-launch trust-model statement. T080 (Phase 3 US1) + FR-061.
 ///
 /// Verbatim statement of the local-only trust boundary so an operator
@@ -18,48 +20,29 @@ class TrustModelStatement extends StatelessWidget {
   /// statement is dropped into Settings → Privacy.
   final bool embedded;
 
-  static const _body = '''
-AgentTower runs entirely on this machine.
-
-  • The desktop app talks to the daemon over a local Unix socket.
-    There is no network listener and no remote service.
-  • The daemon and the desktop app both run as your OS user. File
-    permissions on the socket inherit from the per-user app-data
-    directory, so only your OS account can connect.
-
-    A separate peer-UID handshake that VERIFIES the daemon's reported
-    user against your process's UID is on the roadmap (Settings →
-    Doctor → "Peer-UID verification" currently reports "skipped" with
-    a pointer to the task that lands it). Until that ships, the
-    socket-permissions-only barrier is what gates remote access on
-    this machine.
-  • The app's only outbound network call is a once-per-launch fetch
-    of `releases.opensoft.one/.../latest.json` to see whether a newer
-    Control Panel is published. The release-feed URL is hard-coded to
-    HTTPS, follows no redirects, and never sends a session token.
-  • No telemetry, no analytics, no log upload. Diagnostics bundles
-    are saved only to a folder you pick.
-''';
-
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final body = Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Local-only trust',
+            l10n.onboardingTrustLocalOnlyHeading,
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 12),
-          Text(_body, style: Theme.of(context).textTheme.bodyLarge),
+          Text(
+            l10n.onboardingTrustStatementBody,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
         ],
       ),
     );
     if (embedded) return body;
     return Scaffold(
-      appBar: AppBar(title: const Text('Trust model')),
+      appBar: AppBar(title: Text(l10n.onboardingTrustModel)),
       body: body,
     );
   }

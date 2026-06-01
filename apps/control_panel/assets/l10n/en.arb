@@ -3004,5 +3004,268 @@
     "placeholders": {
       "hint": { "type": "String" }
     }
+  },
+  "onboardingTitle": "Onboarding",
+  "@onboardingTitle": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingSkip": "Skip",
+  "@onboardingSkip": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingIntro": "Walk through these 8 milestones to confirm AgentTower is wired end-to-end on this machine. Each step ticks itself the moment we detect it — you never need to manually mark progress.",
+  "@onboardingIntro": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneDaemonReachableLabel": "Connect to the daemon",
+  "@onboardingMilestoneDaemonReachableLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneDaemonReachableHint": "Make sure `agenttowerd` is running on this host.",
+  "@onboardingMilestoneDaemonReachableHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneBenchContainerLabel": "See a bench container",
+  "@onboardingMilestoneBenchContainerLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneBenchContainerHint": "Launch any bench container — it will appear in the Containers view.",
+  "@onboardingMilestoneBenchContainerHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestonePaneDiscoveryLabel": "See a tmux pane",
+  "@onboardingMilestonePaneDiscoveryLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestonePaneDiscoveryHint": "Start a tmux pane inside the container — Panes view will list it.",
+  "@onboardingMilestonePaneDiscoveryHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstPaneAdoptionLabel": "Adopt your first pane",
+  "@onboardingMilestoneFirstPaneAdoptionLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstPaneAdoptionHint": "From Panes → Adopt, give the pane a label, role, and capability.",
+  "@onboardingMilestoneFirstPaneAdoptionHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstAgentRegistrationLabel": "See your agent on the Agents view",
+  "@onboardingMilestoneFirstAgentRegistrationLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstAgentRegistrationHint": "The newly-adopted pane shows up as a registered agent.",
+  "@onboardingMilestoneFirstAgentRegistrationHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstLogAttachmentLabel": "Attach a log",
+  "@onboardingMilestoneFirstLogAttachmentLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstLogAttachmentHint": "From the agent row, click \"Attach log\" — events start flowing.",
+  "@onboardingMilestoneFirstLogAttachmentHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstDirectSendLabel": "Send your first prompt",
+  "@onboardingMilestoneFirstDirectSendLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstDirectSendHint": "Use the \"Send\" button on the agent row to push a prompt.",
+  "@onboardingMilestoneFirstDirectSendHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstRouteCreationLabel": "Create your first route",
+  "@onboardingMilestoneFirstRouteCreationLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingMilestoneFirstRouteCreationHint": "From Routes → Add route, wire one event class to a target.",
+  "@onboardingMilestoneFirstRouteCreationHint": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingTrustModel": "Trust model",
+  "@onboardingTrustModel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingTrustLocalOnlyHeading": "Local-only trust",
+  "@onboardingTrustLocalOnlyHeading": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingTrustStatementBody": "AgentTower runs entirely on this machine.\n\n  • The desktop app talks to the daemon over a local Unix socket.\n    There is no network listener and no remote service.\n  • The daemon and the desktop app both run as your OS user. File\n    permissions on the socket inherit from the per-user app-data\n    directory, so only your OS account can connect.\n\n    A separate peer-UID handshake that VERIFIES the daemon's reported\n    user against your process's UID is on the roadmap (Settings →\n    Doctor → \"Peer-UID verification\" currently reports \"skipped\" with\n    a pointer to the task that lands it). Until that ships, the\n    socket-permissions-only barrier is what gates remote access on\n    this machine.\n  • The app's only outbound network call is a once-per-launch fetch\n    of `releases.opensoft.one/.../latest.json` to see whether a newer\n    Control Panel is published. The release-feed URL is hard-coded to\n    HTTPS, follows no redirects, and never sends a session token.\n  • No telemetry, no analytics, no log upload. Diagnostics bundles\n    are saved only to a folder you pick.\n",
+  "@onboardingTrustStatementBody": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeTitle": "Onboarding: {label}",
+  "@onboardingNudgeTitle": {
+    "description": "Onboarding surface (T182 FR-067).",
+    "placeholders": {
+      "label": { "type": "String" }
+    }
+  },
+  "onboardingNudgeProgress": "{completed} of {total} milestones complete",
+  "@onboardingNudgeProgress": {
+    "description": "Onboarding surface (T182 FR-067).",
+    "placeholders": {
+      "completed": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "onboardingNudgeChipLabel": "onboarding",
+  "@onboardingNudgeChipLabel": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelDaemonReachable": "Connect to the daemon",
+  "@onboardingNudgeLabelDaemonReachable": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelBenchContainer": "See a bench container",
+  "@onboardingNudgeLabelBenchContainer": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelPaneDiscovery": "See a tmux pane",
+  "@onboardingNudgeLabelPaneDiscovery": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelFirstPaneAdoption": "Adopt your first pane",
+  "@onboardingNudgeLabelFirstPaneAdoption": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelFirstAgentRegistration": "See agent in Agents view",
+  "@onboardingNudgeLabelFirstAgentRegistration": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelFirstLogAttachment": "Attach a log",
+  "@onboardingNudgeLabelFirstLogAttachment": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelFirstDirectSend": "Send your first prompt",
+  "@onboardingNudgeLabelFirstDirectSend": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "onboardingNudgeLabelFirstRouteCreation": "Create your first route",
+  "@onboardingNudgeLabelFirstRouteCreation": {
+    "description": "Onboarding surface (T182 FR-067)."
+  },
+  "commandPaletteHint": "Type a command…",
+  "@commandPaletteHint": {
+    "description": "Command palette search field hint (T182 FR-067)."
+  },
+  "settingsTitle": "Settings",
+  "@settingsTitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsGroupDisplay": "Display",
+  "@settingsGroupDisplay": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsGroupNotifications": "Notifications",
+  "@settingsGroupNotifications": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsGroupConnection": "Connection",
+  "@settingsGroupConnection": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsGroupPrivacy": "Privacy + diagnostics",
+  "@settingsGroupPrivacy": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsGroupSimilarLabel": "Group similar notifications",
+  "@settingsGroupSimilarLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsGroupSimilarSubtitle": "FR-057: collapse N ≥ 3 consecutive low-severity notifications sharing event_class + agent_id within 60 s. High and critical never grouped.",
+  "@settingsGroupSimilarSubtitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsOsNativeLabel": "OS-native notifications",
+  "@settingsOsNativeLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsOsNativeSubtitle": "FR-058: opt-in. When enabled, the app may fire a system notification for high/critical severities.",
+  "@settingsOsNativeSubtitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDebugLoggingLabel": "Debug logging",
+  "@settingsDebugLoggingLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDebugLoggingSubtitle": "R-26: when enabled, debug-level events are written to the rotating log file. Always local, never uploaded.",
+  "@settingsDebugLoggingSubtitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsOpenLogFolder": "Open log folder",
+  "@settingsOpenLogFolder": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsOpenLogFolderSubtitle": "FR-074: rotating log file location.",
+  "@settingsOpenLogFolderSubtitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsCopyDiagnostics": "Copy diagnostics bundle",
+  "@settingsCopyDiagnostics": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsCopyDiagnosticsSubtitle": "FR-074 + R-31: zips logs (redacted) + doctor report + context. Operator picks save destination via OS picker.",
+  "@settingsCopyDiagnosticsSubtitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsRunDoctor": "Run doctor / preflight",
+  "@settingsRunDoctor": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsRunDoctorSubtitle": "FR-009: six checks (socket reachable, peer UID, contract version, app-data writable, log file writable, OS notification permission).",
+  "@settingsRunDoctorSubtitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDiagnosticsPreviewTitle": "Diagnostics bundle preview",
+  "@settingsDiagnosticsPreviewTitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsClose": "Close",
+  "@settingsClose": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsBundlePreviewCopied": "Bundle preview copied",
+  "@settingsBundlePreviewCopied": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsCopyPreviewToClipboard": "Copy preview to clipboard",
+  "@settingsCopyPreviewToClipboard": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDoctorReportTitle": "Doctor report",
+  "@settingsDoctorReportTitle": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsThemeLabel": "Theme",
+  "@settingsThemeLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDensityLabel": "Density",
+  "@settingsDensityLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDaemonSocketPathLabel": "Daemon socket path",
+  "@settingsDaemonSocketPathLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsDaemonSocketPathHelper": "FR-001: local Unix socket only. Restart required to apply.",
+  "@settingsDaemonSocketPathHelper": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsContractVersionLabel": "Contract version",
+  "@settingsContractVersionLabel": {
+    "description": "Settings surface (T182 FR-067)."
+  },
+  "settingsContractVersionValue": "Daemon advertises: {daemon} · App requires ≥ {appMin}",
+  "@settingsContractVersionValue": {
+    "description": "Settings surface (T182 FR-067).",
+    "placeholders": {
+      "daemon": { "type": "String" },
+      "appMin": { "type": "String" }
+    }
+  },
+  "settingsContractVersionBootstrapPending": " (bootstrap pending or unreachable)",
+  "@settingsContractVersionBootstrapPending": {
+    "description": "Settings surface (T182 FR-067)."
   }
 }
