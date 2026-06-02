@@ -60,6 +60,12 @@ from agenttower.managed_sessions.state_machine import FailedStage, ManagedState
 from agenttower.state.schema import _apply_migration_v9
 
 
+# FEAT-013: app.managed_* now require an app-session token (FR-007); this
+# shared fixture installs a session and injects the token for APP_DISPATCH
+# managed calls so these pre-gate happy-path tests keep passing.
+pytestmark = pytest.mark.usefixtures("_managed_app_session")
+
+
 @pytest.fixture()
 def conn() -> sqlite3.Connection:
     c = sqlite3.connect(":memory:")

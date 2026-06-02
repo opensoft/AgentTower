@@ -193,8 +193,47 @@ def test_status_returns_documented_shape(tmp_path: Path) -> None:
         # audit writer wired, the blocks report the not-running defaults.
         "routing",
         "queue_audit",
+        # FEAT-013 — boot-recovery diagnostics (review P2#6). With no
+        # reconcile outcome on the context, reports the not-ran shape.
+        "managed_recovery",
     }
     assert set(result.keys()) == expected_keys
+    assert result["managed_recovery"] == {
+        "ran": False,
+        "layouts_examined": 0,
+        "panes_examined": 0,
+        "panes_reattached": 0,
+        "panes_failed": 0,
+        "panes_resumed_creating": 0,
+        "containers_skipped": 0,
+    }
+
+
+def test_status_surfaces_managed_recovery_outcome(tmp_path: Path) -> None:
+    """Review P2#6: when a reconcile outcome is recorded on the context,
+    ``status`` reports it — including ``containers_skipped`` so a degraded
+    boot recovery (a container whose list-panes RPC failed) is visible."""
+    from agenttower.managed_sessions.recovery import ReconcileOutcome
+
+    ctx = _ctx(tmp_path)
+    ctx.managed_reconcile_outcome = ReconcileOutcome(
+        layouts_examined=3,
+        panes_examined=9,
+        panes_reattached=5,
+        panes_failed=3,
+        panes_resumed_creating=1,
+        containers_skipped=2,
+    )
+    result = DISPATCH["status"](ctx, {})["result"]
+    assert result["managed_recovery"] == {
+        "ran": True,
+        "layouts_examined": 3,
+        "panes_examined": 9,
+        "panes_reattached": 5,
+        "panes_failed": 3,
+        "panes_resumed_creating": 1,
+        "containers_skipped": 2,
+    }
     assert result["routing"] == {
         # FEAT-009 — kill-switch shape.
         "value": None,

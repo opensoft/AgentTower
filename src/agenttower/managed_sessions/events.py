@@ -22,8 +22,13 @@ This module:
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import re
-from typing import Final
+from pathlib import Path
+from typing import Callable, Final, Optional
+
+
+_LOG = logging.getLogger(__name__)
 
 
 # ─── 12-entry event-type catalog (research §R11) ────────────────────────
@@ -174,3 +179,48 @@ def build_event(
         "payload": dict(payload) if payload else {},
         "timestamp": _utc_now_rfc3339(),
     }
+
+
+def make_managed_event_emitter(
+    events_file: Optional[Path],
+) -> Optional[Callable[[dict[str, object]], None]]:
+    """Build the JSONL-append event emitter the service expects (T032).
+
+    The managed service entry points (``create_layout`` / ``remove_pane`` /
+    ``recreate_pane`` / ``spawn_layout_in_background`` / ``reconcile``) take
+    an ``Optional[event_emitter]`` and call ``event_emitter(build_event(...))``.
+    This binds that callable to the daemon's FEAT-008 JSONL events file via
+    :func:`agenttower.events.writer.append_event` — the production write
+    site that closes the FR-015 "MUST emit observable lifecycle events" gap
+    (the handlers previously passed no emitter, so events were never
+    persisted).
+
+    Returns ``None`` when ``events_file`` is ``None`` so callers can pass
+    the result straight through to the service's optional parameter (tests
+    that own no events file get the historical no-emit behaviour).
+
+    Writes are **best-effort**: an ``OSError`` from the events pipeline is
+    logged and swallowed. The durable SQLite row is the source of truth for
+    lifecycle state; the JSONL stream is the observable audit surface, and a
+    transient events-file write failure must not fail an operator's
+    layout/pane mutation.
+    """
+    if events_file is None:
+        return None
+
+    from ..events.writer import append_event
+
+    def _emit(envelope: dict[str, object]) -> None:
+        try:
+            append_event(events_file, envelope)
+        except OSError:
+            _LOG.warning(
+                "managed_sessions: failed to append lifecycle event "
+                "type=%s layout=%s pane=%s",
+                envelope.get("event_type"),
+                envelope.get("layout_id"),
+                envelope.get("pane_id"),
+                exc_info=True,
+            )
+
+    return _emit

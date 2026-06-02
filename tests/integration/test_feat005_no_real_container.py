@@ -34,7 +34,10 @@ class TestDispatchTableCardinality:
         list/detail read pairs, the adopt mutation, and the operator
         mutations (agent.update, log.attach/detach, send_input,
         queue.*, route.*).
-        This test pins the closed FEAT-001..011 set so an accidental
+        FEAT-013 adds 16 more (managed-session lifecycle): the 8 legacy
+        ``managed.*`` CLI methods (M1–M8) and their 8 ``app.managed_*``
+        twins.
+        This test pins the closed FEAT-001..013 set so an accidental
         extra method cannot sneak in beyond the spec'd surface.
         """
         from agenttower.socket_api import methods as methods_module
@@ -114,8 +117,26 @@ class TestDispatchTableCardinality:
             "app.route.add",
             "app.route.remove",
             "app.route.update",
+            # FEAT-013 managed-session lifecycle — 8 legacy ``managed.*``
+            # CLI methods (M1–M8) + their 8 ``app.managed_*`` twins.
+            "managed.layout.create",
+            "managed.layout.list",
+            "managed.layout.detail",
+            "managed.pane.list",
+            "managed.pane.detail",
+            "managed.pane.remove",
+            "managed.pane.recreate",
+            "managed.pane.promote_from_adopted",
+            "app.managed_layout_create",
+            "app.managed_layout_list",
+            "app.managed_layout_detail",
+            "app.managed_pane_list",
+            "app.managed_pane_detail",
+            "app.managed_pane_remove",
+            "app.managed_pane_recreate",
+            "app.managed_pane_promote_from_adopted",
         }, f"unexpected method count: {sorted(dispatch.keys())}"
-        assert len(dispatch) == 67
+        assert len(dispatch) == 83
 
 
 # ---------------------------------------------------------------------------

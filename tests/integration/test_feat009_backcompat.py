@@ -84,8 +84,14 @@ def test_backcompat_status_json_keeps_feat002_through_008_keys(daemon) -> None:
     assert not missing, f"FEAT-008 keys missing: {missing}"
     missing = feat_009_keys - set(result.keys())
     assert not missing, f"FEAT-009 additive keys missing: {missing}"
-    # Schema bumped to 7.
-    assert result["schema_version"] == 7
+    # Backcompat is about additive growth: the schema version only ever
+    # moves forward. It was 7 at FEAT-009; FEAT-013 bumped it to 9. Pin to
+    # the current build constant rather than a stale literal so the
+    # backcompat intent (keys preserved as schema grows) keeps holding.
+    from agenttower.state.schema import CURRENT_SCHEMA_VERSION
+
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert result["schema_version"] >= 7  # never regresses below FEAT-009
 
 
 # ──────────────────────────────────────────────────────────────────────

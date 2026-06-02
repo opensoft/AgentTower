@@ -1092,15 +1092,17 @@ def remove_pane(
     2. ``managed_pane_illegal_transition`` if the pane is in
        ``creating`` (FR-018: cancellation of in-flight create is out
        of scope; operator must wait or use recreate after failure).
-    3. ``tmux kill-pane`` via ``tmux_kill_fn``; idempotent — backend
+    3. Durable-first (review P2#5): transition state to ``removed`` (+
+       layout aggregate) and COMMIT before the irreversible side effects,
+       so a crash cannot persist a dead pane under a still-live row.
+    4. ``tmux kill-pane`` via ``tmux_kill_fn``; idempotent — backend
        returning ``{ok: False, error.code == 'tmux_pane_not_found'}``
        counts as success because the operator intent ("the pane is
        gone") is satisfied either way.
-    4. Cleanup hooks (routes via FEAT-010, log detach via FEAT-007) are
+    5. Cleanup hooks (routes via FEAT-010, log detach via FEAT-007) are
        best-effort — failures are tolerated because the pane row is
-       being archived regardless. Production wiring threads these
-       through the daemon's RoutesService + LogService.
-    5. Transition state to ``removed``; emit
+       already archived. Production wiring threads these through the
+       daemon's RoutesService + LogService. Then emit the
        ``managed_pane_removed`` lifecycle event.
     """
     with tx_guard(tx_lock):
@@ -1137,35 +1139,24 @@ def remove_pane(
 
     lock = serializer.for_container(pane.container_id)
     with lock:
-        # 3. tmux kill-pane (best-effort idempotent).
-        tmux_ok = True
-        if tmux_kill_fn is not None:
-            kill_result = tmux_kill_fn(pane)
-            tmux_ok = bool(kill_result.get("ok"))
-            # ``tmux_pane_not_found`` is a synonym for "already gone";
-            # treat as success.
-            if not tmux_ok:
-                err = kill_result.get("error", {})
-                if isinstance(err, dict) and err.get("code") == "tmux_pane_not_found":
-                    tmux_ok = True
-
-        # 4. Best-effort cleanup (failures logged but ignored).
-        if route_cleanup_fn is not None:
-            try:
-                route_cleanup_fn(pane)
-            except Exception:  # noqa: BLE001 — defensive: cleanup is best-effort
-                pass
-        if log_detach_fn is not None:
-            try:
-                log_detach_fn(pane)
-            except Exception:  # noqa: BLE001 — defensive
-                pass
-
-        # 5. State transition + event. M1 fix: wrap the multi-row write
-        #    (pane state + layout state aggregation) in a single
-        #    BEGIN IMMEDIATE so a crash between them can't leave the
-        #    layout-row stale. The per-container lock already serializes
-        #    concurrent operators; the transaction adds crash atomicity.
+        # 3. Durable-first ordering (review P2#5). Commit the pane→removed
+        #    transition (+ layout aggregate) BEFORE the irreversible tmux
+        #    kill / route+log cleanup. The side effects are idempotent
+        #    (kill tolerates ``tmux_pane_not_found``; cleanup is
+        #    best-effort), so a crash AFTER commit just leaves them to be
+        #    re-run; a crash BEFORE commit leaves the row in its prior,
+        #    recoverable state. The old order ran the kill first, so a
+        #    crash between kill and commit persisted a DEAD pane under a
+        #    still-``ready``/``degraded`` row that boot recovery then
+        #    mislabeled ``failed`` — losing the operator's removal intent.
+        #    (Residual: a crash in the brief window after commit but before
+        #    the kill can orphan a live tmux pane under a ``removed`` row;
+        #    that is a minor cleanup leak, strictly preferable to a dead
+        #    pane masquerading as live, and resolvable by a later op.)
+        #
+        #    M1 fix retained: wrap the multi-row write (pane state + layout
+        #    aggregation) in a single BEGIN IMMEDIATE so a crash between
+        #    them can't leave the layout-row stale.
         now = _utc_now_rfc3339(clock)
         prior_state = pane.state
         new_layout_state: Optional[ManagedState] = None
@@ -1210,8 +1201,34 @@ def remove_pane(
                     pass
                 raise
 
-        # Events emit AFTER the write commits so a partial-commit can't
-        # surface a state-change event for state that never landed.
+        # 4. Now run the irreversible, idempotent side effects — AFTER the
+        #    durable ``removed`` state is committed.
+        tmux_ok = True
+        if tmux_kill_fn is not None:
+            kill_result = tmux_kill_fn(pane)
+            tmux_ok = bool(kill_result.get("ok"))
+            # ``tmux_pane_not_found`` is a synonym for "already gone";
+            # treat as success.
+            if not tmux_ok:
+                err = kill_result.get("error", {})
+                if isinstance(err, dict) and err.get("code") == "tmux_pane_not_found":
+                    tmux_ok = True
+
+        # 5. Best-effort cleanup (failures logged but ignored).
+        if route_cleanup_fn is not None:
+            try:
+                route_cleanup_fn(pane)
+            except Exception:  # noqa: BLE001 — defensive: cleanup is best-effort
+                pass
+        if log_detach_fn is not None:
+            try:
+                log_detach_fn(pane)
+            except Exception:  # noqa: BLE001 — defensive
+                pass
+
+        # Events emit AFTER the write commits + side effects so a
+        # partial-commit can't surface a state-change event for state that
+        # never landed.
         if event_emitter is not None:
             event_emitter(
                 build_event(

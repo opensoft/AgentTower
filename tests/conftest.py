@@ -155,3 +155,52 @@ def _isolate_test_seams(
     monkeypatch.delenv(AGENTTOWER_TEST_ROUTING_CLOCK_FAKE, raising=False)
     monkeypatch.delenv(AGENTTOWER_TEST_DELIVERY_TICK, raising=False)
     yield
+
+
+# FEAT-013 — the ``app.managed_*`` handlers now run the FEAT-011
+# host-only + app-session gate (FR-007/FR-042) at the top of every
+# method (security fix: operator mutations must carry a valid
+# ``app_session_token``). Pre-existing managed contract/integration
+# tests drive ``APP_DISPATCH["app.managed_*"]`` with host peers but no
+# token, which now (correctly) returns ``app_session_required``. This
+# opt-in fixture restores those happy-path tests by (a) installing a
+# fresh session registry with one valid session and (b) wrapping the 8
+# managed dispatch entries so they inject that session's token into
+# ``params`` when the caller omitted one. Tests that exercise the gate
+# itself bypass this by calling the handler functions directly (not via
+# APP_DISPATCH) or by passing an explicit token. Opt in per-module with
+# ``pytestmark = pytest.mark.usefixtures("_managed_app_session")``.
+
+
+@pytest.fixture()
+def _managed_app_session() -> "Iterator[str]":
+    from agenttower.app_contract import sessions as _sessions
+    from agenttower.app_contract.dispatcher import APP_DISPATCH
+
+    registry = _sessions.SessionRegistry()
+    _sessions.set_registry(registry)
+    session = registry.create(
+        client_id="managed-test",
+        client_version="0",
+        client_app_contract_major=1,
+        host_user_id="0",
+    )
+    token = session.app_session_token
+
+    managed_methods = [m for m in APP_DISPATCH if m.startswith("app.managed_")]
+    originals = {m: APP_DISPATCH[m] for m in managed_methods}
+
+    def _wrap(orig):  # type: ignore[no-untyped-def]
+        def _wrapped(ctx, params, peer_uid=-1):  # type: ignore[no-untyped-def]
+            if isinstance(params, dict) and "app_session_token" not in params:
+                params = {**params, "app_session_token": token}
+            return orig(ctx, params, peer_uid)
+        return _wrapped
+
+    for method in managed_methods:
+        APP_DISPATCH[method] = _wrap(originals[method])
+    try:
+        yield token
+    finally:
+        for method, orig in originals.items():
+            APP_DISPATCH[method] = orig

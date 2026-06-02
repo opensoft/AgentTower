@@ -246,9 +246,19 @@ def _detail(conn, serializer, layout_id):  # noqa: ANN001
     os.environ["AGENTTOWER_TEST_FORCE_HOST_PEER"] = "1"
     try:
         from agenttower.socket_api.methods import _set_request_peer_context
+        from agenttower.app_contract import sessions as _sessions
         _set_request_peer_context(peer_pid=os.getpid())
+        # FEAT-013: app.managed_* now requires a valid app_session_token
+        # (FR-007). Install a fresh session and present its token.
+        _sessions.set_registry(_sessions.SessionRegistry())
+        token = _sessions.get_registry().create(
+            client_id="story1-test", client_version="0",
+            client_app_contract_major=1, host_user_id="0",
+        ).app_session_token
         ctx = SimpleNamespace(state_conn=conn, managed_serializer=serializer)
-        resp = app_managed_layout_detail(ctx, {"layout_id": layout_id}, 1000)
+        resp = app_managed_layout_detail(
+            ctx, {"app_session_token": token, "layout_id": layout_id}, 1000
+        )
         assert resp["ok"] is True
         return resp["result"]
     finally:

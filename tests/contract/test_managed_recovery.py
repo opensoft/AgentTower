@@ -389,6 +389,45 @@ def test_reconcile_is_idempotent_on_stable_tree(
     assert outcome.panes_failed == 0
 
 
+def test_reconcile_list_panes_failure_skips_container_and_counts_it(
+    conn: sqlite3.Connection, serializer: ContainerSerializer,
+    caplog,
+) -> None:
+    """Review P2#6/P2#7: a raising list-panes RPC must skip that container
+    (rows untouched), count it in ``containers_skipped``, and log the
+    exception class + message so the degraded boot recovery is
+    diagnosable rather than looking like 'nothing to recover'."""
+    import logging
+
+    layout_id, pane_ids = _seed_layout(conn)
+
+    def boom(container_id: str) -> list[dict]:
+        raise RuntimeError("docker daemon unreachable")
+
+    events: list[dict] = []
+    with caplog.at_level(logging.WARNING):
+        outcome = reconcile(
+            conn=conn, serializer=serializer,
+            tmux_list_panes_fn=boom,
+            event_emitter=events.append,
+        )
+
+    # Container skipped: no rows touched, no events, and the skip counted.
+    assert outcome.containers_skipped == 1
+    assert outcome.panes_failed == 0
+    assert outcome.panes_reattached == 0
+    assert events == []
+    for pid in pane_ids:
+        row = select_pane(conn, pid)
+        assert row.state == ManagedState.READY  # untouched
+
+    # Diagnostics: the warning carries the exception class + message.
+    assert any(
+        "RuntimeError" in rec.message and "docker daemon unreachable" in rec.message
+        for rec in caplog.records
+    ), [rec.message for rec in caplog.records]
+
+
 # ─── Removed layouts excluded ────────────────────────────────────────────
 
 

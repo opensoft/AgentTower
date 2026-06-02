@@ -32,11 +32,23 @@ Design
 ======
 
 We are in a threaded daemon (not asyncio). The per-attempt timeout
-uses ``concurrent.futures.ThreadPoolExecutor`` so the executor wraps
-the backend call in its own worker thread and supports cancellation.
-This keeps the surrounding ``spawn_layout_in_background`` thread free
-to return to its caller; we don't block by ``thread.join(timeout=N)``
-without an explicit cancellation channel.
+runs the backend call in a **daemon worker thread** that we join with
+``timeout_seconds``. If the join expires, we ABANDON the thread and
+return ``stage_timeout`` immediately — we do **not** wait for the hung
+worker to finish. This is the critical FR-013 property: the caller
+(``spawn_layout_in_background``) holds the per-container serializer
+lock, so blocking on a stuck tmux/register/log-attach backend would
+stall every later managed operation for that container. A daemon
+thread is the right primitive here: Python cannot forcibly kill a
+worker thread, but a daemon thread does not block interpreter exit,
+so an abandoned hung stage leaks at most one parked thread that the
+runtime reaps at shutdown.
+
+An earlier implementation used ``concurrent.futures.ThreadPoolExecutor``
+inside a ``with`` block; on timeout, exiting the context called
+``shutdown(wait=True)`` and the caller still blocked on the hung
+worker — defeating the timeout. The daemon-thread join below fixes
+that.
 
 The helper is generic over the backend callable shape: it takes a
 zero-argument ``Callable[[], dict[str, object]]`` and the stage name
@@ -48,7 +60,7 @@ arguments without leaking them through this helper's signature.
 
 from __future__ import annotations
 
-import concurrent.futures
+import threading
 import time
 from typing import Callable, Final
 
@@ -68,6 +80,48 @@ TRANSIENT_FAILURE_CODES: Final[tuple[str, ...]] = (
     # longer than ``TIMEOUT_SECONDS``, we retry per the spec.
     "stage_timeout",
 )
+
+
+def _run_with_timeout(
+    stage_call: Callable[[], dict[str, object]],
+    *,
+    timeout_seconds: float,
+    stage_name: str,
+) -> tuple[bool, dict[str, object] | None]:
+    """Run ``stage_call`` in a daemon thread bounded by ``timeout_seconds``.
+
+    Returns ``(timed_out, result)``:
+
+    - ``(False, result)`` — the call completed within budget; ``result``
+      is its return value.
+    - ``(True, None)`` — the join expired. The worker thread is
+      abandoned (daemon, so it cannot block interpreter exit); the
+      caller surfaces ``stage_timeout`` and moves on WITHOUT waiting.
+
+    An exception raised inside the worker is captured and re-raised on
+    the calling thread once the worker completes within budget — same
+    propagation semantics as ``future.result()``.
+    """
+    box: dict[str, object] = {}
+
+    def _worker() -> None:
+        try:
+            box["result"] = stage_call()
+        except BaseException as exc:  # noqa: BLE001 — re-raised on caller thread
+            box["exc"] = exc
+
+    worker = threading.Thread(
+        target=_worker, name=f"feat013-{stage_name}", daemon=True,
+    )
+    worker.start()
+    worker.join(timeout_seconds)
+    if worker.is_alive():
+        # Budget exceeded. Do not join further — abandon the daemon
+        # thread so the serializer-holding caller returns promptly.
+        return True, None
+    if "exc" in box:
+        raise box["exc"]  # type: ignore[misc]
+    return False, box.get("result")  # type: ignore[return-value]
 
 
 def _is_transient(result: dict[str, object]) -> bool:
@@ -129,39 +183,33 @@ def run_stage_with_retry(
     use_executor = timeout_seconds is not None and timeout_seconds > 0
     for attempt_idx in range(max_attempts):
         if use_executor:
-            # Per-attempt budget via a fresh ThreadPoolExecutor. We
-            # could reuse a single executor across attempts to save
-            # thread creation cost, but a stage retry is a rare path
-            # (transient failure) and per-attempt isolation is cheap
-            # insurance against thread-state leakage.
+            # Per-attempt budget via an abandonable daemon worker
+            # thread. On timeout we surface ``stage_timeout`` WITHOUT
+            # joining the hung worker, so the serializer-holding caller
+            # is never blocked past the budget (FR-013).
             assert timeout_seconds is not None  # narrowing for type-checker
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix=f"feat013-{stage_name}",
-            ) as executor:
-                future = executor.submit(stage_call)
-                try:
-                    result = future.result(timeout=timeout_seconds)
-                except concurrent.futures.TimeoutError:
-                    # The inner call exceeded the budget. The executor
-                    # cannot forcibly kill the worker thread — Python's
-                    # threading API doesn't expose that — but it shuts
-                    # down once the thread eventually completes.
-                    last_result = {
-                        "ok": False,
-                        "error": {
-                            "code": "stage_timeout",
-                            "message": (
-                                f"{stage_name} exceeded "
-                                f"{timeout_seconds:g}s per-attempt budget"
-                            ),
-                        },
-                    }
-                else:
-                    last_result = result
-                    if result.get("ok"):
-                        return result
-                    if not _is_transient(result):
-                        return result
+            timed_out, result = _run_with_timeout(
+                stage_call,
+                timeout_seconds=timeout_seconds,
+                stage_name=stage_name,
+            )
+            if timed_out or result is None:
+                last_result = {
+                    "ok": False,
+                    "error": {
+                        "code": "stage_timeout",
+                        "message": (
+                            f"{stage_name} exceeded "
+                            f"{timeout_seconds:g}s per-attempt budget"
+                        ),
+                    },
+                }
+            else:
+                last_result = result
+                if result.get("ok"):
+                    return result
+                if not _is_transient(result):
+                    return result
         else:
             # In-thread call — no timeout enforcement, no cross-thread
             # state issues. The default for tests + any caller that

@@ -19,15 +19,16 @@ from typing import TYPE_CHECKING, Any
 
 from ...app_contract import envelope as _envelope
 from ...app_contract.errors import (
-    HOST_ONLY,
     INTERNAL_ERROR,
     VALIDATION_FAILED,
 )
-# NOTE: host_only is imported lazily inside each handler — eagerly
-# importing it here triggers a circular import with socket_api.methods
-# (which itself imports APP_DISPATCH at module load to merge with the
-# legacy DISPATCH table). The pre-existing FEAT-011 handlers
-# (preflight.py, hello.py, sessions.py) use the same lazy pattern.
+# NOTE: the app_contract.sessions gate is imported lazily inside each
+# handler — eagerly importing it (or host_only) here triggers a circular
+# import with socket_api.methods (which itself imports APP_DISPATCH at
+# module load to merge with the legacy DISPATCH table). The pre-existing
+# FEAT-011 handlers (preflight.py, hello.py, sessions.py) use the same
+# lazy pattern. gate_session_required performs FR-042 host-only FIRST,
+# then the FR-007 app_session_token checks.
 from ..dao import (
     count_ready_panes_for_layout,
     count_ready_panes_for_layouts,
@@ -44,6 +45,8 @@ from ..errors import (
     MANAGED_PANE_NOT_FOUND,
     ManagedSessionsError,
 )
+from .._tx import tx_guard
+from ..events import make_managed_event_emitter
 from ..service import (
     ValidationFailedError,
     create_layout,
@@ -81,6 +84,24 @@ def _state_conn(ctx: "DaemonContext") -> sqlite3.Connection | None:
 
 def _serializer(ctx: "DaemonContext") -> Any:
     return getattr(ctx, "managed_serializer", None)
+
+
+def _tx_lock(ctx: "DaemonContext") -> Any:
+    """Shared worker tx-lock (``worker_tx_lock`` aliased as
+    ``state_tx_lock``). Reads on the shared ``ctx.state_conn`` MUST be
+    wrapped in ``with tx_guard(_tx_lock(ctx)):`` — the connection is the
+    same one FEAT-009/010 background workers mutate across threads, and
+    its contract requires all readers and writers to serialize through
+    this single lock (C1). ``None`` in tests yields a no-op guard."""
+    return getattr(ctx, "state_tx_lock", None)
+
+
+def _event_emitter(ctx: "DaemonContext"):  # noqa: ANN202
+    """FR-015 lifecycle-event emitter bound to the daemon's JSONL events
+    file (``ctx.events_file``), or ``None`` when no events file is wired
+    (test fixtures). Threaded into every service mutation so create /
+    remove / recreate actually persist their lifecycle events."""
+    return make_managed_event_emitter(getattr(ctx, "events_file", None))
 
 
 def _session_conflict_fn(ctx: "DaemonContext"):  # noqa: ANN202
@@ -129,17 +150,15 @@ def app_managed_layout_create(
        charset/length, FR-019 serializer, FR-025 capacity, FR-003 label
        uniqueness, and the template / launch-profile resolvers).
     """
-    # 1. Host-only gate.
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # 1. FR-007 + FR-042 gate: host-only AND app-session token.
+    #    gate_session_required rejects bench-container peers first
+    #    (host_only, details={} per FR-034a), then a missing token
+    #    (app_session_required), then a stale token (app_session_expired).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        # Per FR-034a, codes not in the FR-034 details registry MUST carry
-        # ``details == {}``. ``host_only`` is one of those codes.
-        return _envelope.failure(
-            HOST_ONLY,
-            "app.managed_layout_create is host-only",
-            details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
 
     if not isinstance(params, dict):
         params = {}
@@ -181,7 +200,9 @@ def app_managed_layout_create(
         return _envelope.failure(
             INTERNAL_ERROR, "daemon state_conn not wired", details={}
         )
-    if not _container_exists(conn, container_id):
+    with tx_guard(_tx_lock(ctx)):
+        container_known = _container_exists(conn, container_id)
+    if not container_known:
         # FEAT-013 closed-set code; the FEAT-011 envelope still validates
         # its shape against the FEAT-011 closed set, so we use
         # _envelope.failure's bypass via the raw shape rather than
@@ -213,6 +234,7 @@ def app_managed_layout_create(
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
             tmux_has_session_fn=_session_conflict_fn(ctx),
+            event_emitter=_event_emitter(ctx),
         )
         # C4 fix: kick off the bg spawn pipeline. No-op when
         # daemon-boot wiring is incomplete. Replay results skip
@@ -331,12 +353,12 @@ def _pane_row_to_payload(row: Any) -> dict[str, Any]:
 
 def app_managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_layout_list`` (M2)."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY, "app.managed_layout_list is host-only", details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     conn = _state_conn(ctx)
@@ -364,15 +386,16 @@ def app_managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
             VALIDATION_FAILED, "after cursor must be a string",
             details={"field": "after", "reason": "wrong type"},
         )
-    rows, next_cursor = list_layouts(
-        conn,
-        container_id=container_id if isinstance(container_id, str) else None,
-        state=state,
-        limit=int(limit) if isinstance(limit, int) else 50,
-        after=after,
-    )
-    # M8 fix: single aggregate query instead of one COUNT per layout.
-    ready_counts = count_ready_panes_for_layouts(conn, [r.id for r in rows])
+    with tx_guard(_tx_lock(ctx)):
+        rows, next_cursor = list_layouts(
+            conn,
+            container_id=container_id if isinstance(container_id, str) else None,
+            state=state,
+            limit=int(limit) if isinstance(limit, int) else 50,
+            after=after,
+        )
+        # M8 fix: single aggregate query instead of one COUNT per layout.
+        ready_counts = count_ready_panes_for_layouts(conn, [r.id for r in rows])
     items = [
         _layout_view_payload_list(r, ready_counts.get(r.id, 0))
         for r in rows
@@ -382,12 +405,12 @@ def app_managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
 
 def app_managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_layout_detail`` (M3)."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY, "app.managed_layout_detail is host-only", details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     conn = _state_conn(ctx)
@@ -402,14 +425,18 @@ def app_managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"field": "layout_id", "reason": "missing or empty"},
         )
     include_terminal = bool(params.get("include_terminal_panes", False))
-    layout_row = select_layout(conn, layout_id)
+    with tx_guard(_tx_lock(ctx)):
+        layout_row = select_layout(conn, layout_id)
+        panes = (
+            select_panes_for_layout(conn, layout_id)
+            if layout_row is not None else []
+        )
     if layout_row is None:
         return _build_managed_error_envelope(
             MANAGED_LAYOUT_NOT_FOUND,
             f"unknown layout_id {layout_id!r}",
             details={"layout_id": layout_id},
         )
-    panes = select_panes_for_layout(conn, layout_id)
     if not include_terminal:
         panes = [p for p in panes if p.state != ManagedState.REMOVED]
     return _envelope.success(
@@ -432,12 +459,12 @@ def app_managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
 
 def app_managed_pane_list(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_pane_list`` (M4)."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY, "app.managed_pane_list is host-only", details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     conn = _state_conn(ctx)
@@ -467,26 +494,27 @@ def app_managed_pane_list(ctx, params, peer_uid=-1):  # noqa: ANN001
             VALIDATION_FAILED, "after cursor must be a string",
             details={"field": "after", "reason": "wrong type"},
         )
-    rows, next_cursor = list_panes(
-        conn,
-        container_id=container_id if isinstance(container_id, str) else None,
-        layout_id=layout_id if isinstance(layout_id, str) else None,
-        state=state,
-        limit=int(limit) if isinstance(limit, int) else 50,
-        after=after,
-    )
+    with tx_guard(_tx_lock(ctx)):
+        rows, next_cursor = list_panes(
+            conn,
+            container_id=container_id if isinstance(container_id, str) else None,
+            layout_id=layout_id if isinstance(layout_id, str) else None,
+            state=state,
+            limit=int(limit) if isinstance(limit, int) else 50,
+            after=after,
+        )
     items = [_pane_row_to_payload(r) for r in rows]
     return _envelope.success({"items": items, "next": next_cursor})
 
 
 def app_managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_pane_detail`` (M5) — single pane + optional predecessor chain."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY, "app.managed_pane_detail is host-only", details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     conn = _state_conn(ctx)
@@ -501,7 +529,15 @@ def app_managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"field": "pane_id", "reason": "missing or empty"},
         )
     include_chain = bool(params.get("include_predecessor_chain", False))
-    row = select_pane(conn, pane_id)
+    with tx_guard(_tx_lock(ctx)):
+        row = select_pane(conn, pane_id)
+        chain = (
+            select_predecessor_chain(conn, row.predecessor_id)
+            if row is not None
+            and include_chain
+            and row.predecessor_id is not None
+            else None
+        )
     if row is None:
         return _build_managed_error_envelope(
             MANAGED_PANE_NOT_FOUND,
@@ -509,8 +545,7 @@ def app_managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"pane_id": pane_id},
         )
     payload = _pane_row_to_payload(row)
-    if include_chain and row.predecessor_id is not None:
-        chain = select_predecessor_chain(conn, row.predecessor_id)
+    if chain is not None:
         payload["predecessor_chain"] = [
             {
                 "pane_id": p.id,
@@ -528,12 +563,12 @@ def app_managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
 
 def app_managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_pane_remove`` (M6)."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY, "app.managed_pane_remove is host-only", details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     conn = _state_conn(ctx)
@@ -563,6 +598,7 @@ def app_managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             route_cleanup_fn=route_cleanup_fn,
             log_detach_fn=log_detach_fn,
             tx_lock=getattr(ctx, "state_tx_lock", None),
+            event_emitter=_event_emitter(ctx),
         )
     except ManagedSessionsError as exc:
         return _build_managed_error_envelope(exc.code, str(exc), details=exc.details)
@@ -574,12 +610,12 @@ def app_managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
 
 def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_pane_recreate`` (M7)."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY, "app.managed_pane_recreate is host-only", details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     conn = _state_conn(ctx)
@@ -621,6 +657,7 @@ def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             launch_command_override=launch_command_override,
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
+            event_emitter=_event_emitter(ctx),
         )
         # FR-011: the recreated pane lands in ``creating``; kick off the
         # background spawn pipeline so it actually spawns in production.
@@ -640,14 +677,12 @@ def app_managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
 
 def app_managed_pane_promote_from_adopted(ctx, params, peer_uid=-1):  # noqa: ANN001
     """``app.managed_pane_promote_from_adopted`` (M8 stub)."""
-    from ...app_contract.host_only import is_host_peer  # lazy: see module note
+    # FR-007 + FR-042 gate: host-only AND app-session token (see M1).
+    from ...app_contract import sessions as _sessions  # lazy: see module note
 
-    if not is_host_peer(peer_uid):
-        return _envelope.failure(
-            HOST_ONLY,
-            "app.managed_pane_promote_from_adopted is host-only",
-            details={},
-        )
+    gate = _sessions.gate_session_required(params, peer_uid)
+    if isinstance(gate, dict):
+        return gate
     if not isinstance(params, dict):
         params = {}
     agent_id = params.get("agent_id", "")

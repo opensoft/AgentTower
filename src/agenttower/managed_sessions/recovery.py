@@ -115,6 +115,11 @@ class ReconcileOutcome:
     panes_reattached: int           # state preserved (ready/degraded)
     panes_failed: int               # transitioned to failed (recovery_reattach)
     panes_resumed_creating: int     # creating + marker fresh (let spawn continue)
+    # review P2#6/P2#7: containers whose list-panes RPC raised (transient
+    # docker/tmux failure). Their rows were left untouched for the next
+    # reconcile; surfaced so ``status`` can report a degraded boot recovery
+    # instead of it looking like "nothing to recover".
+    containers_skipped: int = 0
 
 
 def reconcile(
@@ -146,6 +151,7 @@ def reconcile(
     panes_failed = 0
     panes_resumed = 0
     panes_seen = 0
+    containers_skipped = 0
     layouts_with_any_change: set[str] = set()
 
     # Layout-scoped events accumulate per-layout so a single
@@ -176,11 +182,20 @@ def reconcile(
             # this container's rows untouched for the next reconcile.
             try:
                 live = tmux_list_panes_fn(container_id)
-            except Exception:  # noqa: BLE001 — fail-soft per container
+            except Exception as exc:  # noqa: BLE001 — fail-soft per container
+                # review P2#7: include the exception class + message so a
+                # docker/tmux outage during boot recovery is diagnosable
+                # without re-deriving it from a bare container id, and count
+                # the skip so ``status`` (review P2#6) can report degraded
+                # recovery rather than silent "nothing to do".
+                containers_skipped += 1
                 LOG.warning(
                     "managed_sessions: reconcile list-panes failed for "
-                    "container=%s; skipping (rows untouched)",
+                    "container=%s; skipping (rows untouched): %s: %s",
                     container_id,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
                 )
                 continue
             live_keys: set[tuple[str, int]] = set()
@@ -293,6 +308,7 @@ def reconcile(
         panes_reattached=panes_reattached,
         panes_failed=panes_failed,
         panes_resumed_creating=panes_resumed,
+        containers_skipped=containers_skipped,
     )
 
 

@@ -202,6 +202,43 @@ def test_remove_ready_pane_transitions_to_removed_and_emits_event(
     assert pane_removed["payload"]["tmux_kill_succeeded"] is True
 
 
+def test_remove_commits_removed_state_before_side_effects(
+    conn: sqlite3.Connection, serializer: ContainerSerializer
+) -> None:
+    """Review P2#5 (durable-first ordering): the pane→removed transition
+    MUST be committed BEFORE the irreversible tmux kill / cleanup. We
+    observe this by reading the pane state from WITHIN each side-effect
+    callback — it must already be ``removed`` by then."""
+    result = _build_ready_pane(conn, serializer)
+    target = result.panes[0].pane_id
+
+    observed_state_at_kill: list[str] = []
+    observed_state_at_cleanup: list[str] = []
+
+    def _kill(p):  # noqa: ANN001
+        # A fresh read on the shared connection sees the committed row.
+        observed_state_at_kill.append(select_pane(conn, p.id).state.value)
+        return {"ok": True}
+
+    def _cleanup(p):  # noqa: ANN001
+        observed_state_at_cleanup.append(select_pane(conn, p.id).state.value)
+
+    out = remove_pane(
+        conn=conn, serializer=serializer,
+        pane_id=target,
+        tmux_kill_fn=_kill,
+        route_cleanup_fn=_cleanup,
+        log_detach_fn=_cleanup,
+    )
+
+    assert out.state == ManagedState.REMOVED
+    # The durable state was already 'removed' when the side effects ran —
+    # i.e. a crash mid-side-effect cannot strand a dead pane under a
+    # live-looking row.
+    assert observed_state_at_kill == ["removed"]
+    assert observed_state_at_cleanup == ["removed", "removed"]
+
+
 def test_remove_when_tmux_pane_already_gone_is_idempotent(
     conn: sqlite3.Connection, serializer: ContainerSerializer
 ) -> None:

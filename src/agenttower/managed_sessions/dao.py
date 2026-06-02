@@ -134,8 +134,57 @@ def count_active_layouts(conn: sqlite3.Connection) -> int:
 # ─── managed_pane helpers ───────────────────────────────────────────────
 
 
+def _validate_pane_invariants(conn: sqlite3.Connection, row: ManagedPaneRow) -> None:
+    """Storage-layer defense-in-depth for two invariants the schema FKs
+    cannot express (reviews P2#8 + P3#9).
+
+    P2#8 — denormalized ``managed_pane.container_id`` MUST equal the
+    parent ``managed_layout.container_id``. The FK only checks
+    ``layout_id`` existence, so a caller bug could persist a pane under
+    layout ``C1`` while scoping/recovery/label+tmux uniqueness treat it as
+    ``C2`` — a hard-to-debug visibility/uniqueness fault. The service is
+    the only production writer and always sets these consistently; this
+    guard catches a future writer (or test) that doesn't.
+
+    P3#9 — a recreate successor (``predecessor_id`` set) MUST point at a
+    terminal predecessor (``removed``/``failed``); a successor of a live
+    pane is never legal. The schema FK only checks existence; the service
+    enforces the full rule, so this is defense-in-depth against a future
+    direct DAO caller. (The companion ``chain_depth == predecessor + 1``
+    rule is intentionally NOT enforced here — it is a pure service-layer
+    invariant, and a DAO-level check would reject legitimate
+    synthetic-depth fixtures that seed a deep predecessor directly.)
+
+    Raises ``ValueError`` (a programming-error signal, not a user-facing
+    closed-set code) — production never trips it.
+    """
+    parent = select_layout(conn, row.layout_id)
+    if parent is not None and parent.container_id != row.container_id:
+        raise ValueError(
+            f"managed_pane.container_id {row.container_id!r} does not match "
+            f"parent layout {row.layout_id!r} container_id "
+            f"{parent.container_id!r}"
+        )
+    if row.predecessor_id is not None:
+        predecessor = select_pane(conn, row.predecessor_id)
+        if (
+            predecessor is not None
+            and predecessor.state not in (ManagedState.REMOVED, ManagedState.FAILED)
+        ):
+            raise ValueError(
+                f"recreate successor {row.id!r} predecessor "
+                f"{row.predecessor_id!r} is in non-terminal state "
+                f"{predecessor.state.value!r} (must be removed/failed)"
+            )
+
+
 def insert_pane(conn: sqlite3.Connection, row: ManagedPaneRow) -> None:
-    """Insert a new ``managed_pane`` row."""
+    """Insert a new ``managed_pane`` row.
+
+    Validates the container-match (P2#8) and recreate-chain (P3#9)
+    invariants before insert as storage-layer defense-in-depth.
+    """
+    _validate_pane_invariants(conn, row)
     conn.execute(
         """
         INSERT INTO managed_pane (

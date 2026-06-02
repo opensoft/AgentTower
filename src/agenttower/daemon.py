@@ -987,6 +987,7 @@ def _run(args: argparse.Namespace) -> int:
                 reconcile_managed_state_at_boot,
                 start_pending_marker_sweep,
             )
+            from .managed_sessions.events import make_managed_event_emitter
             from .managed_sessions.spawn_backends import (
                 build_spawn_backends,
                 make_recovery_list_panes_channel,
@@ -1014,6 +1015,9 @@ def _run(args: argparse.Namespace) -> int:
                 serializer=managed_serializer,
                 tmux_list_panes_fn=managed_list_panes_fn,
                 tx_lock=worker_tx_lock,
+                # FR-015: persist recovery reattach/fail lifecycle events
+                # through the daemon's JSONL surface.
+                event_emitter=make_managed_event_emitter(paths.events_file),
             )
             managed_sweep_cancel = start_pending_marker_sweep(
                 conn=worker_conn,

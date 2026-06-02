@@ -38,7 +38,13 @@ from agenttower.managed_sessions.errors import (
 )
 from agenttower.managed_sessions.handlers.app import (
     app_managed_layout_create,
+    app_managed_layout_list,
 )
+from agenttower.managed_sessions.handlers.app import register as _app_register
+
+# Raw method→handler map (unwrapped by the token-injecting test fixture),
+# so the FR-007 gate tests can drive the real missing/stale-token branches.
+APP_DISPATCH_RAW = _app_register()
 from agenttower.managed_sessions.handlers.cli import register as cli_register
 from agenttower.managed_sessions.serializer import ContainerSerializer
 from agenttower.socket_api.methods import DISPATCH
@@ -87,6 +93,22 @@ def ctx(conn: sqlite3.Connection) -> Any:
 
 # Pretend-host peer_uid: any non-negative int that's not ``_NO_PEER_UID``.
 HOST_PEER_UID = 1000
+
+
+# FEAT-013 app-session gate: the ``app.managed_*`` handlers now require a
+# valid ``app_session_token`` (FR-007). The shared ``_managed_app_session``
+# fixture (tests/conftest.py) installs a registry + session and wraps the
+# APP_DISPATCH managed entries to inject the token. We capture that token
+# here so the one DIRECT-call helper (``_app_create``) can inject it too.
+_SESSION_TOKEN: str | None = None
+
+
+@pytest.fixture(autouse=True)
+def _capture_managed_token(_managed_app_session: str) -> None:
+    """Activate the shared managed-session fixture for every test in this
+    module and expose its token to direct-call helpers."""
+    global _SESSION_TOKEN
+    _SESSION_TOKEN = _managed_app_session
 
 
 @pytest.fixture(autouse=True)
@@ -163,6 +185,86 @@ def test_cli_register_returns_full_method_set() -> None:
     }
 
 
+# ─── FR-007 app-session gate on app.managed_* (security fix) ────────────
+#
+# Every app.managed_* method runs gate_session_required: host-only FIRST,
+# then app_session_token. These call the handlers DIRECTLY (bypassing the
+# token-injecting APP_DISPATCH wrapper) so the raw gate is exercised.
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "app.managed_layout_create",
+        "app.managed_layout_list",
+        "app.managed_layout_detail",
+        "app.managed_pane_list",
+        "app.managed_pane_detail",
+        "app.managed_pane_remove",
+        "app.managed_pane_recreate",
+        "app.managed_pane_promote_from_adopted",
+    ],
+)
+def test_app_managed_missing_token_returns_app_session_required(
+    ctx: Any, method: str
+) -> None:
+    """FR-007: host peer, no app_session_token → app_session_required.
+
+    Calls the underlying handler (not APP_DISPATCH, whose test wrapper
+    would inject a token) so the gate's missing-token branch is hit.
+    """
+    handler = APP_DISPATCH_RAW[method]
+    resp = handler(ctx, {}, HOST_PEER_UID)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "app_session_required"
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "app.managed_layout_create",
+        "app.managed_layout_list",
+        "app.managed_pane_remove",
+        "app.managed_pane_recreate",
+        "app.managed_pane_promote_from_adopted",
+    ],
+)
+def test_app_managed_stale_token_returns_app_session_expired(
+    ctx: Any, method: str
+) -> None:
+    """FR-007: host peer, token not in registry → app_session_expired."""
+    handler = APP_DISPATCH_RAW[method]
+    resp = handler(ctx, {"app_session_token": "not-a-real-token"}, HOST_PEER_UID)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "app_session_expired"
+
+
+def test_app_managed_valid_token_passes_gate(ctx: Any) -> None:
+    """FR-007: host peer + valid token → gate passes (read returns ok)."""
+    resp = app_managed_layout_list(
+        ctx, {"app_session_token": _SESSION_TOKEN}, HOST_PEER_UID
+    )
+    assert resp["ok"] is True
+
+
+def test_app_managed_host_only_beats_session_gate(
+    ctx: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-042 + FR-007 ordering: a non-host peer gets host_only even when
+    it presents a (would-be valid) token — host-only is checked first."""
+    # Undo the autouse force-host seam + peer context so the peer
+    # classifies as a non-host (container) caller.
+    monkeypatch.delenv("AGENTTOWER_TEST_FORCE_HOST_PEER", raising=False)
+    from agenttower.socket_api.methods import _clear_request_peer_context
+
+    _clear_request_peer_context()
+    resp = app_managed_layout_list(
+        ctx, {"app_session_token": _SESSION_TOKEN}, peer_uid=-1
+    )
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "host_only"
+
+
 # ─── legacy CLI handler (T023) ──────────────────────────────────────────
 
 
@@ -233,8 +335,12 @@ def _app_create(ctx: Any, **params: Any) -> dict[str, Any]:
 
     Bypasses the dispatcher's ``_wrap_handler`` because that wrapper
     only adds a safety-net for unhandled exceptions; the handler's own
-    envelope is what we want to assert.
+    envelope is what we want to assert. Because this calls the handler
+    directly (not via the token-injecting APP_DISPATCH wrapper), we
+    inject the fixture's app-session token here unless the caller set one.
     """
+    if "app_session_token" not in params and _SESSION_TOKEN is not None:
+        params["app_session_token"] = _SESSION_TOKEN
     return app_managed_layout_create(ctx, params, HOST_PEER_UID)
 
 
@@ -604,6 +710,112 @@ def test_app_create_emits_synchronous_lifecycle_events(ctx: Any) -> None:
     # Pane events carry both layout_id and pane_id (pane-scoped events).
     pane_events = [e for e in events if e["event_type"].startswith("managed_pane_")]
     assert all(e["pane_id"] is not None for e in pane_events)
+
+
+# ─── Handler→JSONL event persistence (P1#2 regression) ──────────────────
+#
+# The earlier handlers passed NO event_emitter, so create/remove/recreate
+# persisted state but emitted no FR-015 lifecycle events. These tests wire
+# a real ``events_file`` through the daemon context (as production does)
+# and assert events actually land on the JSONL surface through the handler
+# path — the coverage gap that let the regression through.
+
+
+def _ctx_with_events(conn: sqlite3.Connection, events_file) -> Any:  # noqa: ANN001
+    return SimpleNamespace(
+        state_conn=conn,
+        managed_serializer=ContainerSerializer(),
+        events_file=events_file,
+    )
+
+
+def _read_events(events_file) -> list[dict[str, Any]]:  # noqa: ANN001
+    import json
+
+    if not events_file.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in events_file.read_text().splitlines()
+        if line.strip()
+    ]
+
+
+def test_cli_create_handler_persists_lifecycle_events_to_jsonl(
+    conn: sqlite3.Connection, tmp_path
+) -> None:
+    """P1#2: the ``managed.layout.create`` handler must persist
+    LAYOUT_CREATED + per-pane PANE_CREATED events to the JSONL surface."""
+    # Sub-namespace dir so the events writer creates it with its own
+    # strict mode (avoids verifying tmp_path's mode).
+    events_file = tmp_path / "ns" / "events.jsonl"
+    ctx = _ctx_with_events(conn, events_file)
+
+    resp = DISPATCH["managed.layout.create"](
+        ctx,
+        {
+            "container_id": "bench-alpha",
+            "template_name": "1m+2s",
+            "tmux_session_name": "session-evt-cli",
+        },
+        HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+
+    records = _read_events(events_file)
+    assert records, "handler persisted no lifecycle events to JSONL"
+    types = [r["event_type"] for r in records]
+    assert "managed_layout_created" in types
+    assert types.count("managed_pane_created") == 3
+    assert all(r["origin"] == "managed" for r in records)
+    # Every event is scoped to at least a layout or a pane.
+    assert all(r.get("layout_id") or r.get("pane_id") for r in records)
+
+
+def test_app_create_handler_persists_lifecycle_events_to_jsonl(
+    conn: sqlite3.Connection, tmp_path
+) -> None:
+    """P1#2: same guarantee through the FEAT-011 ``app.managed_layout_create``
+    handler (token injected via the autouse managed-session fixture)."""
+    events_file = tmp_path / "ns" / "events.jsonl"
+    ctx = _ctx_with_events(conn, events_file)
+
+    resp = APP_DISPATCH["app.managed_layout_create"](
+        ctx,
+        {
+            "container_id": "bench-alpha",
+            "template_name": "1m+2s",
+            "tmux_session_name": "session-evt-app",
+        },
+        HOST_PEER_UID,
+    )
+    assert resp["ok"] is True
+
+    types = [r["event_type"] for r in _read_events(events_file)]
+    assert "managed_layout_created" in types
+    assert types.count("managed_pane_created") == 3
+
+
+def test_remove_handler_persists_lifecycle_events_to_jsonl(
+    conn: sqlite3.Connection, tmp_path
+) -> None:
+    """P1#2: ``managed.pane.remove`` must persist its PANE_REMOVED /
+    state-change events to JSONL through the handler path. The pane is
+    first driven to ``ready`` (removing a ``creating`` pane is an illegal
+    transition)."""
+    events_file = tmp_path / "ns" / "events.jsonl"
+    ctx = _ctx_with_events(conn, events_file)
+
+    result = _seed_and_drive_to_ready(ctx, session="session-evt-rm")
+    pane_id = result["panes"][0]["pane_id"]
+
+    # Truncate so we only observe the remove path's events.
+    events_file.write_text("")
+    resp = DISPATCH["managed.pane.remove"](ctx, {"pane_id": pane_id}, HOST_PEER_UID)
+    assert resp["ok"] is True
+
+    types = [r["event_type"] for r in _read_events(events_file)]
+    assert any(t == "managed_pane_removed" for t in types), types
 
 
 # ─── M6 / M7 / M8 dispatcher tests (T048 — Phase 5c) ────────────────────

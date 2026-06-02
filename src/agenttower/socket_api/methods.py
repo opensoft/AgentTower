@@ -216,8 +216,42 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "events_persistence": events_persistence,
             "routing": routing_block,
             "queue_audit": queue_audit_block,
+            "managed_recovery": _managed_recovery_block(ctx),
         }
     )
+
+
+def _managed_recovery_block(ctx: DaemonContext) -> dict[str, Any]:
+    """FEAT-013 boot-recovery diagnostics for ``status`` (review P2#6).
+
+    Surfaces the last ``reconcile`` outcome so operators can tell from
+    ``status`` whether managed recovery ran, what it reattached/failed,
+    and — critically — whether any container was SKIPPED because its
+    list-panes RPC failed (a degraded boot that previously looked
+    identical to "nothing to recover"). Defaults to a not-ran shape when
+    no reconcile outcome is recorded (reconcile skipped, or FEAT-013 not
+    boot-wired).
+    """
+    outcome = getattr(ctx, "managed_reconcile_outcome", None)
+    if outcome is None:
+        return {
+            "ran": False,
+            "layouts_examined": 0,
+            "panes_examined": 0,
+            "panes_reattached": 0,
+            "panes_failed": 0,
+            "panes_resumed_creating": 0,
+            "containers_skipped": 0,
+        }
+    return {
+        "ran": True,
+        "layouts_examined": getattr(outcome, "layouts_examined", 0),
+        "panes_examined": getattr(outcome, "panes_examined", 0),
+        "panes_reattached": getattr(outcome, "panes_reattached", 0),
+        "panes_failed": getattr(outcome, "panes_failed", 0),
+        "panes_resumed_creating": getattr(outcome, "panes_resumed_creating", 0),
+        "containers_skipped": getattr(outcome, "containers_skipped", 0),
+    }
 
 
 def _extend_routing_block_with_feat010(

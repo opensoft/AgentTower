@@ -29,14 +29,22 @@ def env(tmp_path: Path) -> dict[str, str]:
     stop_daemon_if_alive(env)
 
 
-def test_status_default_output_six_lines(env: dict[str, str]) -> None:
+def test_status_default_output_core_fields_then_routing_block(
+    env: dict[str, str],
+) -> None:
+    """The default (non-JSON) status output leads with the six core
+    ``key=value`` fields, followed by the FEAT-010 routing block. (This
+    test originally asserted exactly six lines; FEAT-010 added the
+    human-format routing section, so the count is no longer six.)"""
     run_config_init(env)
     ensure_daemon(env)
     proc = status(env)
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.rstrip("\n").splitlines()
-    assert len(lines) == 6
-    keys = [line.split("=", 1)[0] for line in lines]
+
+    # First six lines: the FEAT-002 core key=value fields, in order.
+    core = lines[:6]
+    keys = [line.split("=", 1)[0] for line in core]
     assert keys == [
         "alive",
         "pid",
@@ -45,8 +53,9 @@ def test_status_default_output_six_lines(env: dict[str, str]) -> None:
         "socket_path",
         "state_path",
     ]
-    alive_line = lines[0]
-    assert alive_line == "alive=true"
+    assert core[0] == "alive=true"
+    # FEAT-010 routing block follows the core fields.
+    assert "Routing:" in lines[6:]
 
 
 def test_status_json_output_shape(env: dict[str, str]) -> None:
@@ -72,6 +81,8 @@ def test_status_json_output_shape(env: dict[str, str]) -> None:
         "state_path",
         "schema_version",
         "daemon_version",
+        # FEAT-013 — boot-recovery diagnostics (review P2#6).
+        "managed_recovery",
     }
     assert result["alive"] is True
     # FEAT-004 bumps the schema to v3 (data-model.md §7); we read the

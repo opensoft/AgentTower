@@ -9,8 +9,9 @@ are deterministic and don't burn 30 wall-clock seconds.
 
 Covers:
 
-- **Per-attempt 30s budget** — the timeout fires via
-  ``ThreadPoolExecutor.result(timeout=...)`` and surfaces ``stage_timeout``.
+- **Per-attempt 30s budget** — the timeout fires by joining an
+  abandonable daemon worker thread and surfaces ``stage_timeout``
+  WITHOUT waiting for the hung worker to finish (FR-013).
 - **2x retry with 1s/2s back-off on transient failures** — the
   closed-set transient codes
   (``docker_exec_failed``/``docker_exec_timeout``/``tmux_unavailable``/
@@ -150,6 +151,42 @@ def test_stage_timeout_surfaces_when_inner_call_exceeds_budget() -> None:
     # All 3 attempts time out; final result has the stage_timeout code.
     assert result["ok"] is False
     assert result["error"]["code"] == "stage_timeout"
+
+
+def test_stage_timeout_does_not_block_caller_on_hung_worker() -> None:
+    """Regression for the FR-013 timeout-enforcement bug.
+
+    The earlier ``ThreadPoolExecutor`` + ``with`` implementation called
+    ``shutdown(wait=True)`` on context exit, so on timeout the caller
+    STILL blocked until the hung worker returned — defeating the
+    per-stage budget while the serializer lock was held. The
+    daemon-thread join must return near the budget regardless of how
+    long the worker runs.
+
+    Here the worker sleeps ~5s per attempt but the budget is 0.05s and
+    back-off sleeps are suppressed. With the bug, this took ~15s
+    (3 × 5s); fixed, it returns in well under a second.
+    """
+
+    def hung_stage():  # noqa: ANN201
+        time.sleep(5.0)
+        return {"ok": True}
+
+    started = time.monotonic()
+    result = run_stage_with_retry(
+        hung_stage,
+        stage_name="tmux_spawn",
+        timeout_seconds=0.05,
+        sleep_fn=lambda _s: None,  # suppress 1s/2s back-off
+    )
+    elapsed = time.monotonic() - started
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "stage_timeout"
+    # 3 attempts × 0.05s budget = ~0.15s of joins; allow generous slack
+    # for scheduler jitter but stay far below the 15s a blocking
+    # shutdown(wait=True) would have cost.
+    assert elapsed < 1.0, f"caller blocked on hung worker: {elapsed:.2f}s"
 
 
 def test_all_documented_transient_codes_trigger_retry() -> None:

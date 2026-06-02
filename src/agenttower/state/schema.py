@@ -869,9 +869,28 @@ def _apply_migration_v9(conn: sqlite3.Connection) -> None:
     # container_id two different containers each legitimately using session
     # 'work' pane 0 would trip a false managed_session_name_conflict. (The
     # sibling ux_managed_pane_container_label index already includes
-    # container_id.) DROP+CREATE so the corrected definition lands even if a
-    # pre-release dev DB created the old 2-column index.
-    conn.execute("DROP INDEX IF EXISTS ux_managed_pane_tmux_target")
+    # container_id.)
+    #
+    # review P3#10: this migration body also runs on EVERY current-version
+    # open (via _ensure_current_schema). An unconditional DROP+CREATE would
+    # therefore drop and rebuild the index on every daemon boot — wasted DDL
+    # that momentarily voids the uniqueness guarantee. Only drop when a
+    # pre-release dev DB's OLD 2-column index shape is actually present;
+    # otherwise the CREATE ... IF NOT EXISTS below is a cheap no-op.
+    _desired_tmux_target_cols = ["container_id", "tmux_session_name", "tmux_pane_index"]
+    _existing_tmux_target_cols = [
+        r[2]
+        for r in conn.execute(
+            "PRAGMA index_info(ux_managed_pane_tmux_target)"
+        ).fetchall()
+    ]
+    if (
+        _existing_tmux_target_cols
+        and _existing_tmux_target_cols != _desired_tmux_target_cols
+    ):
+        # Old pre-release shape (e.g. 2-column) — drop so the corrected
+        # definition lands.
+        conn.execute("DROP INDEX ux_managed_pane_tmux_target")
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_pane_tmux_target

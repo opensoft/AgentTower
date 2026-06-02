@@ -284,6 +284,18 @@ Per research §R12:
 
 ---
 
+## App-session gate (FEAT-011 FR-007 / FR-042)
+
+Every `app.managed_*` method is an `app.*` method and therefore runs FEAT-011's combined gate (`sessions.gate_session_required`) at the top of the handler, in this order:
+
+1. **`host_only`** — bench-container peers (and missing peer credentials) are rejected first, regardless of token. (FR-042; `details = {}` per FR-034a.)
+2. **`app_session_required`** — host peer but `params.app_session_token` is missing or malformed. The caller must obtain a token via `app.hello` first. (FR-007.)
+3. **`app_session_expired`** — host peer presents a token that is not in the daemon's session registry (issued by a prior daemon process, or invalidated). The caller must re-`app.hello`. (FR-007.)
+
+These two session codes (`app_session_required`, `app_session_expired`) are therefore possible on **every** `app.managed_*` method in addition to the per-method error lists above; they are not separately repeated per method. The legacy `managed.*` CLI namespace is **not** session-gated (it predates FEAT-011 and is governed by peer scoping only).
+
+---
+
 ## Idempotency summary
 
 | Method | Key | Replay semantics |

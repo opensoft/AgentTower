@@ -68,16 +68,31 @@ def serializer() -> ContainerSerializer:
     return ContainerSerializer()
 
 
+# FEAT-013: app.managed_* now requires a valid app_session_token (FR-007).
+# The autouse fixture below installs a session and exposes its token here
+# so the direct M3/M5 detail calls can present it.
+_SESSION_TOKEN: str | None = None
+
+
 @pytest.fixture(autouse=True)
 def force_host_peer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Same fixture pattern as test_managed_dispatch.py — force the
-    host-only gate to pass for in-process M3/M5 calls."""
+    host-only gate to pass for in-process M3/M5 calls, and install a
+    valid app-session so the FR-007 token gate passes."""
     monkeypatch.setenv("AGENTTOWER_TEST_FORCE_HOST_PEER", "1")
     from agenttower.socket_api.methods import (
         _clear_request_peer_context,
         _set_request_peer_context,
     )
+    from agenttower.app_contract import sessions as _sessions
+
     _set_request_peer_context(peer_pid=os.getpid())
+    _sessions.set_registry(_sessions.SessionRegistry())
+    global _SESSION_TOKEN
+    _SESSION_TOKEN = _sessions.get_registry().create(
+        client_id="recovery-vis-test", client_version="0",
+        client_app_contract_major=1, host_user_id="0",
+    ).app_session_token
     yield
     _clear_request_peer_context()
 
@@ -160,7 +175,9 @@ def test_m3_detail_surfaces_failed_stage_recovery_reattach_after_reconcile(
     )
 
     ctx = SimpleNamespace(state_conn=conn, managed_serializer=serializer)
-    resp = app_managed_layout_detail(ctx, {"layout_id": layout_id}, HOST_PEER_UID)
+    resp = app_managed_layout_detail(
+        ctx, {"app_session_token": _SESSION_TOKEN, "layout_id": layout_id}, HOST_PEER_UID
+    )
     assert resp["ok"] is True
     result = resp["result"]
 
@@ -188,7 +205,9 @@ def test_m5_detail_surfaces_failed_stage_recovery_reattach_after_reconcile(
     )
 
     ctx = SimpleNamespace(state_conn=conn, managed_serializer=serializer)
-    resp = app_managed_pane_detail(ctx, {"pane_id": pane_ids[0]}, HOST_PEER_UID)
+    resp = app_managed_pane_detail(
+        ctx, {"app_session_token": _SESSION_TOKEN, "pane_id": pane_ids[0]}, HOST_PEER_UID
+    )
     assert resp["ok"] is True
     pane = resp["result"]
     assert pane["pane_id"] == pane_ids[0]
@@ -212,7 +231,9 @@ def test_m3_detail_shows_recovered_panes_with_state_preserved(
     )
 
     ctx = SimpleNamespace(state_conn=conn, managed_serializer=serializer)
-    resp = app_managed_layout_detail(ctx, {"layout_id": layout_id}, HOST_PEER_UID)
+    resp = app_managed_layout_detail(
+        ctx, {"app_session_token": _SESSION_TOKEN, "layout_id": layout_id}, HOST_PEER_UID
+    )
     assert resp["ok"] is True
     result = resp["result"]
     assert result["state"] == "ready"
@@ -240,7 +261,9 @@ def test_m3_detail_mixed_outcome_surfaces_per_pane_failed_stage(
     )
 
     ctx = SimpleNamespace(state_conn=conn, managed_serializer=serializer)
-    resp = app_managed_layout_detail(ctx, {"layout_id": layout_id}, HOST_PEER_UID)
+    resp = app_managed_layout_detail(
+        ctx, {"app_session_token": _SESSION_TOKEN, "layout_id": layout_id}, HOST_PEER_UID
+    )
     assert resp["ok"] is True
     result = resp["result"]
     # Layout aggregate: at-least-one failed → failed.

@@ -44,6 +44,8 @@ from ..service import (
 )
 from ..state_machine import FailedStage, ManagedState
 from ..view_models import ManagedLayoutView, ManagedPaneView, ORIGIN_MANAGED
+from .._tx import tx_guard
+from ..events import make_managed_event_emitter
 
 if TYPE_CHECKING:
     from ...socket_api.methods import DaemonContext
@@ -73,6 +75,26 @@ def _err(code: str, message: str, details: dict[str, Any] | None = None) -> dict
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
+
+
+def _tx_lock(ctx: "DaemonContext") -> Any:
+    """Shared worker tx-lock (``worker_tx_lock`` aliased ``state_tx_lock``).
+
+    Reads on the shared ``ctx.state_conn`` MUST be wrapped in
+    ``with tx_guard(_tx_lock(ctx)):`` — the connection is the same one
+    FEAT-009/010 background workers mutate across threads, and its
+    contract requires all readers and writers to serialize through this
+    single lock (C1). ``None`` in tests yields a no-op guard.
+    """
+    return getattr(ctx, "state_tx_lock", None)
+
+
+def _event_emitter(ctx: "DaemonContext"):  # noqa: ANN202
+    """FR-015 lifecycle-event emitter bound to ``ctx.events_file`` (the
+    daemon JSONL surface), or ``None`` when no events file is wired.
+    Threaded into every service mutation so create / remove / recreate
+    persist their lifecycle events."""
+    return make_managed_event_emitter(getattr(ctx, "events_file", None))
 
 
 def _container_exists(conn: sqlite3.Connection, container_id: str) -> bool:
@@ -292,7 +314,9 @@ def _managed_layout_create(
     conn = _state_conn(ctx)
     if conn is None:
         return _err("internal_error", "daemon state_conn not wired")
-    if not _container_exists(conn, container_id):
+    with tx_guard(_tx_lock(ctx)):
+        container_known = _container_exists(conn, container_id)
+    if not container_known:
         return _err(
             CONTAINER_NOT_FOUND,
             f"unknown container_id {container_id!r}",
@@ -316,6 +340,7 @@ def _managed_layout_create(
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
             tmux_has_session_fn=_session_conflict_fn(ctx),
+            event_emitter=_event_emitter(ctx),
         )
         # C4 fix: kick off the background spawn pipeline so the new
         # layout transitions out of ``creating`` in production. The
@@ -522,18 +547,18 @@ def _managed_layout_list(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"field": "after", "reason": "wrong type"},
         )
 
-    rows, next_cursor = list_layouts(
-        conn,
-        container_id=container_id,
-        state=state,
-        limit=int(limit) if isinstance(limit, int) else 50,
-        after=after,
-    )
-
-    # M8 fix: single aggregate query instead of one COUNT per layout
-    # (the old loop was a textbook N+1; for the 200-row hard cap that
-    # was up to 201 round-trips per M2 call).
-    ready_counts = count_ready_panes_for_layouts(conn, [r.id for r in rows])
+    with tx_guard(_tx_lock(ctx)):
+        rows, next_cursor = list_layouts(
+            conn,
+            container_id=container_id,
+            state=state,
+            limit=int(limit) if isinstance(limit, int) else 50,
+            after=after,
+        )
+        # M8 fix: single aggregate query instead of one COUNT per layout
+        # (the old loop was a textbook N+1; for the 200-row hard cap that
+        # was up to 201 round-trips per M2 call).
+        ready_counts = count_ready_panes_for_layouts(conn, [r.id for r in rows])
     items: list[dict[str, Any]] = []
     for layout_row in rows:
         items.append(_layout_view_to_list_payload(
@@ -560,7 +585,8 @@ def _managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
         )
     include_terminal = bool(params.get("include_terminal_panes", False))
 
-    layout_row = select_layout(conn, layout_id)
+    with tx_guard(_tx_lock(ctx)):
+        layout_row = select_layout(conn, layout_id)
     if layout_row is None:
         return _err(
             MANAGED_LAYOUT_NOT_FOUND,
@@ -569,6 +595,9 @@ def _managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
         )
 
     # R12 peer scoping — bench peer cannot read another container's layout.
+    # NOTE: _peer_container_id acquires the same tx_lock internally, so it
+    # must run OUTSIDE the guards above/below to avoid self-deadlock on the
+    # non-reentrant worker lock.
     peer_container = _peer_container_id(ctx, peer_uid)
     if peer_container is not None and layout_row.container_id != peer_container:
         return _err(
@@ -577,7 +606,8 @@ def _managed_layout_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={},  # FR-034a: host_only details MUST be {}
         )
 
-    panes = select_panes_for_layout(conn, layout_id)
+    with tx_guard(_tx_lock(ctx)):
+        panes = select_panes_for_layout(conn, layout_id)
     if not include_terminal:
         panes = [
             p for p in panes
@@ -639,14 +669,15 @@ def _managed_pane_list(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"field": "after", "reason": "wrong type"},
         )
 
-    rows, next_cursor = list_panes(
-        conn,
-        container_id=container_id,
-        layout_id=layout_id,
-        state=state,
-        limit=int(limit) if isinstance(limit, int) else 50,
-        after=after,
-    )
+    with tx_guard(_tx_lock(ctx)):
+        rows, next_cursor = list_panes(
+            conn,
+            container_id=container_id,
+            layout_id=layout_id,
+            state=state,
+            limit=int(limit) if isinstance(limit, int) else 50,
+            after=after,
+        )
     items = [_pane_view_to_payload(_pane_row_to_view(r)) for r in rows]
     return _ok({"items": items, "next": next_cursor})
 
@@ -667,7 +698,8 @@ def _managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
         )
     include_chain = bool(params.get("include_predecessor_chain", False))
 
-    row = select_pane(conn, pane_id)
+    with tx_guard(_tx_lock(ctx)):
+        row = select_pane(conn, pane_id)
     if row is None:
         return _err(
             MANAGED_PANE_NOT_FOUND,
@@ -675,7 +707,8 @@ def _managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
             details={"pane_id": pane_id},
         )
 
-    # R12 peer scoping.
+    # R12 peer scoping. (_peer_container_id grabs the tx_lock internally,
+    # so it runs outside the read guards.)
     peer_container = _peer_container_id(ctx, peer_uid)
     if peer_container is not None and row.container_id != peer_container:
         return _err(
@@ -686,7 +719,8 @@ def _managed_pane_detail(ctx, params, peer_uid=-1):  # noqa: ANN001
 
     payload = _pane_view_to_payload(_pane_row_to_view(row))
     if include_chain and row.predecessor_id is not None:
-        chain = select_predecessor_chain(conn, row.predecessor_id)
+        with tx_guard(_tx_lock(ctx)):
+            chain = select_predecessor_chain(conn, row.predecessor_id)
         payload["predecessor_chain"] = [
             {
                 "pane_id": p.id,
@@ -725,7 +759,8 @@ def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
     # R12 peer scoping — for known managed panes, refuse cross-container
     # operations from bench-container peers. (Unknown pane_id falls through
     # to service.remove_pane's protected_adopted / not_found check.)
-    pane_row = select_pane(conn, pane_id)
+    with tx_guard(_tx_lock(ctx)):
+        pane_row = select_pane(conn, pane_id)
     if pane_row is not None:
         peer_container = _peer_container_id(ctx, peer_uid)
         if peer_container is not None and pane_row.container_id != peer_container:
@@ -750,6 +785,7 @@ def _managed_pane_remove(ctx, params, peer_uid=-1):  # noqa: ANN001
             route_cleanup_fn=route_cleanup_fn,
             log_detach_fn=log_detach_fn,
             tx_lock=getattr(ctx, "state_tx_lock", None),
+            event_emitter=_event_emitter(ctx),
         )
     except ManagedSessionsError as exc:
         return _err(exc.code, str(exc), details=exc.details)
@@ -817,6 +853,7 @@ def _managed_pane_recreate(ctx, params, peer_uid=-1):  # noqa: ANN001
             launch_command_override=launch_command_override,
             idempotency_key=idempotency_key,
             tx_lock=getattr(ctx, "state_tx_lock", None),
+            event_emitter=_event_emitter(ctx),
         )
         # FR-011: the recreated pane lands in ``creating``; kick off the
         # background spawn pipeline so it actually spawns in production

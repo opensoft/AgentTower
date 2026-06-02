@@ -210,11 +210,13 @@ def kickoff_spawn_pipeline(
         )
         return
 
-    # The lifecycle audit writer (when wired) is the event emitter.
-    audit = getattr(ctx, "queue_audit_writer", None)
-    event_emitter = None
-    if audit is not None and hasattr(audit, "append_managed_event"):
-        event_emitter = audit.append_managed_event  # type: ignore[assignment]
+    # FR-015 lifecycle events: emit through the daemon's JSONL events
+    # file. (The earlier ``queue_audit_writer.append_managed_event``
+    # lookup was dead — QueueAuditWriter never exposed that method, so
+    # the spawn pipeline silently persisted no events.)
+    from .events import make_managed_event_emitter
+
+    event_emitter = make_managed_event_emitter(getattr(ctx, "events_file", None))
 
     def _run() -> None:
         try:
