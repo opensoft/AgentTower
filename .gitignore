@@ -22,3 +22,5 @@ build/
 
 # E2E + smoke test scratch dirs
 .tmp/
+.claude/dashboard.md
+.claude/speckit-history.md
