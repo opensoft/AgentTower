@@ -9,7 +9,6 @@ import 'package:agenttower_control_panel/features/agent_ops/module.dart';
 import 'package:agenttower_control_panel/features/project_specs/module.dart';
 import 'package:agenttower_control_panel/features/project_specs/providers.dart';
 import 'package:agenttower_control_panel/features/registry.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -143,7 +142,7 @@ Map<String, dynamic> _buildUs2Fixture() {
   return {
     'app_contract_version': '1.0',
     'responses': {
-      'app.hello': {'ok': true, 'result': {}},
+      'app.hello': {'ok': true, 'result': <String, dynamic>{}},
       'app.readiness': {
         'ok': true,
         'result': Fixtures.readinessResult(),

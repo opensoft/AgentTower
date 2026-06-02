@@ -4,6 +4,7 @@ import 'daemon/app_client.dart';
 import 'daemon/preflight_client.dart';
 import 'daemon/session.dart';
 import 'daemon/socket_client.dart';
+import 'daemon/socket_path.dart';
 import 'logging/rotating_file_logger.dart';
 import 'notifications/os_native_dispatcher.dart';
 import 'persistence/sort_filter_repository.dart';
@@ -68,6 +69,16 @@ class _EphemeralUxStateStore implements UxStateStore {
   @override
   void update(Map<String, dynamic> newState) => _state = newState;
 }
+
+/// The default daemon socket path the app connects to. `main.dart` overrides
+/// this with the bootstrap-resolved path so the Settings surface + FR-009
+/// Doctor check the SAME socket the live `SocketClient` uses. The default
+/// (`defaultDaemonSocketPath()`) is the synchronous CLI/daemon-matching
+/// resolver, used by tests/harnesses that don't override it — replacing the
+/// old hard-coded `/var/run/agenttower/app.sock` that disagreed with both the
+/// bootstrap path and the CLI.
+final defaultSocketPathProvider =
+    Provider<String>((ref) => defaultDaemonSocketPath());
 
 /// Unix-socket client for the FEAT-011 daemon. Built per-session lifecycle
 /// in `main.dart` from the configured socket path.

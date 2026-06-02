@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:agenttower_control_panel/core/daemon/app_client.dart';
 import 'package:agenttower_control_panel/core/daemon/session.dart';
 import 'package:agenttower_control_panel/core/daemon/socket_client.dart';
@@ -43,7 +44,12 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
+    // pumpAndSettle (not a single pump): AppLocalizations.localizationsDelegates
+    // includes the async GlobalMaterialLocalizations delegate, so the localized
+    // child only builds after the Localizations scope finishes loading. A single
+    // pump() leaves the subtree empty and finders match 0 widgets (T181 i18n
+    // sweep moved this label behind AppLocalizations).
+    await tester.pumpAndSettle();
   }
 
   group('LogAttachAffordance', () {
@@ -51,8 +57,8 @@ void main() {
         (tester) async {
       final fake = _FakeAppClient();
       await pumpAffordance(tester, agent: agentWith(null), fake: fake);
-      expect(find.widgetWithText(TextButton, 'Attach log'), findsOneWidget);
-      expect(find.widgetWithText(TextButton, 'Detach log'), findsNothing);
+      expect(find.ancestor(of: find.text('Attach log'), matching: find.bySubtype<TextButton>()), findsOneWidget);
+      expect(find.ancestor(of: find.text('Detach log'), matching: find.bySubtype<TextButton>()), findsNothing);
     });
 
     testWidgets('renders "Detach log" when log attachment is active',
@@ -63,27 +69,31 @@ void main() {
         agent: agentWith(LogAttachmentState.active),
         fake: fake,
       );
-      expect(find.widgetWithText(TextButton, 'Detach log'), findsOneWidget);
-      expect(find.widgetWithText(TextButton, 'Attach log'), findsNothing);
+      expect(find.ancestor(of: find.text('Detach log'), matching: find.bySubtype<TextButton>()), findsOneWidget);
+      expect(find.ancestor(of: find.text('Attach log'), matching: find.bySubtype<TextButton>()), findsNothing);
     });
 
     testWidgets('tapping Attach calls logAttach and is briefly disabled',
         (tester) async {
-      final fake = _FakeAppClient();
+      // Gate the fake so the in-flight (busy) window is observable: an
+      // instantly-completing fake would drain its continuation in the same
+      // pump() and the disabled state would never be visible to the assertion.
+      final fake = _FakeAppClient()..attachGate = Completer<void>();
       await pumpAffordance(
         tester,
         agent: agentWith(LogAttachmentState.detached),
         fake: fake,
       );
-      await tester.tap(find.widgetWithText(TextButton, 'Attach log'));
-      // Pump once so the setState(_busy = true) lands.
+      await tester.tap(find.ancestor(of: find.text('Attach log'), matching: find.bySubtype<TextButton>()));
+      // Pump once so the setState(_busy = true) lands while logAttach awaits.
       await tester.pump();
       // During the awaited call the button is disabled — onPressed null.
       final button = tester.widget<TextButton>(
-        find.widgetWithText(TextButton, 'Attach log'),
+        find.ancestor(of: find.text('Attach log'), matching: find.bySubtype<TextButton>()),
       );
       expect(button.onPressed, isNull);
-      // Settle the future + the post-await SnackBar.
+      // Release the gate, then settle the future + the post-await SnackBar.
+      fake.attachGate!.complete();
       await tester.pumpAndSettle();
       expect(fake.attachCalls, 1);
       expect(fake.detachCalls, 0);
@@ -96,7 +106,7 @@ void main() {
         agent: agentWith(LogAttachmentState.active),
         fake: fake,
       );
-      await tester.tap(find.widgetWithText(TextButton, 'Detach log'));
+      await tester.tap(find.ancestor(of: find.text('Detach log'), matching: find.bySubtype<TextButton>()));
       await tester.pump();
       await tester.pumpAndSettle();
       expect(fake.detachCalls, 1);
@@ -116,12 +126,17 @@ class _FakeAppClient extends AppClient {
   int attachCalls = 0;
   int detachCalls = 0;
 
+  /// When set, [logAttach] awaits this gate before completing so a test can
+  /// observe the widget's in-flight (busy/disabled) state deterministically.
+  Completer<void>? attachGate;
+
   @override
   Future<Map<String, dynamic>> logAttach({
     required String agentId,
     String? idempotencyKey,
   }) async {
     attachCalls += 1;
+    if (attachGate != null) await attachGate!.future;
     return const {};
   }
 

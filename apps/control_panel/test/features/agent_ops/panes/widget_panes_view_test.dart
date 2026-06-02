@@ -94,11 +94,11 @@ void main() {
       expect(find.text('main:0.3'), findsOneWidget);
 
       // Adopt button visible only on discovered-and-unmanaged.
-      expect(find.widgetWithText(TextButton, 'Adopt'), findsOneWidget);
+      expect(find.ancestor(of: find.text('Adopt'), matching: find.bySubtype<TextButton>()), findsOneWidget);
       // Open-agent only on registered.
-      expect(find.widgetWithText(TextButton, 'Open agent'), findsOneWidget);
+      expect(find.ancestor(of: find.text('Open agent'), matching: find.bySubtype<TextButton>()), findsOneWidget);
       // Re-probe on stale + degraded → exactly two.
-      expect(find.widgetWithText(TextButton, 'Re-probe'), findsNWidgets(2));
+      expect(find.ancestor(of: find.text('Re-probe'), matching: find.bySubtype<TextButton>()), findsNWidgets(2));
     });
 
     testWidgets('Adopt button is suppressed for non-unmanaged states',
@@ -124,7 +124,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      expect(find.widgetWithText(TextButton, 'Adopt'), findsNothing);
+      expect(find.ancestor(of: find.text('Adopt'), matching: find.bySubtype<TextButton>()), findsNothing);
     });
   });
 }

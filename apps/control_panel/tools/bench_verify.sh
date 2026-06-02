@@ -6,7 +6,9 @@
 #
 #   1. flutter pub get
 #   2. dart run build_runner build --delete-conflicting-outputs
-#   3. flutter analyze --fatal-errors
+#   3. flutter analyze --no-fatal-infos   (errors + warnings are fatal;
+#      the ~275 style infos — require_trailing_commas, prefer_const_* —
+#      are tolerated so the gate tracks real regressions, not lint taste)
 #   4. flutter test test/core test/features
 #
 # Exits 0 only when ALL four steps pass; non-zero on any failure so CI /
@@ -63,8 +65,13 @@ else
 fi
 
 # ─── Step 3: analyze ───────────────────────────────────────────────────
-step "3/4  flutter analyze --fatal-errors"
-"${FLUTTER_BIN}" analyze --fatal-errors
+# NOTE: Flutter 3.27's `flutter analyze` has no `--fatal-errors` flag —
+# analyzer ERRORS are always fatal (non-zero exit). It exposes only
+# `--fatal-warnings` (default ON) and `--fatal-infos` (default OFF). We pass
+# `--no-fatal-infos` so the gate fails on errors + warnings but not on the
+# accepted style-info noise.
+step "3/4  flutter analyze --no-fatal-infos"
+"${FLUTTER_BIN}" analyze --no-fatal-infos
 
 # ─── Step 4: test (test/core + test/features only — wide enough to ─────
 #             catch regressions, narrow enough to stay fast).

@@ -7,10 +7,15 @@ import 'settings_repository.dart';
 /// Riverpod providers for the Settings surface. T143 (Phase 9).
 
 final settingsRepositoryProvider = Provider<SettingsRepository>((ref) {
-  // Built once per process — wraps the shared UxStateRepository.
+  // Built once per process — wraps the shared UxStateRepository. The default
+  // socket path comes from defaultSocketPathProvider (overridden in main.dart
+  // with the bootstrap-resolved path) so a fresh-install Settings value + the
+  // FR-009 Doctor check target the SAME socket the app actually connects to —
+  // not the old hard-coded `/var/run/agenttower/app.sock` that disagreed with
+  // both the bootstrap path and the CLI/daemon default.
   return SettingsRepository(
     uxState: ref.read(uxStateRepositoryProvider),
-    defaultSocketPath: '/var/run/agenttower/app.sock',
+    defaultSocketPath: ref.read(defaultSocketPathProvider),
   );
 });
 

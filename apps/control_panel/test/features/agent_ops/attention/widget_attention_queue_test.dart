@@ -1,6 +1,7 @@
 import 'package:agenttower_control_panel/domain/models/attention_item.dart';
 import 'package:agenttower_control_panel/domain/models/common_enums.dart'
     hide ThemeMode;
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:agenttower_control_panel/domain/severity.dart';
 import 'package:agenttower_control_panel/features/agent_ops/attention/attention_queue_view.dart';
 import 'package:agenttower_control_panel/features/agent_ops/attention/providers.dart';
@@ -50,9 +51,15 @@ void main() {
 
         // Accessible name format matches `_AttentionRow.build`:
         //   "<semanticDescription> attention: <oneLineSummary>"
+        // Assert against the Semantics WIDGET's configured label rather than
+        // find.bySemanticsLabel: the merged semantics-tree node also absorbs
+        // the ListTile title/subtitle, so an exact node-label match never
+        // hits. The widget config is the load-bearing contract here.
+        final expectedLabel =
+            '${expected.semanticDescription} attention: ${item.oneLineSummary}';
         expect(
-          find.bySemanticsLabel(
-            '${expected.semanticDescription} attention: ${item.oneLineSummary}',
+          find.byWidgetPredicate(
+            (w) => w is Semantics && w.properties.label == expectedLabel,
           ),
           findsOneWidget,
           reason: 'semantic label should follow '
@@ -105,8 +112,13 @@ Future<void> _pumpWithItems(
         // requests.
         attentionListProvider.overrideWith((ref, _) async => items),
       ],
-      child: const MaterialApp(
-        home: AttentionQueueView(),
+      // Not const: localizationsDelegates references static getters. The
+      // view reads AppLocalizations.of(context) (T181 i18n sweep), which
+      // throws a null-check error without these delegates wired.
+      child: MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: const AttentionQueueView(),
       ),
     ),
   );

@@ -1,3 +1,4 @@
+import 'package:agenttower_control_panel/core/l10n/app_localizations.dart';
 import 'package:agenttower_control_panel/domain/models/badges.dart';
 import 'package:agenttower_control_panel/domain/models/common_enums.dart';
 import 'package:agenttower_control_panel/domain/models/project.dart';
@@ -119,6 +120,10 @@ Future<void> _pump(WidgetTester tester, Project project) async {
   await tester.pumpWidget(
     ProviderScope(
       child: MaterialApp(
+        // ProjectCard reads AppLocalizations.of(context) (T181 i18n sweep);
+        // these delegates avoid the null-check crash in the test harness.
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: SizedBox(
             // Bound the card so Wrap-based badge row has a real width.

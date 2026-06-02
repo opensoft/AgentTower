@@ -17,7 +17,6 @@ import 'grouping_rule.dart';
 class OsNativeNotificationDispatcher {
   OsNativeNotificationDispatcher({this.dedupWindow = const Duration(seconds: 60)});
 
-  static const String _bundleId = 'one.opensoft.agenttower.control-panel';
   static const String _appName = 'AgentTower Control Panel';
 
   final Duration dedupWindow;

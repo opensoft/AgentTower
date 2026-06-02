@@ -146,7 +146,7 @@ Map<String, dynamic> _us1Fixture() {
     'host_user_id': '1000',
     'schema_version': 1,
     'responses': {
-      'app.hello': {'ok': true, 'result': const {}},
+      'app.hello': {'ok': true, 'result': const <String, dynamic>{}},
       'app.dashboard': {
         'ok': true,
         'result': Fixtures.dashboardResult(),

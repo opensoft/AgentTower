@@ -48,7 +48,7 @@ void main() {
       expect(find.text('Daemon unreachable'), findsOneWidget);
       expect(find.byIcon(Icons.cloud_off_outlined), findsOneWidget);
       expect(
-        find.widgetWithText(FilledButton, 'Retry connection'),
+        find.ancestor(of: find.text('Retry connection'), matching: find.bySubtype<FilledButton>()),
         findsOneWidget,
       );
       // Outage-state never shows the per-section tiles.
@@ -57,6 +57,13 @@ void main() {
 
     testWidgets('reachable + all-zero counts renders empty tiles',
         (tester) async {
+      // DashboardView is a lazy ListView: the lower sections ("Log
+      // attachments", "Events + Queue + Routes") fall outside the default
+      // 800x600 test viewport and are not built. Give the test a tall
+      // surface so every section is materialized for the finders.
+      tester.view.physicalSize = const Size(1200, 3200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final fake = _FakeAppClient(
         dashboardResult: Fixtures.dashboardResult(
           containersActive: 0,
@@ -100,6 +107,11 @@ void main() {
 
     testWidgets('populated counts render the per-section stat values',
         (tester) async {
+      // Tall surface so the lazy ListView builds the below-the-fold
+      // "Events + Queue + Routes" section (see sibling test).
+      tester.view.physicalSize = const Size(1200, 3200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final fake = _FakeAppClient(
         dashboardResult: Fixtures.dashboardResult(
           containersActive: 3,

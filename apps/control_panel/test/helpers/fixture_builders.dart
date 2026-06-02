@@ -46,6 +46,7 @@ class Fixtures {
     PaneState state = PaneState.discoveredAndUnmanaged,
     String? registeredAgentId,
     String? lastSeenAt,
+    String? asOf,
   }) =>
       {
         'pane_id': paneId,
@@ -58,6 +59,11 @@ class Fixtures {
         if (registeredAgentId != null) 'registered_agent_id': registeredAgentId,
         'last_seen_at':
             lastSeenAt ?? DateTime.now().toUtc().toIso8601String(),
+        // FEAT-011 stamps a per-row `as_of` freshness marker on every entity
+        // response; the model declares it `required` (mapped snake-case from
+        // `asOf`). Tests that call `Pane.fromJson(Fixtures.pane())` directly —
+        // bypassing the provider's `withAsOfDefault` stamping — need it present.
+        'as_of': asOf ?? DateTime.now().toUtc().toIso8601String(),
       };
 
   // ---- AdoptedAgent ----
@@ -78,6 +84,7 @@ class Fixtures {
     // (the workaround T163 had to use). The model field is
     // `logAttachment` (camelCase); the wire field is `log_attachment`.
     LogAttachmentState? logAttachment,
+    String? asOf,
   }) =>
       {
         'agent_id': agentId,
@@ -93,6 +100,12 @@ class Fixtures {
         'last_meaningful_activity_at':
             lastActivityAt ?? DateTime.now().toUtc().toIso8601String(),
         if (logAttachment != null) 'log_attachment': logAttachment.wireValue,
+        // FEAT-011 stamps a per-row `as_of` freshness marker on every entity
+        // response; the model declares it `required` (mapped snake-case from
+        // `asOf`). Tests that call `AdoptedAgent.fromJson(Fixtures.agent())`
+        // directly — bypassing the provider's `withAsOfDefault` stamping —
+        // need it present.
+        'as_of': asOf ?? DateTime.now().toUtc().toIso8601String(),
       };
 
   // ---- Project (real shape lives further down at Phase-4 US2 builder) ----

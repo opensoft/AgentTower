@@ -48,7 +48,7 @@ void main() {
       final fake = _FakeAppClient();
       await openDialog(tester, fake);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+      await tester.tap(find.ancestor(of: find.text('Send'), matching: find.bySubtype<FilledButton>()));
       await tester.pump();
       expect(find.text('Payload is required (FR-018)'), findsOneWidget);
       expect(fake.calls, 0);
@@ -63,7 +63,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Payload'),
         'hello',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+      await tester.tap(find.ancestor(of: find.text('Send'), matching: find.bySubtype<FilledButton>()));
       // Settle the awaits.
       await tester.pump();
       await tester.pump();

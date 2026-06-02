@@ -1,3 +1,5 @@
+// ignore_for_file: invalid_annotation_target — @JsonKey(name:) on freezed
+// constructor params is the documented wire-mapping pattern (see T176/event.dart).
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'drift_supporting.freezed.dart';

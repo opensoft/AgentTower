@@ -157,6 +157,9 @@ Future<void> main() async {
             appPathsProvider.overrideWithValue(paths),
             loggerProvider.overrideWithValue(logger!),
             uxStateRepositoryProvider.overrideWithValue(uxState),
+            // Settings + FR-009 Doctor must check the SAME socket the live
+            // client uses — feed them the bootstrap-resolved path.
+            defaultSocketPathProvider.overrideWithValue(defaultSocketPath),
             socketClientProvider.overrideWithValue(socketClient),
             daemonSessionProvider.overrideWithValue(daemonSession),
             appClientProvider.overrideWithValue(appClient),
