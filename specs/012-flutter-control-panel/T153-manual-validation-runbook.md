@@ -43,9 +43,29 @@ Reference machine for the perf budgets (per spec Assumptions): 8-core x86-64
 
 ### 2a. Stand up the backend (host side)
 
-- [ ] `agenttowerd` installed and **running**, reachable at the OS-default socket
-  (`/run/user/$UID/agenttower/agenttowerd.sock` on Linux/macOS; the AF_UNIX path
-  on Windows 10 1803+).
+- [ ] `agenttowerd` installed and **running**, reachable at the OS-default socket.
+  On Linux the desktop app's bootstrap (`main.dart` `_defaultDaemonSocketPath`)
+  resolves, in order: `$DAEMON_SOCKET_PATH` (env override) →
+  `$XDG_RUNTIME_DIR/opensoft/agenttower/agenttowerd.sock` (typically
+  `/run/user/$UID/opensoft/agenttower/agenttowerd.sock`) →
+  `${XDG_STATE_HOME:-$HOME/.local/state}/opensoft/agenttower/agenttowerd.sock`.
+  This matches the CLI/daemon default (`src/agenttower/paths.py`). On Windows the
+  AF_UNIX path is used (Windows 10 1803+).
+
+> ⚠️ **Known socket-default inconsistency (needs a product decision — do NOT
+> silently pick one during T153).** Three sources disagree on the *displayed/
+> stored* default:
+> - **App bootstrap** (`main.dart`): the XDG runtime/state path above — agrees
+>   with the CLI/daemon.
+> - **App Settings default** (`lib/features/settings/providers.dart:13`):
+>   `'/var/run/agenttower/app.sock'` — does **not** match bootstrap or the CLI.
+> - **Mounted-default** (`config_doctor/socket_resolve.py`):
+>   `/run/agenttower/agenttowerd.sock`.
+>
+> For the T153 run, set `DAEMON_SOCKET_PATH` (or the Settings socket-path field)
+> explicitly to the path `agenttowerd` is actually bound to, and record it in
+> §6. File the `settings/providers.dart` default mismatch as a follow-up bug —
+> it is out of scope for this runbook and for the T153 test-harness fixups.
 - [ ] Docker Engine running with **≥1 bench container** active.
 - [ ] The bench container has **≥1 live tmux pane hosting a real agent CLI**
   (Claude / Codex / Gemini / OpenCode) — needed for Step 3's classifiable events.
@@ -54,14 +74,20 @@ Reference machine for the perf budgets (per spec Assumptions): 8-core x86-64
 ### 2b. Build + sign + install the desktop app
 
 Build the **signed installer** for the OS (per `apps/control_panel/README.md`
-§Packaging and `tools/package_*.sh`):
+§Packaging). **The packaging scripts live under `apps/control_panel/tools/` and
+MUST be run with `apps/control_panel/` as the working directory** (they resolve
+the Flutter build output relative to cwd). Run `cd apps/control_panel` first, or
+prefix each invocation, e.g. `cd apps/control_panel && FLUTTER=flutter327 bash
+tools/package_linux.sh`.
 
-- **Windows** (PowerShell): `tools\package_windows.ps1` → MSIX. Sign with the
-  Opensoft daemon code-signing CA (do **not** use `SKIP_SIGNING=1` for the
-  release-gate run).
-- **macOS**: `tools/package_macos.sh` → `.dmg`, **notarized + hardened runtime**
-  (do **not** use `SKIP_NOTARIZATION=1` for the release-gate run).
-- **Linux**: `tools/package_linux.sh` → `.AppImage` (+ `.deb`).
+- **Windows** (PowerShell): from `apps\control_panel\`, run
+  `tools\package_windows.ps1` → MSIX. Sign with the Opensoft daemon
+  code-signing CA (do **not** use `SKIP_SIGNING=1` for the release-gate run).
+- **macOS**: from `apps/control_panel/`, run `tools/package_macos.sh` → `.dmg`,
+  **notarized + hardened runtime** (do **not** use `SKIP_NOTARIZATION=1` for
+  the release-gate run).
+- **Linux**: from `apps/control_panel/`, run `tools/package_linux.sh` →
+  `.AppImage` (+ `.deb`). See §2c for the Linux build prerequisites.
 
 - [ ] Installer built without errors.
 - [ ] Installed the app from the installer (not `flutter run`) — this is what
@@ -70,13 +96,36 @@ Build the **signed installer** for the OS (per `apps/control_panel/README.md`
   or re-entered from Settings. To reset: delete
   `<app-data>/agenttower-control-panel/ux-state.json`.
 
+### 2c. Linux build prerequisites + troubleshooting (bench-confirmed 2026-06-02)
+
+- [ ] **`libnotify-dev` installed** — the Linux desktop build links against
+  `/usr/lib/x86_64-linux-gnu/libnotify.so` (transitively via `local_notifier`).
+  Without it the GTK build fails at link time. Install:
+  `sudo apt-get install -y libnotify-dev`. (Add this to the flutter-bench image
+  setup so CI doesn't rediscover it.)
+- [ ] **Build dir not root-owned.** A prior root-owned
+  `apps/control_panel/build/linux/...` tree (left by an earlier bench Docker
+  session) blocks CMake writes with a permission error. Fix before building:
+  `sudo chown -R "$USER:$USER" apps/control_panel/build/linux` — or wipe it:
+  `rm -rf apps/control_panel/build/linux`.
+- [ ] `appimagetool` on PATH **if** producing the `.AppImage` (the bench lacks
+  it; the `.deb` path does not need it — see §5).
+- [ ] **Clear stale tmux sockets before `scan --panes`.** Prior smoke sessions
+  can leave dead tmux sockets behind, which makes `agenttower scan --panes`
+  return `ok: true` but **degraded**. This is an environment artifact, not an
+  app defect — clean up the orphaned sockets (`tmux kill-server` in the bench,
+  or remove the stale `$TMUX_TMPDIR`/`/tmp/tmux-*` entries) and re-scan for a
+  clean run.
+
 ---
 
 ## 3. Pre-flight (run before launching the app, each OS)
 
 ```bash
-# Daemon reachable (FEAT-002 CLI preflight; the app calls app.preflight itself)
-agenttower preflight
+# Daemon reachable. There is NO `agenttower preflight` command on this branch;
+# the app calls `app.preflight` over the socket internally. From the CLI, use:
+agenttower status --json          # daemon reachability over the local socket
+agenttower config doctor --json   # closed-set FEAT-005 diagnostic checks
 
 # At least one bench container
 docker ps --filter "name=bench" --format "table {{.Names}}\t{{.Status}}"
@@ -195,6 +244,19 @@ Run every step on each OS. Tick **P/F/N-A** per OS in the small table after each
 
 ## 5. Packaging & trust checks (release-gate; per T148 + T178)
 
+> **Two distinct Linux bars — do not conflate them:**
+> - **Bench `.deb` smoke** (achievable in flutter-bench, *not* the release gate):
+>   `cd apps/control_panel && FLUTTER=flutter327 bash tools/package_linux.sh`
+>   produces a `.deb`; install it and smoke-launch under `xvfb-run`. GTK/ATK
+>   warnings under Xvfb are expected and do not by themselves count as a FAIL.
+>   This proves the bundle builds + installs + launches headless — it is **not**
+>   sufficient to mark the Linux column PASS.
+> - **Full Linux release gate** (required to PASS the Linux column): the signed
+>   **`.AppImage`** built with `appimagetool`, installed and launched on a real
+>   (non-Xvfb) Linux desktop, with the §5 bundle-id + trust-statement checks.
+>   The bench cannot do this (`appimagetool` absent), so the Linux release-gate
+>   row is **operator-verified on real hardware**, like macOS/Windows signing.
+
 | Check | Win | macOS | Linux |
 |---|---|---|---|
 | Installs from the **signed** installer cleanly | |  |  |
@@ -221,6 +283,10 @@ Run every step on each OS. Tick **P/F/N-A** per OS in the small table after each
 **Deviations / known-omissions accepted** (e.g. "4 dashboard tiles omitted at
 contract 1.0 — expected, tracked by #34"):
 
+- 2026-06-02: Linux **automated/headless** evidence captured (see §9) — daemon
+  status + config doctor + scans + Flutter integration smoke + installed-`.deb`
+  native-window launch all pass. Linux row stays **not PASS** pending the human
+  visual sign-off (Steps 1–7) + signed `.AppImage` on a real desktop.
 - …
 
 ---
@@ -239,3 +305,46 @@ deviation note):
 
 > If you ran a partial pass (e.g. Linux only), record which OSes are done and
 > leave T153 open until all three are covered — the gate is **all three OSes**.
+
+---
+
+## 8. Tooling note — how to drive each OS
+
+- **Linux (flutter-bench):** use **`xvfb-run` + native window inspection inside
+  flutter-bench** — run the integration smoke under `xvfb-run`, build/install
+  the `.deb`, launch it under Xvfb and inspect the native GTK window (title,
+  process liveness, stderr). This is the right tool for the headless Linux bench.
+- **Windows:** Computer Use is appropriate for Windows desktop apps (real
+  Win10/11 desktop, SmartScreen, native window UX).
+- **macOS:** a real macOS desktop session (Gatekeeper, notarization, visual UX).
+- Do **not** use Computer Use for the Linux lane — it targets Windows desktop
+  apps; the Xvfb + native-window-inspection path above is the bench-correct tool.
+
+---
+
+## 9. Validation evidence log (append-only; partial runs welcome)
+
+Record every partial or full run here with a date. Partial runs improve the
+T153 evidence trail but do **not** flip the §6 matrix to PASS — that still needs
+the full signed installer + human visual sign-off per OS.
+
+### 2026-06-02 — Linux flutter-bench partial (automated/headless; NOT a visual sign-off)
+
+Tooling: `xvfb-run` + native window inspection inside flutter-bench (per §8).
+Daemon left running afterward for follow-up testing.
+
+| Check | Result |
+|---|---|
+| Daemon preflight / `agenttower status` | ✅ alive on the shared AgentTower socket |
+| `agenttower config doctor` | ✅ passed (only expected `not_in_tmux` **info** checks) |
+| `agenttower scan --containers` | ✅ passed |
+| `agenttower scan --panes` | ⚠️ `ok: true` but **degraded** — stale tmux sockets left by prior smoke sessions (environment artifact, not an app defect; see §2c cleanup) |
+| Flutter Linux integration smoke (`integration_test/us1_smoke_walk.dart`, `-d linux` under Xvfb) | ✅ passed |
+| Installed `.deb` launch smoke | ✅ real native window titled **"AgentTower Control Panel"**; process stayed alive; only GTK/ATK warnings on stderr |
+| `dpkg-deb` bundle-id / package metadata | ✅ `agenttower-control-panel` 0.1.0, id `one.opensoft.agenttower.control_panel`, no `com.example` |
+
+**Still outstanding (T153 remains OPEN):**
+- Linux **human visual UX** sign-off (Steps 1–7 ticked by a person on a real
+  desktop) and the **signed `.AppImage`** release-gate row (§5).
+- **Windows** and **macOS** entirely — signed installers + trust prompts +
+  visual UX on their proper desktop environments.
