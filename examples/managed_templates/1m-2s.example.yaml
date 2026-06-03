@@ -1,0 +1,29 @@
+# Example managed-layout template.
+#
+# Copy this file to ~/.config/opensoft/agenttower/managed_templates/ under
+# any filename to override the built-in 1m+2s template (operator file with
+# same `name:` wins), or with a different `name:` value to add a new
+# template alongside the built-ins.
+#
+# Per FR-024 the daemon never installs files into your home directory.
+# `examples/` here is a discoverable reference set, not an installed
+# default. See specs/013-managed-session-lifecycle/data-model.md for the
+# full ManagedTemplate / TemplatePane schema and
+# specs/013-managed-session-lifecycle/research.md §R8 for the rationale.
+
+name: 1m+2s
+panes:
+  - role: master
+    capability: orchestrator
+    label_pattern: "m{ordinal}"
+    default_launch_command_ref: null
+
+  - role: slave
+    capability: worker
+    label_pattern: "s{ordinal}"
+    default_launch_command_ref: null
+
+  - role: slave
+    capability: worker
+    label_pattern: "s{ordinal}"
+    default_launch_command_ref: null

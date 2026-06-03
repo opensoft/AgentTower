@@ -1,0 +1,22 @@
+# Example launch command profile.
+#
+# Copy this file to ~/.config/opensoft/agenttower/launch_commands/ and
+# adjust `name:`, `command:`, `env:`, `working_dir:` to your needs.
+#
+# Per research §R9, `command:` MUST be a list of strings (argv) — never
+# a single shell string. The daemon passes argv directly to tmux's
+# new-session / split-window invocations, so shell interpolation does
+# not apply (Principle III safety).
+#
+# `env:` is optional. Per FR-021 the daemon redacts environment-variable
+# values whose key matches `*TOKEN*` / `*SECRET*` / `*KEY*` / `*PASSWORD*`
+# (case-insensitive substring) in the JSONL lifecycle event payloads
+# retained indefinitely. Command argv and working_dir are not redacted.
+#
+# `working_dir:` is optional and applied via tmux's `-c` flag (no shell).
+
+name: bash-placeholder
+command: ["bash", "-lc", "echo 'agent ready'; exec bash"]
+env:
+  AGENTTOWER_ROLE: example
+working_dir: /workspace

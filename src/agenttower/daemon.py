@@ -313,6 +313,7 @@ def _build_feat009_services(
     object,  # DeliveryWorker
     object,  # MessageQueueDao
     object,  # DaemonStateDao
+    object,  # worker_tx_lock (FEAT-013 C1 fix)
 ]:
     """Construct FEAT-009 queue / routing / delivery services (T048).
 
@@ -372,6 +373,11 @@ def _build_feat009_services(
     audit_writer = QueueAuditWriter(
         worker_conn, paths.events_file, tx_lock=worker_tx_lock,
     )
+
+    # Expose the tx_lock alongside worker_conn so FEAT-013 service
+    # entry points (C1 fix) can acquire the same lock around their DB
+    # statements. The lock is returned via ``_build_feat009_services``
+    # below and threaded into DaemonContext.state_tx_lock.
 
     # Read-only adapters share a connection factory; each method opens
     # its own short-lived connection so reads don't block the worker
@@ -435,6 +441,7 @@ def _build_feat009_services(
         delivery_worker,
         message_queue_dao,
         daemon_state_dao,
+        worker_tx_lock,
     )
 
 
@@ -572,6 +579,7 @@ def _build_context(
     follow_session_registry: object | None = None,
     events_config: object | None = None,
     state_conn: sqlite3.Connection | None = None,
+    state_tx_lock: object | None = None,
     queue_service: object | None = None,
     routing_flag_service: object | None = None,
     delivery_worker: object | None = None,
@@ -582,6 +590,10 @@ def _build_context(
     routing_worker_thread: object | None = None,
     routing_audit_writer: object | None = None,
     routing_shared_state: object | None = None,
+    managed_serializer: object | None = None,
+    managed_spawn_backends: object | None = None,
+    managed_sweep_cancel: object | None = None,
+    managed_reconcile_outcome: object | None = None,
 ) -> DaemonContext:
     return DaemonContext(
         pid=os.getpid(),
@@ -601,6 +613,7 @@ def _build_context(
         follow_session_registry=follow_session_registry,
         events_config=events_config,
         state_conn=state_conn,
+        state_tx_lock=state_tx_lock,
         queue_service=queue_service,
         routing_flag_service=routing_flag_service,
         delivery_worker=delivery_worker,
@@ -611,6 +624,10 @@ def _build_context(
         routing_worker_thread=routing_worker_thread,
         routing_audit_writer=routing_audit_writer,
         routing_shared_state=routing_shared_state,
+        managed_serializer=managed_serializer,
+        managed_spawn_backends=managed_spawn_backends,
+        managed_sweep_cancel=managed_sweep_cancel,
+        managed_reconcile_outcome=managed_reconcile_outcome,
     )
 
 
@@ -931,6 +948,7 @@ def _run(args: argparse.Namespace) -> int:
                 delivery_worker,
                 message_queue_dao,
                 daemon_state_dao,
+                worker_tx_lock,
             ) = _build_feat009_services(
                 paths=paths,
                 discovery_service=discovery_service,
@@ -953,6 +971,56 @@ def _run(args: argparse.Namespace) -> int:
                 paths=paths,
                 queue_service=queue_service,
             )
+            # FEAT-013 daemon-boot wiring (Workstream 1 / C4 + C6):
+            #   1. Per-container serializer (FR-019).
+            #   2. Reconcile durable rows against live tmux BEFORE the
+            #      socket opens (FR-020 + SC-008).
+            #   3. Schedule the FR-022 5-minute TTL sweep on a 60-second
+            #      periodic timer. Cancel on shutdown.
+            #   4. Production spawn backends (T057): compose the tmux /
+            #      register / log-attach backends over the FEAT-004
+            #      adapter so the M1 handler's kickoff_spawn_pipeline()
+            #      actually spawns + registers panes. ``None`` only when
+            #      no tmux adapter resolves (kickoff then no-ops).
+            from .managed_sessions.daemon_boot import (
+                make_managed_serializer,
+                reconcile_managed_state_at_boot,
+                start_pending_marker_sweep,
+            )
+            from .managed_sessions.spawn_backends import (
+                build_spawn_backends,
+                make_recovery_list_panes_channel,
+            )
+            managed_serializer = make_managed_serializer()
+            managed_tmux_adapter = _resolve_tmux_adapter()
+            managed_spawn_backends: dict[str, object] | None = None
+            managed_list_panes_fn = None
+            if managed_tmux_adapter is not None:
+                managed_spawn_backends = build_spawn_backends(
+                    adapter=managed_tmux_adapter,
+                    agent_service=agent_service,
+                    log_service=log_service,
+                    # T059: FR-010 remove-pane side-effects (route cleanup
+                    # over FEAT-010) need the RoutesService.
+                    routes_service=routes_service,
+                )
+                # T058: production recovery list-panes channel so the
+                # FR-020 / SC-008 / SC-009 boot reconcile actually runs.
+                managed_list_panes_fn = make_recovery_list_panes_channel(
+                    adapter=managed_tmux_adapter,
+                )
+            managed_reconcile_outcome = reconcile_managed_state_at_boot(
+                conn=worker_conn,
+                serializer=managed_serializer,
+                tmux_list_panes_fn=managed_list_panes_fn,
+                tx_lock=worker_tx_lock,
+            )
+            managed_sweep_cancel = start_pending_marker_sweep(
+                conn=worker_conn,
+                tx_lock=worker_tx_lock,
+                shutdown_event=shutdown_event,
+            )
+
             ctx = _build_context(
                 paths=paths,
                 state_dir=state_dir,
@@ -966,6 +1034,7 @@ def _run(args: argparse.Namespace) -> int:
                 follow_session_registry=follow_registry,
                 events_config=events_config,
                 state_conn=worker_conn,
+                state_tx_lock=worker_tx_lock,
                 queue_service=queue_service,
                 routing_flag_service=routing_flag,
                 delivery_worker=delivery_worker,
@@ -976,6 +1045,10 @@ def _run(args: argparse.Namespace) -> int:
                 routing_worker_thread=routing_worker_thread,
                 routing_audit_writer=routes_audit_writer,
                 routing_shared_state=routing_shared_state,
+                managed_serializer=managed_serializer,
+                managed_spawn_backends=managed_spawn_backends,
+                managed_sweep_cancel=managed_sweep_cancel,
+                managed_reconcile_outcome=managed_reconcile_outcome,
             )
 
             server = _bind_control_server(paths, ctx, logger)
@@ -1000,6 +1073,13 @@ def _run(args: argparse.Namespace) -> int:
             # routing worker stops FIRST (no new route-generated rows),
             # then the heartbeat thread, then the FEAT-009 delivery
             # worker drains.
+            # FEAT-013 sweep cancellation — fire first so the next
+            # scheduled tick can't race the worker_conn close below.
+            try:
+                if "managed_sweep_cancel" in locals() and managed_sweep_cancel is not None:
+                    managed_sweep_cancel()
+            except Exception:  # pragma: no cover — defensive
+                pass
             if routing_worker_thread is not None:
                 try:
                     routing_worker_thread.stop()
@@ -1017,7 +1097,19 @@ def _run(args: argparse.Namespace) -> int:
                     pass
             if worker_conn is not None:
                 try:
-                    worker_conn.close()
+                    # review #13: close under worker_tx_lock so any in-flight
+                    # tx_guard-protected statement (a FEAT-013 background
+                    # spawn thread or an in-progress sweep tick that slipped
+                    # past its shutdown-event check) completes first —
+                    # otherwise close() can race it and raise
+                    # ProgrammingError ("Cannot operate on a closed
+                    # database") mid-transaction.
+                    _wtl = locals().get("worker_tx_lock")
+                    if _wtl is not None:
+                        with _wtl:
+                            worker_conn.close()
+                    else:
+                        worker_conn.close()
                 except Exception:  # pragma: no cover — defensive
                     pass
             # Always stop the reader thread, regardless of which phase of

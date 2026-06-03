@@ -144,6 +144,18 @@ def test_v3_to_current_preserves_feat001_through_feat004_tables(tmp_path: Path) 
         "routes",
         "idx_routes_created_at_route_id",
         "idx_message_queue_route_event",
+        # FEAT-013 artifacts (schema v9: managed_layout / managed_pane tables
+        # + their indexes, incl. the TEXT-PK auto-index).
+        "managed_layout",
+        "managed_pane",
+        "ix_managed_layout_container_state",
+        "ix_managed_pane_layout_state",
+        "ix_managed_pane_pending_marker",
+        "ix_managed_pane_predecessor",
+        "ux_managed_layout_idempotency_key",
+        "ux_managed_pane_container_label",
+        "ux_managed_pane_tmux_target",
+        "sqlite_autoindex_managed_pane_1",
         # SQLite metadata: AUTOINCREMENT requires sqlite_sequence (v7 events
         # rebuild adds it because events.event_id is INTEGER PRIMARY KEY
         # AUTOINCREMENT).

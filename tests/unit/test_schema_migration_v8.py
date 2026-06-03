@@ -354,8 +354,11 @@ def test_routes_accepts_well_formed_row(tmp_path: Path) -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_current_schema_version_is_eight() -> None:
-    assert schema.CURRENT_SCHEMA_VERSION == 8
+def test_current_schema_version_is_at_least_eight() -> None:
+    """The v8 migration entry MUST exist; later FEATs may bump
+    CURRENT_SCHEMA_VERSION higher (FEAT-013 bumped it to 9). Mirrors the
+    robust `>= N` assertion in test_schema_v4_migration_unit."""
+    assert schema.CURRENT_SCHEMA_VERSION >= 8
 
 
 def test_migration_v8_is_registered() -> None:
@@ -363,8 +366,11 @@ def test_migration_v8_is_registered() -> None:
     assert schema._MIGRATIONS[8] is schema._apply_migration_v8
 
 
-def test_pending_migrations_v7_to_v8_via_open(tmp_path: Path) -> None:
-    """End-to-end: open_registry on a v7 DB upgrades to v8 atomically."""
+def test_pending_migrations_v7_to_current_via_open(tmp_path: Path) -> None:
+    """End-to-end: open_registry on a v7 DB upgrades through the chain to
+    the current head (v8 added `routes`; FEAT-013 v9 added managed_*).
+    Asserts it reaches CURRENT_SCHEMA_VERSION and the v8 `routes` table
+    landed along the way."""
     import os
     conn, state_db = _open_v7_only(tmp_path)
     conn.close()
@@ -375,7 +381,8 @@ def test_pending_migrations_v7_to_v8_via_open(tmp_path: Path) -> None:
         version = opened.execute(
             "SELECT version FROM schema_version"
         ).fetchone()[0]
-        assert version == 8
+        assert version == schema.CURRENT_SCHEMA_VERSION
         assert "routes" in _table_names(opened)
+        assert "managed_pane" in _table_names(opened)
     finally:
         opened.close()

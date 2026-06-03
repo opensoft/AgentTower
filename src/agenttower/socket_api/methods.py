@@ -66,6 +66,13 @@ class DaemonContext:
     # operator-pane liveness check (Group-A walk Q8) uses to look up
     # caller agents via :func:`agents.select_agent_by_id`.
     state_conn: Any = None
+    # FEAT-013 C1 fix: shared ``worker_tx_lock`` so FEAT-013 service
+    # entry points serialize their DB statements through the same lock
+    # FEAT-009/010 use. Without this, a FEAT-013 ``BEGIN IMMEDIATE``
+    # collides with FEAT-009's worker transaction. Daemon-boot wires
+    # this to the same ``threading.Lock`` instance shared by the
+    # MessageQueueDao / DaemonStateDao / QueueAuditWriter.
+    state_tx_lock: Any = None
     queue_service: Any = None
     routing_flag_service: Any = None
     delivery_worker: Any = None
@@ -81,6 +88,18 @@ class DaemonContext:
     routing_worker_thread: Any = None
     routing_audit_writer: Any = None
     routing_shared_state: Any = None
+    # FEAT-013 — populated at daemon boot. The serializer is the
+    # per-container ``threading.Lock`` map (FR-019). ``managed_spawn_backends``
+    # carries the production tmux + register + log-attach + kill +
+    # list-panes + route-cleanup + log-detach callables produced by
+    # ``managed_sessions.spawn_backends``. The sweep cancel handle is
+    # the boot-registered ``threading.Timer`` so shutdown can cancel
+    # it cleanly. The reconcile-outcome snapshot lets ``status`` /
+    # diagnostics surface the last boot reconcile result.
+    managed_serializer: Any = None
+    managed_spawn_backends: Any = None
+    managed_sweep_cancel: Any = None
+    managed_reconcile_outcome: Any = None
 
 
 def _set_request_peer_context(*, peer_pid: int) -> None:
@@ -2185,3 +2204,12 @@ DISPATCH: dict[str, Handler] = {
 from agenttower.app_contract.dispatcher import APP_DISPATCH  # noqa: E402
 
 DISPATCH.update(APP_DISPATCH)
+
+# FEAT-013 (T025): merge the legacy ``managed.*`` namespace into DISPATCH.
+# Additive — no FEAT-002 method binding is altered. Mirrors the FEAT-011
+# merge above so the import order is unsurprising (managed_sessions/
+# handlers/cli.py imports from socket_api lazily inside its handlers so
+# this import cannot loop).
+from agenttower.managed_sessions.handlers.cli import register as _managed_cli_register  # noqa: E402
+
+DISPATCH.update(_managed_cli_register())
