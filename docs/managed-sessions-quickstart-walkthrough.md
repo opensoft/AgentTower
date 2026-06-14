@@ -34,14 +34,14 @@ For a real end-to-end demo against a running `agenttowerd` plus a real bench con
 5. Run §US3 §"Daemon restart (SC-008)" — stop the daemon, confirm tmux panes alive, start the daemon, hit `app.managed_layout_detail` within ~5s, confirm `state == "ready"`.
 6. Run §Edge cases — at minimum exercise the `managed_session_name_conflict` and `managed_layout_capacity_exceeded` paths.
 
-Production end-to-end requires:
+Production end-to-end wiring has **landed** in daemon boot (`src/agenttower/daemon.py`, managed startup block ~L985–1022):
 
-- The tmux spawn backend composition (`tmux_create.py` + `pending_marker.py` + FEAT-004 docker-exec channel) — documented as a follow-up in `src/agenttower/managed_sessions/spawn_backends.py`.
-- The daemon-boot wiring of `spawn_layout_in_background` (handler kick-off after `create_layout` returns) — same follow-up.
-- The daemon-boot wiring of `recovery.reconcile()` (run before the socket accepts requests per SC-008) — documented in `src/agenttower/managed_sessions/recovery.py`'s module docstring.
-- The daemon-boot wiring of `pending_marker.sweep()` (60-second periodic) — documented in `src/agenttower/managed_sessions/pending_marker.py`.
+- The tmux spawn backend composition (`spawn_backends.py` over the FEAT-004 docker-exec channel) is registered, and the M1 handler's `kickoff_spawn_pipeline()` drives `spawn_layout_in_background` after `create_layout` returns.
+- `recovery.reconcile()` runs via `reconcile_managed_state_at_boot(...)` before the socket accepts requests (FR-020 / SC-008 / SC-009); its `ReconcileOutcome` is stored on the DaemonContext (`managed_reconcile_outcome`).
+- The FEAT-008 JSONL lifecycle event emitter is bound via `make_managed_event_emitter(paths.events_file)` and threaded through create / remove / recreate / recovery.
+- The FR-022 pending-marker TTL sweep runs on a 60-second cadence via `start_pending_marker_sweep(...)`, cancelled on shutdown through `managed_sweep_cancel`.
 
-All four wiring follow-ups share the same DaemonContext field additions; they're tracked together as the "daemon-boot wiring follow-up" outside of FEAT-013's natural per-task scope.
+What remains is **operational validation**, not code wiring: a real-bench manual smoke against a running `agenttowerd` + bench container has not yet been recorded in the Drift report below.
 
 ---
 
@@ -49,9 +49,9 @@ All four wiring follow-ups share the same DaemonContext field additions; they're
 
 | Date | Run by | Result | Notes |
 |---|---|---|---|
-| _(none yet — quickstart is exercised in-process via the test suites listed above; manual production walkthrough is gated on the daemon-boot wiring follow-up)_ | | | |
+| _(none yet — quickstart is exercised in-process via the test suites listed above; the daemon-boot wiring has landed, so a real-bench manual smoke can now be run and recorded here)_ | | | |
 
-When the production walkthrough is run (after the daemon-boot wiring follow-up lands), add a row above with the date, runner, pass/fail, and any drift between the quickstart prose and observed behavior. Then either:
+When the production walkthrough is run, add a row above with the date, runner, pass/fail, and any drift between the quickstart prose and observed behavior. Then either:
 
 - The quickstart is canonical → file a code fix for the divergence.
 - The behavior is canonical → file a spec amendment + re-run.

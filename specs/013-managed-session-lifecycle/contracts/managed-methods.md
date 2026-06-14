@@ -19,7 +19,7 @@ All examples use NDJSON over the local Unix socket. Field types follow FEAT-011 
 Inherits FEAT-011 verbatim:
 
 - Success: `{"ok": true, "app_contract_version": "1.1", "result": {...}}`
-- Failure: `{"ok": true, "app_contract_version": "1.1", "error": {"code": "<closed-set>", "message": "...", "details": {...}}}`
+- Failure: `{"ok": false, "app_contract_version": "1.1", "error": {"code": "<closed-set>", "message": "...", "details": {...}}}`
 
 (Note: legacy `managed.*` methods use FEAT-002's existing envelope, which is the same shape minus `app_contract_version`. The `app_contract_version` shown is whatever the daemon currently advertises — it advanced from `1.0` to `1.1` with FEAT-014 (App Dashboard Extensions); FEAT-013's `app.managed_*` handlers inherit it unchanged via the shared envelope.)
 
@@ -244,7 +244,7 @@ Reserved transition. MVP behavior: always responds with `not_implemented`.
 
 **Response**:
 ```json
-{"ok": true, "error": {"code": "not_implemented", "message": "promote_from_adopted is reserved for a later feature.", "details": {"reserved_since": "FEAT-013"}}}
+{"ok": false, "error": {"code": "not_implemented", "message": "promote_from_adopted is reserved for a later feature.", "details": {"reserved_since": "FEAT-013"}}}
 ```
 
 This is implemented as a service entry point that returns the error envelope; the underlying state-machine module exposes the `PROMOTE_FROM_ADOPTED` constant for tests but the transition itself is gated off.

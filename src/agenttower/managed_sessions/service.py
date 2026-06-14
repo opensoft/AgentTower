@@ -1139,6 +1139,32 @@ def remove_pane(
 
     lock = serializer.for_container(pane.container_id)
     with lock:
+        # review P2: the missing/creating/removed checks above ran on a
+        # snapshot read BEFORE acquiring the serializer lock, so two
+        # concurrent removes of the same pane could both observe ``ready``
+        # there. Re-select the fresh row UNDER the lock and re-apply the
+        # terminal-state checks: the second remove then takes the
+        # idempotent already-removed no-op instead of repeating the DB
+        # write, tmux kill, route/log cleanup, and lifecycle events.
+        with tx_guard(tx_lock):
+            pane = select_pane(conn, pane_id)
+        if pane is None:
+            raise ManagedSessionsError(
+                MANAGED_PANE_NOT_FOUND,
+                details={"pane_id": pane_id},
+            )
+        if pane.state == ManagedState.REMOVED:
+            return RemovePaneResult(pane_id=pane.id, state=ManagedState.REMOVED)
+        if pane.state == ManagedState.CREATING:
+            raise ManagedSessionsError(
+                MANAGED_PANE_ILLEGAL_TRANSITION,
+                details={
+                    "pane_id": pane.id,
+                    "current_state": pane.state.value,
+                    "requested_action": "remove",
+                },
+            )
+
         # 3. Durable-first ordering (review P2#5). Commit the pane→removed
         #    transition (+ layout aggregate) BEFORE the irreversible tmux
         #    kill / route+log cleanup. The side effects are idempotent

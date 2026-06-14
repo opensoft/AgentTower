@@ -24,6 +24,8 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import re
+import threading
+from collections import deque
 from pathlib import Path
 from typing import Callable, Final, Optional
 
@@ -181,46 +183,152 @@ def build_event(
     }
 
 
+# Bounded backlog of lifecycle events awaiting a successful JSONL append.
+# Mirrors the FEAT-010 ``QueueAuditWriter`` deque cap — keeps a persistent
+# events-file outage from growing memory without bound.
+_MAX_PENDING_EVENTS: Final[int] = 1024
+
+
+class _ManagedEventEmitter:
+    """Callable JSONL event emitter with a bounded retry buffer (review P2).
+
+    Managed lifecycle events are spec'd to ride the FEAT-008 JSONL pipeline
+    and be retained indefinitely in MVP (FR-015 / FR-021). The previous
+    emitter caught a transient ``OSError`` and dropped the event
+    permanently and silently. This emitter instead buffers a failed write
+    in a bounded FIFO deque and retries the whole backlog on every
+    subsequent emit (drain-on-emit): a transient disk/mode error self-heals
+    as soon as the next event is emitted. A persistent failure keeps the
+    buffer at its cap (oldest evicted and counted as a hard drop) and the
+    emitter ``degraded`` — both observable via the properties below and the
+    module-level accessors a future status RPC can read.
+
+    The durable SQLite row remains the source of truth for lifecycle state;
+    a JSONL write failure must still never fail an operator's mutation, so
+    ``__call__`` never raises.
+    """
+
+    def __init__(
+        self, events_file: Path, *, max_pending: int = _MAX_PENDING_EVENTS
+    ) -> None:
+        self._events_file = events_file
+        self._pending: deque[dict[str, object]] = deque(maxlen=max_pending)
+        self._lock = threading.Lock()
+        self._degraded_exc_class: Optional[str] = None
+        self._dropped = 0
+
+    def __call__(self, envelope: dict[str, object]) -> None:
+        from ..events.writer import append_event
+
+        with self._lock:
+            if (
+                self._pending.maxlen is not None
+                and len(self._pending) == self._pending.maxlen
+            ):
+                # Appending at capacity evicts the oldest still-unwritten
+                # event — count it as a hard loss for observability.
+                self._dropped += 1
+            self._pending.append(envelope)
+
+            # Drain FIFO; stop at the first failure so ordering is
+            # preserved and the remainder stays buffered for next time.
+            while self._pending:
+                head = self._pending[0]
+                try:
+                    append_event(self._events_file, head)
+                except OSError as exc:
+                    first_failure = self._degraded_exc_class is None
+                    self._degraded_exc_class = type(exc).__name__
+                    _LOG.warning(
+                        "managed_sessions: events-file append failed; "
+                        "buffered for retry (pending=%d dropped=%d): %s",
+                        len(self._pending),
+                        self._dropped,
+                        exc,
+                        # Full traceback once per degraded episode only.
+                        exc_info=first_failure,
+                    )
+                    return
+                self._pending.popleft()
+
+            # Fully drained — clear the degraded marker.
+            self._degraded_exc_class = None
+
+    @property
+    def degraded(self) -> bool:
+        with self._lock:
+            return len(self._pending) > 0
+
+    @property
+    def pending_count(self) -> int:
+        with self._lock:
+            return len(self._pending)
+
+    @property
+    def dropped_count(self) -> int:
+        with self._lock:
+            return self._dropped
+
+    @property
+    def last_failure_exc_class(self) -> Optional[str]:
+        with self._lock:
+            return self._degraded_exc_class
+
+
+# Shared per events-file path so the per-request emitters the handlers
+# build (handlers/cli.py, handlers/app.py) and the daemon-boot/recovery
+# emitter all funnel through ONE retry buffer + degraded flag.
+_EMITTERS_LOCK = threading.Lock()
+_EMITTERS: dict[str, _ManagedEventEmitter] = {}
+
+
 def make_managed_event_emitter(
     events_file: Optional[Path],
 ) -> Optional[Callable[[dict[str, object]], None]]:
-    """Build the JSONL-append event emitter the service expects (T032).
+    """Build (or reuse) the JSONL-append event emitter the service expects.
 
     The managed service entry points (``create_layout`` / ``remove_pane`` /
     ``recreate_pane`` / ``spawn_layout_in_background`` / ``reconcile``) take
     an ``Optional[event_emitter]`` and call ``event_emitter(build_event(...))``.
     This binds that callable to the daemon's FEAT-008 JSONL events file via
-    :func:`agenttower.events.writer.append_event` — the production write
-    site that closes the FR-015 "MUST emit observable lifecycle events" gap
-    (the handlers previously passed no emitter, so events were never
-    persisted).
+    :class:`_ManagedEventEmitter` — the production write site that closes the
+    FR-015 "MUST emit observable lifecycle events" gap (the handlers
+    previously passed no emitter, so events were never persisted).
 
     Returns ``None`` when ``events_file`` is ``None`` so callers can pass
     the result straight through to the service's optional parameter (tests
     that own no events file get the historical no-emit behaviour).
 
-    Writes are **best-effort**: an ``OSError`` from the events pipeline is
-    logged and swallowed. The durable SQLite row is the source of truth for
-    lifecycle state; the JSONL stream is the observable audit surface, and a
-    transient events-file write failure must not fail an operator's
-    layout/pane mutation.
+    The returned emitter is **shared per events-file path** so a degraded
+    episode (and its retry backlog) is visible across the per-request
+    emitters the handlers construct.
     """
     if events_file is None:
         return None
 
-    from ..events.writer import append_event
+    key = str(events_file)
+    with _EMITTERS_LOCK:
+        emitter = _EMITTERS.get(key)
+        if emitter is None:
+            emitter = _ManagedEventEmitter(Path(events_file))
+            _EMITTERS[key] = emitter
+        return emitter
 
-    def _emit(envelope: dict[str, object]) -> None:
-        try:
-            append_event(events_file, envelope)
-        except OSError:
-            _LOG.warning(
-                "managed_sessions: failed to append lifecycle event "
-                "type=%s layout=%s pane=%s",
-                envelope.get("event_type"),
-                envelope.get("layout_id"),
-                envelope.get("pane_id"),
-                exc_info=True,
-            )
 
-    return _emit
+def managed_event_persistence_degraded(events_file: Optional[Path]) -> bool:
+    """True iff the shared emitter for ``events_file`` is holding an
+    undrained backlog (review P2 — for a future status surface)."""
+    if events_file is None:
+        return False
+    with _EMITTERS_LOCK:
+        emitter = _EMITTERS.get(str(events_file))
+    return emitter.degraded if emitter is not None else False
+
+
+def managed_event_pending_count(events_file: Optional[Path]) -> int:
+    """Number of lifecycle events buffered awaiting a successful append."""
+    if events_file is None:
+        return 0
+    with _EMITTERS_LOCK:
+        emitter = _EMITTERS.get(str(events_file))
+    return emitter.pending_count if emitter is not None else 0

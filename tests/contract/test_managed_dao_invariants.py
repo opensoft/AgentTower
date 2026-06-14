@@ -1,15 +1,21 @@
 """FEAT-013 DAO storage-layer invariant guards (reviews P2#8 + P3#9).
 
-``insert_pane`` enforces two invariants the schema FKs cannot express:
+``insert_pane`` enforces invariants the schema FKs cannot express:
 
 * P2#8 — denormalized ``managed_pane.container_id`` MUST equal its parent
   ``managed_layout.container_id`` (the FK only checks ``layout_id``).
 * P3#9 — a recreate successor MUST point at a terminal (removed/failed)
-  predecessor and carry ``chain_depth == predecessor.chain_depth + 1``.
+  predecessor. The companion ``chain_depth == predecessor.chain_depth + 1``
+  rule is a SERVICE-layer invariant only and is intentionally NOT enforced
+  at the DAO (a storage-level check would reject legitimate synthetic-depth
+  fixtures); ``test_insert_pane_accepts_terminal_predecessor_at_any_depth``
+  asserts the DAO accepts an arbitrary depth for a terminal predecessor.
+* Existence (review P2) — both the parent layout and (when set) the
+  predecessor MUST exist, rejected independent of ``PRAGMA foreign_keys``.
 
-These are defense-in-depth: the service already enforces both for every
-production write, so production never trips them. The tests drive the DAO
-directly to prove the guard fires on a malformed insert.
+These are defense-in-depth: the service already enforces all of these for
+every production write, so production never trips them. The tests drive the
+DAO directly to prove the guard fires on a malformed insert.
 """
 
 from __future__ import annotations

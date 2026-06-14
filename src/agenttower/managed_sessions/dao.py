@@ -148,18 +148,34 @@ def _validate_pane_invariants(conn: sqlite3.Connection, row: ManagedPaneRow) -> 
 
     P3#9 — a recreate successor (``predecessor_id`` set) MUST point at a
     terminal predecessor (``removed``/``failed``); a successor of a live
-    pane is never legal. The schema FK only checks existence; the service
-    enforces the full rule, so this is defense-in-depth against a future
-    direct DAO caller. (The companion ``chain_depth == predecessor + 1``
-    rule is intentionally NOT enforced here — it is a pure service-layer
-    invariant, and a DAO-level check would reject legitimate
-    synthetic-depth fixtures that seed a deep predecessor directly.)
+    pane is never legal. The service enforces the full rule, so this is
+    defense-in-depth against a future direct DAO caller. (The companion
+    ``chain_depth == predecessor + 1`` rule is intentionally NOT enforced
+    here — it is a pure service-layer invariant, and a DAO-level check
+    would reject legitimate synthetic-depth fixtures that seed a deep
+    predecessor directly.)
+
+    Existence (review P2): both the parent layout and (when set) the
+    predecessor pane MUST exist. The schema FKs enforce this only when the
+    connection has ``PRAGMA foreign_keys`` ON, which SQLite defaults OFF;
+    this guard rejects orphan ``layout_id`` / dangling ``predecessor_id``
+    independent of that PRAGMA so a raw-connection caller can't slip them
+    past.
 
     Raises ``ValueError`` (a programming-error signal, not a user-facing
     closed-set code) — production never trips it.
     """
     parent = select_layout(conn, row.layout_id)
-    if parent is not None and parent.container_id != row.container_id:
+    if parent is None:
+        # review P2: reject an orphan parent explicitly rather than relying
+        # on the schema FK. SQLite defaults ``PRAGMA foreign_keys`` OFF, so a
+        # direct DAO caller on a raw connection would otherwise persist a
+        # pane under a non-existent layout that scoping/recovery never see.
+        raise ValueError(
+            f"managed_pane {row.id!r} references parent layout "
+            f"{row.layout_id!r} that does not exist"
+        )
+    if parent.container_id != row.container_id:
         raise ValueError(
             f"managed_pane.container_id {row.container_id!r} does not match "
             f"parent layout {row.layout_id!r} container_id "
@@ -167,10 +183,14 @@ def _validate_pane_invariants(conn: sqlite3.Connection, row: ManagedPaneRow) -> 
         )
     if row.predecessor_id is not None:
         predecessor = select_pane(conn, row.predecessor_id)
-        if (
-            predecessor is not None
-            and predecessor.state not in (ManagedState.REMOVED, ManagedState.FAILED)
-        ):
+        if predecessor is None:
+            # review P2: a recreate successor pointing at a non-existent
+            # predecessor is rejected independent of the FK PRAGMA.
+            raise ValueError(
+                f"recreate successor {row.id!r} references predecessor "
+                f"{row.predecessor_id!r} that does not exist"
+            )
+        if predecessor.state not in (ManagedState.REMOVED, ManagedState.FAILED):
             raise ValueError(
                 f"recreate successor {row.id!r} predecessor "
                 f"{row.predecessor_id!r} is in non-terminal state "

@@ -68,7 +68,7 @@ import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from ._tx import tx_guard
 from .dao import (
@@ -216,6 +216,9 @@ def reconcile(
             # are excluded from the non-terminal recovery query
             # (state-machine.md §Recovery, FR-026 / SC-009).
             container_changed_layouts: set[str] = set()
+            # review P2: per-pane recovery events are buffered while the
+            # transaction is open and flushed only after COMMIT (see below).
+            buffered_pane_events: list[dict[str, Any]] = []
             with tx_guard(tx_lock):
                 # Close any caller-side implicit tx (e.g. test fixture
                 # INSERTs that didn't commit) so our explicit
@@ -239,11 +242,12 @@ def reconcile(
                             container_changed_layouts.add(pane.layout_id)
                             continue
                         # _RECOVERY_FAILED: transition to failed (recovery_reattach).
-                        _transition_to_failed_reattach(
-                            conn=conn,
-                            pane=pane,
-                            event_emitter=event_emitter,
-                            clock=clock,
+                        buffered_pane_events.extend(
+                            _transition_to_failed_reattach(
+                                conn=conn,
+                                pane=pane,
+                                clock=clock,
+                            )
                         )
                         failed_pane_ids_by_layout.setdefault(
                             pane.layout_id, []
@@ -283,11 +287,15 @@ def reconcile(
                         pass
                     raise
 
-            # review P2: emit layout-scoped JSONL events only AFTER the
-            # combined pane+aggregate transaction commits, so a crash
-            # before COMMIT never leaves a recovery event on disk
-            # describing an outcome that was rolled back.
+            # review P2: emit per-pane AND layout-scoped JSONL events only
+            # AFTER the combined pane+aggregate transaction commits, so a
+            # crash before COMMIT never leaves a recovery event on disk
+            # describing an outcome that was rolled back. Per-pane events
+            # (seq 9_000/9_001) flush before the layout-scoped events
+            # (seq 10_000/10_001), preserving per-pane-then-layout order.
             if event_emitter is not None:
+                for pane_event in buffered_pane_events:
+                    event_emitter(pane_event)
                 for layout_id in container_changed_layouts:
                     if reattached_pane_ids_by_layout.get(layout_id):
                         event_emitter(
@@ -401,10 +409,17 @@ def _transition_to_failed_reattach(
     *,
     conn: sqlite3.Connection,
     pane: ManagedPaneRow,
-    event_emitter: Optional[EventEmitter],
     clock: Optional[Callable[[], _dt.datetime]],
-) -> None:
-    """Apply the ``recovery_reattach`` transition + emit per-pane events."""
+) -> list[dict[str, Any]]:
+    """Apply the ``recovery_reattach`` transition and RETURN the per-pane
+    lifecycle events to emit.
+
+    review P2: the events are returned (not emitted) so the caller can
+    buffer them and flush only AFTER the per-container pane+aggregate
+    transaction commits. Emitting inline would let a later same-transaction
+    failure roll back the state change while a ``managed_pane_state_changed``
+    event describing it had already been written to JSONL.
+    """
     now = _utc_now_rfc3339(clock)
     prior = pane.state
     update_pane_state(
@@ -414,31 +429,32 @@ def _transition_to_failed_reattach(
         clear_marker=True,  # marker cleared regardless of prior state
         now=now,
     )
-    if event_emitter is not None:
-        if pane.pending_marker_token is not None:
-            event_emitter(
-                build_event(
-                    PANE_PENDING_MARKER_CLEARED,
-                    actor="daemon",
-                    pane_id=pane.id,
-                    sequence=9_000,
-                    payload={"marker_token": pane.pending_marker_token},
-                )
-            )
-        event_emitter(
+    events: list[dict[str, Any]] = []
+    if pane.pending_marker_token is not None:
+        events.append(
             build_event(
-                PANE_STATE_CHANGED,
+                PANE_PENDING_MARKER_CLEARED,
                 actor="daemon",
-                layout_id=pane.layout_id,
                 pane_id=pane.id,
-                sequence=9_001,
-                payload={
-                    "prev_state": prior.value,
-                    "new_state": ManagedState.FAILED.value,
-                    "failed_stage": FailedStage.RECOVERY_REATTACH.value,
-                },
+                sequence=9_000,
+                payload={"marker_token": pane.pending_marker_token},
             )
         )
+    events.append(
+        build_event(
+            PANE_STATE_CHANGED,
+            actor="daemon",
+            layout_id=pane.layout_id,
+            pane_id=pane.id,
+            sequence=9_001,
+            payload={
+                "prev_state": prior.value,
+                "new_state": ManagedState.FAILED.value,
+                "failed_stage": FailedStage.RECOVERY_REATTACH.value,
+            },
+        )
+    )
+    return events
 
 
 def _utc_now_rfc3339(clock: Optional[Callable[[], _dt.datetime]] = None) -> str:
