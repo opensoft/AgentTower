@@ -203,7 +203,7 @@ to lifecycle events via `app.event.list`).
 
 ## Closed-set error codes (FEAT-013 additions)
 
-13 new error codes added on top of FEAT-011's 27-entry registry (40
+14 new error codes added on top of FEAT-011's 27-entry registry (41
 total). Full details in
 [`contracts/error-codes.md`](../specs/013-managed-session-lifecycle/contracts/error-codes.md).
 
@@ -222,6 +222,7 @@ total). Full details in
 | `managed_pane_recreate_chain_too_deep` | M7 | `predecessor.chain_depth >= 15` (limit is 16; FR-023). |
 | `managed_pane_concurrent_recreate` | M7 | Another recreate of the same predecessor is in flight (FR-027). |
 | `container_not_found` | M1 / M6 / M7 | `container_id` is unknown to the FEAT-003 registry. |
+| `not_implemented` | M8 | `promote_from_adopted` is a reserved stub (FR-018); always returned with `details.reserved_since = "FEAT-013"`. |
 
 ---
 

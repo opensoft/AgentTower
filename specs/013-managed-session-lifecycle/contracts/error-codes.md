@@ -130,6 +130,17 @@ The full closed set for an `app.managed_*` or legacy `managed.*` response contin
 - **Operator action**: Run `app.scan.containers` to refresh the FEAT-003 registry, or supply an existing `container_id`.
 - **Naming note**: Unlike the other 12 FEAT-013 codes, this one does NOT carry the `managed_` prefix. Earlier drafts of this document listed it as "reused from FEAT-003", but no upstream FEAT defines it; FEAT-013 owns the code. The bare name is preserved for client compatibility — anyone reading the contract before the registry corrected itself.
 
+### `not_implemented`
+
+- **When**: `managed.pane.promote_from_adopted` / `app.managed_pane_promote_from_adopted` (M8) is called. Promotion of an adopted pane to managed is reserved for a later feature, so the MVP stub always returns this code (FR-018; see [state-machine.md](./state-machine.md) §Promotion stub).
+- **Details schema**:
+  ```json
+  {"reserved_since": "string"}
+  ```
+  The stub sets `reserved_since` to `"FEAT-013"`.
+- **Operator action**: None — the transition is intentionally unavailable in MVP.
+- **Naming note**: Like `container_not_found`, this code carries no `managed_` prefix and has no backing upstream registry entry. Earlier drafts described it as a reused FEAT-011 closed-set code, but FEAT-011's 27-entry `ERROR_CODES` set never defined it; FEAT-013 owns it (registered in `managed_sessions/errors.py`). The bare wire name is preserved for client compatibility.
+
 ---
 
 ## Reused codes (no change)
@@ -138,7 +149,6 @@ These FEAT-011 codes are also returned by FEAT-013 paths and retain their existi
 
 - `validation_failed` — field-shape violations; details include `field`, `reason`.
 - `host_only` — bench-container peer targeted a host-only method or a foreign container. Details are `{}` per FR-034a (code not in the FEAT-011 per-code details registry).
-- `not_implemented` — used by the `promote_from_adopted` stub; details include `reserved_since: "FEAT-013"`.
 - `internal_error` — unhandled exception; details are `{}` (handler-layer wraps with `_envelope.internal_error_logged` which redacts the exception text to the daemon's stderr).
 - `malformed_request` — NDJSON framing or UTF-8 violation before dispatch.
 - `payload_too_large` — FEAT-011 code; bounds inherit from FEAT-011 FR-003a.
@@ -148,7 +158,7 @@ These FEAT-011 codes are also returned by FEAT-013 paths and retain their existi
 ## Code count
 
 FEAT-011 baseline: 27 codes.
-FEAT-013 additions: **13** new codes (the 12 `managed_*`-prefixed codes listed above, plus the unprefixed `container_not_found` that the contract previously mis-attributed to FEAT-003). Includes `managed_layout_capacity_exceeded` and `managed_pane_concurrent_recreate` from the pre-implement walk session, `managed_pane_label_conflict` added during Phase 3b implementation when the partial unique index was wired through the service layer, and `container_not_found` added during Phase 3c when the handler-layer pre-check was wired.
-FEAT-013 total in registry: **40** codes.
+FEAT-013 additions: **14** new codes (the 12 `managed_*`-prefixed codes listed above, plus the two unprefixed codes `container_not_found` and `not_implemented` that earlier drafts mis-attributed to upstream features). Includes `managed_layout_capacity_exceeded` and `managed_pane_concurrent_recreate` from the pre-implement walk session, `managed_pane_label_conflict` added during Phase 3b implementation when the partial unique index was wired through the service layer, `container_not_found` added during Phase 3c when the handler-layer pre-check was wired, and `not_implemented` registered as FEAT-013-owned (it was previously documented as a reused FEAT-011 code, but FEAT-011's 27-entry set never defined it).
+FEAT-013 total in registry: **41** codes.
 
 This is an additive evolution within `app_contract_version = "1.0"`; clients that don't recognize the new codes still see the generic `code`/`message`/`details` envelope and can surface them to the operator without protocol changes.

@@ -448,3 +448,64 @@ def test_reconcile_skips_removed_layouts(
     )
     assert outcome.layouts_examined == 0
     assert outcome.panes_examined == 0
+
+
+# ─── Atomicity: pane transitions + layout aggregate commit together ──────
+
+
+def test_reconcile_aggregate_failure_rolls_back_pane_transitions(
+    conn: sqlite3.Connection,
+    serializer: ContainerSerializer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure during the layout-aggregate write rolls back the pane
+    transitions made in the same per-container transaction.
+
+    Regression guard for the review P1 atomicity fix: pane-state writes
+    and the layout aggregate recompute share one ``BEGIN IMMEDIATE``. If
+    they were split across transactions, the panes would be left ``failed``
+    while the layout stayed ``ready`` — and a later reconcile could not
+    repair it (already-``failed`` panes are excluded from the non-terminal
+    recovery query). Here every pane would transition to ``failed`` (no
+    live tmux entry), but ``update_layout_state`` raises mid-transaction;
+    both the pane rows AND the layout row must revert to ``ready``.
+    """
+    layout_id, pane_ids = _seed_layout(conn)
+
+    # Fail the aggregate write that runs after the pane transitions, still
+    # inside the open BEGIN IMMEDIATE.
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise sqlite3.OperationalError("disk I/O error (injected)")
+
+    monkeypatch.setattr(
+        "agenttower.managed_sessions.recovery.update_layout_state", boom
+    )
+
+    events: list[dict[str, Any]] = []
+    with pytest.raises(sqlite3.OperationalError):
+        reconcile(
+            conn=conn, serializer=serializer,
+            tmux_list_panes_fn=lambda cid: [],  # nothing alive → all would fail
+            event_emitter=events.append,
+        )
+
+    # Panes rolled back to their seeded ready state — NOT left failed.
+    for pid in pane_ids:
+        row = select_pane(conn, pid)
+        assert row.state == ManagedState.READY
+        assert row.failed_stage is None
+
+    # Layout aggregate unchanged.
+    layout_row = conn.execute(
+        "SELECT state, failed_stage FROM managed_layout WHERE id = ?",
+        (layout_id,),
+    ).fetchone()
+    assert layout_row[0] == "ready"
+    assert layout_row[1] is None
+
+    # No layout-scoped recovery event escaped — those emit only after the
+    # combined transaction commits, which never happened here.
+    assert not [
+        e for e in events
+        if e["event_type"].startswith("managed_layout_recovery_")
+    ]
