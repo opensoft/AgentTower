@@ -107,5 +107,5 @@ Boot-time reconcile (see `recovery.py`):
 
 `promote_adopted_to_managed` is reserved in the state graph for a later feature. In MVP:
 
-- The state-machine module exposes a `PROMOTE_FROM_ADOPTED` constant for tests but the service entry point returns `not_implemented` (FEAT-011 closed-set code).
+- The state-machine module exposes a `PROMOTE_FROM_ADOPTED` constant for tests but the service entry point returns `not_implemented` (FEAT-013-owned closed-set code; see [error-codes.md](./error-codes.md)).
 - The data model does not require any new column to support promotion later — when implemented, promotion would insert a new managed_pane row with `predecessor_id = NULL`, `chain_depth = 0`, and `agent_id` set to the adopted pane's existing agent_id, then update the adopted-agent's metadata in place.

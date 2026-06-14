@@ -152,7 +152,6 @@ def reconcile(
     panes_resumed = 0
     panes_seen = 0
     containers_skipped = 0
-    layouts_with_any_change: set[str] = set()
 
     # Layout-scoped events accumulate per-layout so a single
     # LAYOUT_RECOVERY_REATTACHED / LAYOUT_RECOVERY_FAILED can carry the
@@ -176,9 +175,10 @@ def reconcile(
             # failure) must SKIP this container only — not abort the whole
             # reconcile. If it propagated, containers already processed in
             # this loop would keep their committed pane->failed transitions
-            # while their layout-aggregate recompute (a separate phase
-            # below) never runs, leaving managed_layout.state permanently
-            # inconsistent with its panes (FR-026 / SC-009). Skipping leaves
+            # (each container's pane transitions + layout-aggregate recompute
+            # commit atomically below), and aborting here would skip every
+            # not-yet-processed container, leaving their managed_layout.state
+            # inconsistent with reality (FR-026 / SC-009). Skipping leaves
             # this container's rows untouched for the next reconcile.
             try:
                 live = tmux_list_panes_fn(container_id)
@@ -205,11 +205,17 @@ def reconcile(
                 if session and pane_index >= 0:
                     live_keys.add((session, pane_index))
 
-            # M2 fix: wrap per-container pane-state mutations in
-            # BEGIN IMMEDIATE so a crash mid-container can't leave the
-            # layout partially reconciled. The aggregate-state write
-            # below runs in its own short transaction once all pane-
-            # state changes for the container are committed.
+            # review P1: per-container pane-state transitions AND the
+            # layout aggregate recompute commit together in ONE
+            # BEGIN IMMEDIATE. Splitting them across transactions opens a
+            # crash window: if the daemon dies (or the DB write fails)
+            # after the pane transaction commits but before the layout
+            # write, panes are left ``failed``/``recovery_reattach`` while
+            # the layout stays ``ready``/``creating`` — and a later
+            # reconcile can't repair it, because already-``failed`` panes
+            # are excluded from the non-terminal recovery query
+            # (state-machine.md §Recovery, FR-026 / SC-009).
+            container_changed_layouts: set[str] = set()
             with tx_guard(tx_lock):
                 # Close any caller-side implicit tx (e.g. test fixture
                 # INSERTs that didn't commit) so our explicit
@@ -230,7 +236,7 @@ def reconcile(
                                 pane.layout_id, []
                             ).append(pane.id)
                             panes_reattached += 1
-                            layouts_with_any_change.add(pane.layout_id)
+                            container_changed_layouts.add(pane.layout_id)
                             continue
                         # _RECOVERY_FAILED: transition to failed (recovery_reattach).
                         _transition_to_failed_reattach(
@@ -243,7 +249,32 @@ def reconcile(
                             pane.layout_id, []
                         ).append(pane.id)
                         panes_failed += 1
-                        layouts_with_any_change.add(pane.layout_id)
+                        container_changed_layouts.add(pane.layout_id)
+                    # Recompute + persist each touched layout's aggregate
+                    # state INSIDE the same transaction (review P1). The
+                    # reads here see the pane UPDATEs above because they
+                    # share this open BEGIN IMMEDIATE; a layout belongs to
+                    # exactly one container, so every pane of a changed
+                    # layout was just transitioned in this loop.
+                    for layout_id in container_changed_layouts:
+                        refreshed = select_panes_for_layout(conn, layout_id)
+                        if not refreshed:
+                            continue
+                        new_state = aggregate_layout_state(
+                            [p.state for p in refreshed]
+                        )
+                        layout_failed_stage: Optional[FailedStage] = (
+                            FailedStage.RECOVERY_REATTACH
+                            if new_state == ManagedState.FAILED
+                            else None
+                        )
+                        update_layout_state(
+                            conn,
+                            layout_id,
+                            state=new_state,
+                            failed_stage=layout_failed_stage,
+                            now=_utc_now_rfc3339(clock),
+                        )
                     conn.execute("COMMIT")
                 except Exception:
                     try:
@@ -252,55 +283,41 @@ def reconcile(
                         pass
                     raise
 
-    # Per-layout aggregation + events.
-    for layout_id in layouts_with_any_change:
-        with tx_guard(tx_lock):
-            refreshed = select_panes_for_layout(conn, layout_id)
-        if not refreshed:
-            continue
-        new_state = aggregate_layout_state([p.state for p in refreshed])
-        now = _utc_now_rfc3339(clock)
-        # Set layout-level failed_stage if aggregate is failed.
-        layout_failed_stage: Optional[FailedStage] = None
-        if new_state == ManagedState.FAILED:
-            layout_failed_stage = FailedStage.RECOVERY_REATTACH
-        with tx_guard(tx_lock):
-            update_layout_state(
-                conn, layout_id,
-                state=new_state,
-                failed_stage=layout_failed_stage,
-                now=now,
-            )
-        if event_emitter is not None:
-            if reattached_pane_ids_by_layout.get(layout_id):
-                event_emitter(
-                    build_event(
-                        LAYOUT_RECOVERY_REATTACHED,
-                        actor="daemon",
-                        layout_id=layout_id,
-                        sequence=10_000,
-                        payload={
-                            "reattached_pane_ids": list(
-                                reattached_pane_ids_by_layout[layout_id]
-                            ),
-                        },
-                    )
-                )
-            if failed_pane_ids_by_layout.get(layout_id):
-                event_emitter(
-                    build_event(
-                        LAYOUT_RECOVERY_FAILED,
-                        actor="daemon",
-                        layout_id=layout_id,
-                        sequence=10_001,
-                        payload={
-                            "failed_pane_ids": list(
-                                failed_pane_ids_by_layout[layout_id]
-                            ),
-                            "failed_stage": FailedStage.RECOVERY_REATTACH.value,
-                        },
-                    )
-                )
+            # review P2: emit layout-scoped JSONL events only AFTER the
+            # combined pane+aggregate transaction commits, so a crash
+            # before COMMIT never leaves a recovery event on disk
+            # describing an outcome that was rolled back.
+            if event_emitter is not None:
+                for layout_id in container_changed_layouts:
+                    if reattached_pane_ids_by_layout.get(layout_id):
+                        event_emitter(
+                            build_event(
+                                LAYOUT_RECOVERY_REATTACHED,
+                                actor="daemon",
+                                layout_id=layout_id,
+                                sequence=10_000,
+                                payload={
+                                    "reattached_pane_ids": list(
+                                        reattached_pane_ids_by_layout[layout_id]
+                                    ),
+                                },
+                            )
+                        )
+                    if failed_pane_ids_by_layout.get(layout_id):
+                        event_emitter(
+                            build_event(
+                                LAYOUT_RECOVERY_FAILED,
+                                actor="daemon",
+                                layout_id=layout_id,
+                                sequence=10_001,
+                                payload={
+                                    "failed_pane_ids": list(
+                                        failed_pane_ids_by_layout[layout_id]
+                                    ),
+                                    "failed_stage": FailedStage.RECOVERY_REATTACH.value,
+                                },
+                            )
+                        )
 
     return ReconcileOutcome(
         layouts_examined=len(layouts),

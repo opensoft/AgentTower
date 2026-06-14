@@ -1,6 +1,6 @@
 """FEAT-013 closed-set error codes (T005).
 
-13 new codes added on top of FEAT-011's 27-entry registry (40 total).
+14 new codes added on top of FEAT-011's 27-entry registry (41 total).
 See ``specs/013-managed-session-lifecycle/contracts/error-codes.md`` for
 each entry's authoritative ``details`` schema.
 
@@ -9,12 +9,21 @@ Codes follow the FEAT-011 convention (lowercase snake_case, matches the
 names the required ``details`` keys per code; callers building error
 envelopes assemble the actual values from runtime context.
 
-The ``container_not_found`` code does not carry the ``managed_`` prefix —
-it was originally documented as a reused-from-FEAT-003 code by
-contracts/error-codes.md "Reused codes" section, but no upstream FEAT
-defines it. FEAT-013 owns it (handler layer raises it before calling
-the service) but preserves the contract-side wire spelling for client
-compatibility.
+Two codes here carry neither the ``managed_`` prefix nor a backing entry
+in any upstream FEAT registry, yet FEAT-013 emits them on the wire, so
+FEAT-013 owns them (and preserves the contract-side wire spelling for
+client compatibility):
+
+* ``container_not_found`` — originally documented as a reused-from-FEAT-003
+  code by contracts/error-codes.md "Reused codes", but no upstream FEAT
+  defines it. The handler layer raises it before calling the service.
+* ``not_implemented`` — the ``promote_from_adopted`` (M8) stub returns it
+  with ``details.reserved_since``. contracts/error-codes.md described it
+  as a reused FEAT-011 closed-set code, but FEAT-011's 27-entry
+  ``ERROR_CODES`` set never defined it; registering it here keeps the
+  authoritative ``app.managed_*`` / legacy ``managed.*`` closed set
+  self-consistent so a strict client validating responses doesn't reject
+  the stub envelope.
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ MANAGED_LAYOUT_CAPACITY_EXCEEDED: Final[str] = "managed_layout_capacity_exceeded
 MANAGED_PANE_CONCURRENT_RECREATE: Final[str] = "managed_pane_concurrent_recreate"
 MANAGED_PANE_LABEL_CONFLICT: Final[str] = "managed_pane_label_conflict"
 CONTAINER_NOT_FOUND: Final[str] = "container_not_found"
+NOT_IMPLEMENTED: Final[str] = "not_implemented"
 
 
 # All FEAT-013 codes as a frozen set for closed-set membership tests
@@ -56,6 +66,7 @@ ALL_CODES: Final[frozenset[str]] = frozenset(
         MANAGED_PANE_CONCURRENT_RECREATE,
         MANAGED_PANE_LABEL_CONFLICT,
         CONTAINER_NOT_FOUND,
+        NOT_IMPLEMENTED,
     }
 )
 
@@ -88,6 +99,7 @@ DETAILS_SCHEMAS: Final[dict[str, tuple[str, ...]]] = {
     ),
     MANAGED_PANE_LABEL_CONFLICT: ("container_id", "label"),
     CONTAINER_NOT_FOUND: ("container_id",),
+    NOT_IMPLEMENTED: ("reserved_since",),
 }
 
 

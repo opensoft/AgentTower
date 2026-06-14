@@ -689,10 +689,13 @@ def app_managed_pane_promote_from_adopted(ctx, params, peer_uid=-1):  # noqa: AN
     if not isinstance(agent_id, str):
         agent_id = ""
     stub = promote_from_adopted(agent_id)
-    # `not_implemented` is in the FEAT-011 closed set with required
-    # details = {} per FR-034a — but our stub carries reserved_since,
-    # which is a FEAT-013-specific extension. Build the envelope
-    # directly so FEAT-011's validate_details doesn't reject it.
+    # `not_implemented` is a FEAT-013-owned closed-set code (see
+    # managed_sessions/errors.py — contracts/error-codes.md mislabelled it
+    # as a reused FEAT-011 code, but FEAT-011's ERROR_CODES never defined
+    # it). It is therefore absent from FEAT-011's app registry, and its
+    # `details` carry the FEAT-013 `reserved_since` extension, so we build
+    # the envelope directly rather than via FEAT-011's `_envelope.failure`
+    # (whose validate_details would reject the unknown code + extra key).
     from ...app_contract.versioning import APP_CONTRACT_VERSION
     return {
         "ok": False,

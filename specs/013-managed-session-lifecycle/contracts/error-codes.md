@@ -5,7 +5,9 @@
 
 This file lists the **new** closed-set error codes added by FEAT-013, extending the FEAT-011 27-entry registry. Each entry follows the FEAT-011 `(code, message-shape, details schema)` convention.
 
-The full closed set for an `app.managed_*` or legacy `managed.*` response continues to include the prior FEAT-011 codes (`validation_failed`, `host_only`, `not_implemented`, `internal_error`, `malformed_request`, etc.) — those are reused unchanged.
+The full closed set for an `app.managed_*` or legacy `managed.*` response continues to include the prior FEAT-011 codes (`validation_failed`, `host_only`, `internal_error`, `malformed_request`, etc.) — those are reused unchanged.
+
+`not_implemented` (returned by the M8 `promote_from_adopted` stub) is **owned by FEAT-013**, not FEAT-011: earlier drafts described it as a reused FEAT-011 closed-set code, but FEAT-011's 27-entry `ERROR_CODES` set never defined it. It is registered in FEAT-013's `managed_sessions/errors.py` alongside `container_not_found` (another wire code with no backing upstream registry entry) so the authoritative managed closed set stays self-consistent. See the `not_implemented` entry below for its `details` schema.
 
 ---
 
