@@ -18,6 +18,29 @@ credential.
 - **WHEN** two app sessions connect, one as `observer` and one as `operator`
 - **THEN** both are tracked in the session registry with their respective roles
 
+### Requirement: Default role and server-side operator promotion
+
+AgentTower SHALL default every new app session to `observer`. A session SHALL
+become `operator` only through an explicit, server-side promotion recorded by
+the daemon; a client SHALL NOT be able to self-select `operator` (e.g. via an
+`app.hello` parameter). Because all sessions already share the FEAT-011
+same-host-UID trust model, this role is a **coordination control** to prevent
+accidental concurrent co-drive, not a privilege boundary; existing pre-role
+clients that predate this capability SHALL be treated as `observer` until
+promoted.
+
+#### Scenario: New session defaults to observer
+
+- **WHEN** an app session is established (including a client that predates this
+  capability)
+- **THEN** it is `observer` until an explicit server-side promotion occurs
+
+#### Scenario: Client cannot self-select operator
+
+- **WHEN** a client attempts to declare itself `operator` at connection time
+- **THEN** AgentTower keeps it as `observer` and requires an explicit server-side
+  promotion to grant `operator`
+
 ### Requirement: Consistent shared live view
 
 AgentTower SHALL present all connected app sessions with the same registry state
@@ -33,14 +56,17 @@ converge on identical state.
 ### Requirement: Server-side co-drive enforcement
 
 AgentTower SHALL permit mutating `app.*` methods only for `operator` sessions
-and SHALL reject mutating calls from `observer` sessions with a closed-set error.
-Enforcement SHALL be server-side and SHALL NOT depend on client cooperation.
+and SHALL reject mutating calls from `observer` sessions by reusing the existing
+FEAT-011 closed-set error code `permission_denied` with
+`details.reason = "observer_read_only"` (no new top-level error code is
+introduced). Enforcement SHALL be server-side and SHALL NOT depend on client
+cooperation.
 
 #### Scenario: Observer mutation is rejected
 
 - **WHEN** an `observer` session calls a mutating `app.*` method
-- **THEN** AgentTower rejects the call with a closed-set error and performs no
-  mutation
+- **THEN** AgentTower rejects the call with `permission_denied` /
+  `details.reason = "observer_read_only"` and performs no mutation
 
 #### Scenario: Operator mutation is allowed
 

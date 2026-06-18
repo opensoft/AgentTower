@@ -69,7 +69,6 @@ implement against a settled model instead of ad-hoc per-harness hacks.
 
 ## Tooling note
 
-The `openspec` CLI is not available in this environment (no binary on PATH;
-`npx openspec` could not fetch the package under the network policy). This
-change was authored to the OpenSpec file conventions by hand. Run
-`openspec validate agent-connection-tiers --strict` when the CLI is available.
+This change's artifacts follow the standard OpenSpec file conventions. Validate
+with `openspec validate agent-connection-tiers --strict` in any environment that
+has the OpenSpec CLI installed.

@@ -41,11 +41,20 @@ proceed in parallel; C builds on the app backend and ideally on B.
   intercept an unmodified agent's syscalls, so this is a documented capability
   gap (and at most an opt-in container-network recommendation), not a change.
 
+## Bench ownership
+
+Per `AGENTS.md` (Single-Bench Feature Ownership), every feature is owned by
+exactly one execution bench. All four changes are backend/daemon/contract work
+and are owned by **`py-bench`** (Python daemon, CLI, and local `app.*`
+contracts). `app-collaboration` defines only the **backend contract** for
+multi-operator roles; any Flutter desktop UI that consumes it is a **separate
+`flutter-bench` follow-up feature**, split per the AGENTS.md cross-bench rule.
+
 ## Changes
 
-| ID | Change | Capability | Status |
-| --- | --- | --- | --- |
-| A | `agent-connection-tiers` | `agent-integration` | proposed (validated) |
-| B | `routing-policy-layers` | `routing-policy` | proposed |
-| D | `discovery-backends` | `discovery-backends` | proposed |
-| C | `app-collaboration` | `app-collaboration` | proposed (V2) |
+| ID | Change | Capability | Owner (bench) | Status |
+| --- | --- | --- | --- | --- |
+| A | `agent-connection-tiers` | `agent-integration` | `py-bench` | proposed (validated) |
+| B | `routing-policy-layers` | `routing-policy` | `py-bench` | proposed |
+| D | `discovery-backends` | `discovery-backends` | `py-bench` | proposed |
+| C | `app-collaboration` | `app-collaboration` | `py-bench` (Flutter UI → separate `flutter-bench` feature) | proposed (V2) |

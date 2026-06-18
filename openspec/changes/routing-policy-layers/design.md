@@ -63,13 +63,18 @@ layer can only narrow delivery, never silently re-open it.
 All default to the *least-surprising* behavior: absent any policy, deliveries
 behave exactly as FEAT-009 today.
 
-## Decision 3 — Every decision is audited
+## Decision 3 — Policy decisions are audited (without breaking the no-policy path)
 
-Each evaluation emits one `events.jsonl` record: `policy_allowed` /
-`policy_blocked` / `policy_held`, carrying the deciding layer, the matched rule
-id, and the target/route. This mirrors FEAT-010's `route_matched` /
-`route_skipped` auditability so the full delivery chain stays inspectable via
-`agenttower events`.
+When a user-defined policy participates in a decision, AgentTower emits one
+`events.jsonl` record — `policy_allowed` / `policy_blocked` / `policy_held` —
+carrying the deciding layer, the matched rule id, and the target/route. This
+mirrors FEAT-010's `route_matched` / `route_skipped` auditability so the full
+delivery chain stays inspectable via `agenttower events`.
+
+Crucially, the **no-policy default path emits no policy audit rows**: when only
+the FEAT-009 base layer applies, no `policy_*` event is written. This preserves
+the byte-identical-stream guarantee in Decision 4 and avoids breaking existing
+FEAT-009/010 audit consumers and compatibility tests.
 
 ## Decision 4 — Backward compatibility
 

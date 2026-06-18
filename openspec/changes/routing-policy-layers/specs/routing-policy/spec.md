@@ -8,11 +8,17 @@ agent's own tool calls.
 
 ### Requirement: Layered policy resolution
 
-AgentTower SHALL resolve delivery policies across three scopes in fixed
-precedence — global, then per-agent, then per-route — using deny-wins for
-allow/deny rules and most-restrictive-wins (minimum) for numeric limits. A deny
-at any layer SHALL block delivery, and a global deny SHALL NOT be overridable by
-a lower layer.
+AgentTower SHALL compute each delivery decision across all applicable policy
+layers (global, per-agent, per-route) using **most-restrictive-wins**: deny-wins
+for allow/deny rules (a deny at any layer blocks, and a global deny is absolute
+and never overridable) and minimum-wins for numeric limits. The scope order
+(global → per-agent → per-route) SHALL affect only audit attribution and
+tie-break labeling, never the outcome.
+
+#### Scenario: A more specific allow cannot override a broader deny
+
+- **WHEN** a per-agent layer denies delivery and a per-route layer allows it
+- **THEN** delivery is blocked (deny-wins), regardless of the per-route allow
 
 #### Scenario: Global deny is absolute
 
@@ -51,15 +57,26 @@ an agent's own shell, file, or network actions.
 
 ### Requirement: Policy decision auditing
 
-AgentTower SHALL write an audit record to `events.jsonl` for every policy
-decision, naming the outcome (allowed / blocked / held), the deciding layer, and
-the matched rule.
+AgentTower SHALL write an audit record to `events.jsonl` for every decision in
+which a user-defined policy participates, using the event type `policy_allowed`,
+`policy_blocked`, or `policy_held` to name the outcome, and carrying the deciding
+layer and the matched rule. When only the FEAT-009 base layer applies (no
+user-defined policy participates), AgentTower SHALL NOT emit any policy audit
+record, so the no-policy event stream is byte-identical to pre-policy
+AgentTower.
 
 #### Scenario: Blocked delivery is audited
 
 - **WHEN** a delivery is blocked by a per-route deny
 - **THEN** an audit record is appended to `events.jsonl` identifying the
   per-route layer and the matched rule
+
+#### Scenario: No-policy delivery emits no policy audit record
+
+- **WHEN** a delivery is allowed and no user-defined policy participated in the
+  decision
+- **THEN** no policy audit record is written and the event stream matches
+  pre-policy AgentTower exactly
 
 ### Requirement: Backward-compatible defaults
 
