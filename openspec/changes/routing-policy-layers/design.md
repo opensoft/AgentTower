@@ -32,23 +32,32 @@ Policies attach at three scopes and resolve in a fixed order:
 2. **per-agent** — keyed by target `agent_id` (and optionally source).
 3. **per-route** — keyed by `route_id` (FEAT-010).
 
-Resolution is **most-specific-wins for allow/deny, most-restrictive-wins for
-limits**: a deny at any layer blocks; a numeric cap takes the minimum across
-layers. This avoids "which rule won" ambiguity and keeps the global kill switch
-absolute (a global deny can never be overridden by a lower layer).
+Policies are **restrictive-only**: each layer may deny, hold, or tighten a cap,
+but no layer can broaden what a lower-specificity layer (or the FEAT-009 base
+permission) already allows. The effective decision is the **most restrictive
+across all layers** — concretely, **deny-wins for allow/deny** (a deny at any
+layer blocks, and a global deny is absolute and never overridable), and
+**most-restrictive-wins (minimum)** for numeric caps. The fixed scope order
+(global → per-agent → per-route) only matters for attribution in the audit
+trail, not for the outcome, since the most-restrictive rule wins regardless of
+layer.
 
-Rationale: deterministic, explainable, and safe-by-default — broadening requires
-an explicit higher-specificity allow, never an implicit one.
+Rationale: deterministic, explainable, and safe-by-default — a more specific
+layer can only narrow delivery, never silently re-open it.
 
 ## Decision 2 — Router-appropriate policy types (MVP set)
 
 - **rate cap** — max N deliveries per target per time window.
-- **require-approval** — hold delivery in a pending state until an operator
-  approves (reuses the FEAT-009 queue states: queued/blocked/approved).
+- **require-approval** — hold delivery until an operator approves. This maps onto
+  the existing FEAT-009 queue model: the message sits in the `blocked` state and
+  is released to `queued`/`delivered` via `agenttower queue approve` (FEAT-009's
+  closed state set is `queued`, `blocked`, `delivered`, `canceled`, `failed` —
+  there is no separate `approved` state; approval is the operator action that
+  moves a `blocked` row forward).
 - **allow/deny by source** — match on source role + capability.
 - **target-busy / quiet hold** — defer delivery while the target is mid-command
-  or within a configured quiet window (conservative; ties to the `architecture.
-  md` §16 idle question).
+  or within a configured quiet window (conservative; ties to the
+  `architecture.md` §16 idle question).
 - **global kill switch** — the existing switch, modeled as the top global deny.
 
 All default to the *least-surprising* behavior: absent any policy, deliveries
