@@ -25,8 +25,10 @@
 - [ ] 3.2 Refactor bench-container discovery (FEAT-003/004) as backend #1 with
       no behavior change; guard with existing integration tests.
 - [ ] 3.3 Add a backend registry + per-backend config + enable/disable.
-- [ ] 3.4 Implement identity namespacing (`backend_id` prefix) with
-      back-compat for stored `bench:` rows.
+- [ ] 3.4 Implement identity namespacing (`backend_id` prefix).
+- [ ] 3.4a Ship the one-time, idempotent, history-preserving migration that
+      stamps existing rows `backend_id='bench'` (tied to the schema-version
+      bump), plus the transition read-time shim for legacy unprefixed keys.
 - [ ] 3.5 Per-backend degraded-state isolation (one backend's failure does not
       affect others).
 - [ ] 3.6 Add the host-only tmux backend as reference #2.

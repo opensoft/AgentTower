@@ -44,6 +44,13 @@ in addition to the existing tmux coordinates.
   pane `%4`
 - **THEN** AgentTower treats them as two distinct agents, namespaced by backend
 
+#### Scenario: Existing bench-only rows are migrated without history loss
+
+- **WHEN** a deployment created before namespacing is upgraded
+- **THEN** every existing agent/pane identity is stamped into the `bench`
+  namespace by a one-time idempotent migration, with its events, offsets, and
+  queue references preserved, and no operator action required
+
 ### Requirement: Per-backend degraded isolation
 
 AgentTower SHALL run and degrade each backend independently. A backend that

@@ -47,6 +47,30 @@ registry key becomes `(backend_id, target_id, tmux_socket, pane_id, …)`.
 Rationale: prevents a host-tmux `%4` from colliding with a container-tmux `%4`,
 and lets the same physical machine be seen by two backends without aliasing.
 
+### Migration of existing bench-only deployments (concrete plan)
+
+Existing deployments have rows written before namespacing existed; they carry no
+backend prefix. The migration is deterministic and tied to the schema-version
+bump that introduces the `backend_id` column:
+
+1. **At upgrade (one-time, in the schema migration that adds `backend_id`):**
+   every existing `agents` / `panes` / `log_offsets` row is stamped
+   `backend_id = 'bench'` in a single transaction, because pre-namespacing
+   discovery could only have come from the bench-container substrate. The
+   migration is **idempotent** (guarded by the schema version) and **history-
+   preserving** (it rewrites the key column in place; it does not delete or
+   re-create rows, so events, offsets, and queue references stay attached).
+2. **Read-time shim during the transition:** any lookup that receives a legacy
+   key with no prefix is treated as `bench:<key>`, so an in-flight client or a
+   not-yet-migrated reference resolves correctly until step 1 completes.
+3. **No dual-write:** after the migration runs, all writers emit prefixed keys
+   only; the shim exists solely to tolerate legacy reads and can be removed a
+   release later.
+
+This makes the bench backend's identities `bench:`-namespaced with zero history
+loss and no operator action, and gives downstream schema work a fixed contract
+to build on.
+
 ## Decision 3 — Per-backend degraded isolation
 
 Each backend scan runs and degrades independently. A backend that throws (Docker
@@ -66,8 +90,9 @@ graceful-degradation requirement from "Docker" to "any backend".
 
 - **Refactor risk** — bench backend must be behavior-preserving; cover with the
   existing FEAT-003/004 integration tests before extraction.
-- **Identity migration** — existing rows are implicitly `bench:`; the namespacing
-  must be backward-compatible for stored agents.
+- **Identity migration** — addressed concretely in Decision 2: a one-time,
+  idempotent, history-preserving stamp of existing rows to `backend_id='bench'`
+  plus a transition read-time shim for legacy unprefixed keys.
 - **Config surface growth** — keep per-backend config minimal for MVP.
 
 ## Migration / Phasing
@@ -79,5 +104,6 @@ graceful-degradation requirement from "Docker" to "any backend".
 
 ## Open Questions
 
-- Exact identity-key format and migration for already-registered agents.
 - Should backend selection be global config or per-bench/per-host overrides?
+- How long should the legacy-key read-time shim (Decision 2, step 2) be retained
+  before removal — one release, or longer for slow upgraders?
