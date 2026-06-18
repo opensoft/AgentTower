@@ -881,6 +881,19 @@ Likely V2 work:
 - file event adapters
 - Python-thread and mailbox bridge support if needed
 - local LLM-assisted classification as an optional classifier plugin
+- layered routing/input policy stack (global → per-agent → per-route),
+  generalizing the per-pane `send_input_allowed` boolean and the global routing
+  kill switch — see `docs/related-work-omnigent.md` §6
+- multi-operator session sharing over the FEAT-011 `app.*` backend (read-only
+  "watch" vs. permitted "co-drive") — see `docs/related-work-omnigent.md` §6
+- pluggable discovery/substrate backends (bench container as one backend among
+  host-only and future remote/cloud benches) — see
+  `docs/related-work-omnigent.md` §6
+
+Two further Omnigent-derived ideas (authenticated remote/mobile surface; agent
+network-egress policy) are recorded in `docs/related-work-omnigent.md` §6 but
+conflict with the local-first, no-network-listener stance and require an
+explicit decision before they enter scope.
 
 ## 25. Open Questions
 

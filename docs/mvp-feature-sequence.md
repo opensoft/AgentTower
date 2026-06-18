@@ -557,3 +557,29 @@ These are intentionally after FEAT-013:
 - Host-only tmux discovery.
 - Optional in-container relay.
 - Antigravity tmux backend.
+
+### Related-work-derived backlog (Omnigent)
+
+The Databricks Omnigent meta-harness (see `docs/related-work-omnigent.md` for
+the full comparison) surfaced a few ideas that fit AgentTower's non-invasive
+model. They are recorded here as candidate later features, not committed scope:
+
+- **Layered routing/input policies** — generalize the per-pane
+  `send_input_allowed` boolean + global kill switch into a global → per-agent →
+  per-route policy stack (spend/rate-style caps on delivery, ask-before-deliver).
+  This lands the existing "explicit per-agent permission grants" V2 item.
+- **Multi-operator session sharing over the FEAT-011 app backend** — multiple
+  humans observing the same registry/event stream, read-only "watch" vs.
+  permitted "co-drive". Natural answer to PRD Open Question #2 (TUI vs. web).
+- **Pluggable substrate backends** — treat the bench container as one discovery
+  backend among several (host-only tmux, future remote/cloud bench) behind the
+  existing discovery interface; additive to host-only tmux discovery.
+
+The following two are noted for completeness but conflict with the local-first,
+no-network-listener constitution and require an explicit decision before pursuit:
+
+- **Reachable-from-anywhere / mobile surface** — only behind an authenticated
+  transport reusing the FEAT-011 contract.
+- **Network-egress policy at the boundary** — AgentTower cannot intercept an
+  unmodified agent's syscalls; at most document an opt-in container-network
+  recommendation, not implement interception.
