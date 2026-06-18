@@ -23,6 +23,11 @@ Primary sources:
 Same neighbourhood, opposite ends of the coupling spectrum. AgentTower could
 even observe panes that happen to be Omnigent-launched sessions.
 
+**Where Omnigent fits in AgentTower's architecture:** it is **Tier 2** of the
+connection-strength ladder in `docs/integration-tiers.md`. AgentTower stays the
+**router**; when an agent needs to be driven, sandboxed, and governed at the
+action level, Omnigent is the **puppet master** AgentTower hands off to.
+
 ## 2. What each tool is
 
 **AgentTower** is a local control tower that **observes and routes between

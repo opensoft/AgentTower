@@ -558,6 +558,28 @@ These are intentionally after FEAT-013:
 - Optional in-container relay.
 - Antigravity tmux backend.
 
+### Connection-strength tiers (router-first integration)
+
+See `docs/integration-tiers.md`. AgentTower connects to agents on a ladder:
+Tier 0 tmux floor (today) → Tier 1 native harness (Claude/Codex hooks + MCP +
+stream-json) → Tier 2 Omnigent. Inbound (events) and outbound (delivery)
+negotiate independently per agent. AgentTower stays the **router** (agents
+report in via hooks / an AgentTower-hosted MCP server); Omnigent is the
+**puppet master** for action-level driving. Both managed launch and adoption of
+pre-instrumented panes unlock Tier 1; the tmux floor is never removed.
+Candidate later features, in recommended order:
+
+- **Tier-1 inbound via hooks** — ship AgentTower hook scripts + a `report-event`
+  socket method so harness lifecycle events replace scraped classification
+  (retires the `architecture.md` §13 conservative-classifier problem). Read-only,
+  lowest risk; do this first.
+- **AgentTower MCP server (stdio → daemon socket)** — enables pre-instrumented
+  adoption and agent self-report (`report_status`, `request_route`). No network
+  listener.
+- **Tier-1 outbound structured delivery** — behind the existing FEAT-009
+  permission gate + kill switch.
+- **Tier-2 Omnigent hand-off** — see the Omnigent backlog below.
+
 ### Related-work-derived backlog (Omnigent)
 
 The Databricks Omnigent meta-harness (see `docs/related-work-omnigent.md` for
