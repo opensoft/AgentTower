@@ -8,7 +8,7 @@ Purpose: define the AgentTower-owned feature set for identifying, mapping, maint
 
 The feature set for maintaining communication with windows, terminals, browser tabs, and tmux panes belongs in **AgentTower**.
 
-Other products, such as MedxFactory or opencodexFactory, should consume this feature set through an AgentTower harness rather than reimplementing window, terminal, or browser-surface discovery themselves.
+Other products, such as MedxFactory or codexFactory, should consume this feature set through an AgentTower harness rather than reimplementing window, terminal, or browser-surface discovery themselves.
 
 The rule is:
 
