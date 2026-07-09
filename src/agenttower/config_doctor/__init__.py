@@ -8,8 +8,8 @@ client and FEAT-003 / FEAT-004 socket methods (FR-022, FR-026).
 
 from __future__ import annotations
 
-MAX_SUPPORTED_SCHEMA_VERSION = 8
-"""Highest SQLite schema_version this CLI build understands (R-010); bumped to 8 by FEAT-010 (routes table + message_queue origin/route_id/event_id columns + partial UNIQUE index)."""
+MAX_SUPPORTED_SCHEMA_VERSION = 9
+"""Highest SQLite schema_version this CLI build understands (R-010); bumped to 8 by FEAT-010 (routes table + message_queue origin/route_id/event_id columns + partial UNIQUE index), then to 9 by FEAT-013 (managed_layout / managed_pane tables + indexes — schema migration v9). MUST track ``state.schema.CURRENT_SCHEMA_VERSION``: a CLI advertising an older value than the daemon's schema is refused at register with ``schema_version_newer`` and flagged by ``config doctor`` as a client/daemon skew."""
 
 # Re-exports — see plan §Structure Decision. These are imported lazily inside
 # functions to avoid circular imports at package init time; consumers should

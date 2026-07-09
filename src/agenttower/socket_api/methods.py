@@ -66,6 +66,13 @@ class DaemonContext:
     # operator-pane liveness check (Group-A walk Q8) uses to look up
     # caller agents via :func:`agents.select_agent_by_id`.
     state_conn: Any = None
+    # FEAT-013 C1 fix: shared ``worker_tx_lock`` so FEAT-013 service
+    # entry points serialize their DB statements through the same lock
+    # FEAT-009/010 use. Without this, a FEAT-013 ``BEGIN IMMEDIATE``
+    # collides with FEAT-009's worker transaction. Daemon-boot wires
+    # this to the same ``threading.Lock`` instance shared by the
+    # MessageQueueDao / DaemonStateDao / QueueAuditWriter.
+    state_tx_lock: Any = None
     queue_service: Any = None
     routing_flag_service: Any = None
     delivery_worker: Any = None
@@ -81,6 +88,18 @@ class DaemonContext:
     routing_worker_thread: Any = None
     routing_audit_writer: Any = None
     routing_shared_state: Any = None
+    # FEAT-013 — populated at daemon boot. The serializer is the
+    # per-container ``threading.Lock`` map (FR-019). ``managed_spawn_backends``
+    # carries the production tmux + register + log-attach + kill +
+    # list-panes + route-cleanup + log-detach callables produced by
+    # ``managed_sessions.spawn_backends``. The sweep cancel handle is
+    # the boot-registered ``threading.Timer`` so shutdown can cancel
+    # it cleanly. The reconcile-outcome snapshot lets ``status`` /
+    # diagnostics surface the last boot reconcile result.
+    managed_serializer: Any = None
+    managed_spawn_backends: Any = None
+    managed_sweep_cancel: Any = None
+    managed_reconcile_outcome: Any = None
 
 
 def _set_request_peer_context(*, peer_pid: int) -> None:
@@ -197,8 +216,42 @@ def _status(ctx: DaemonContext, params: dict[str, Any], peer_uid: int = _NO_PEER
             "events_persistence": events_persistence,
             "routing": routing_block,
             "queue_audit": queue_audit_block,
+            "managed_recovery": _managed_recovery_block(ctx),
         }
     )
+
+
+def _managed_recovery_block(ctx: DaemonContext) -> dict[str, Any]:
+    """FEAT-013 boot-recovery diagnostics for ``status`` (review P2#6).
+
+    Surfaces the last ``reconcile`` outcome so operators can tell from
+    ``status`` whether managed recovery ran, what it reattached/failed,
+    and — critically — whether any container was SKIPPED because its
+    list-panes RPC failed (a degraded boot that previously looked
+    identical to "nothing to recover"). Defaults to a not-ran shape when
+    no reconcile outcome is recorded (reconcile skipped, or FEAT-013 not
+    boot-wired).
+    """
+    outcome = getattr(ctx, "managed_reconcile_outcome", None)
+    if outcome is None:
+        return {
+            "ran": False,
+            "layouts_examined": 0,
+            "panes_examined": 0,
+            "panes_reattached": 0,
+            "panes_failed": 0,
+            "panes_resumed_creating": 0,
+            "containers_skipped": 0,
+        }
+    return {
+        "ran": True,
+        "layouts_examined": getattr(outcome, "layouts_examined", 0),
+        "panes_examined": getattr(outcome, "panes_examined", 0),
+        "panes_reattached": getattr(outcome, "panes_reattached", 0),
+        "panes_failed": getattr(outcome, "panes_failed", 0),
+        "panes_resumed_creating": getattr(outcome, "panes_resumed_creating", 0),
+        "containers_skipped": getattr(outcome, "containers_skipped", 0),
+    }
 
 
 def _extend_routing_block_with_feat010(
@@ -2185,3 +2238,12 @@ DISPATCH: dict[str, Handler] = {
 from agenttower.app_contract.dispatcher import APP_DISPATCH  # noqa: E402
 
 DISPATCH.update(APP_DISPATCH)
+
+# FEAT-013 (T025): merge the legacy ``managed.*`` namespace into DISPATCH.
+# Additive — no FEAT-002 method binding is altered. Mirrors the FEAT-011
+# merge above so the import order is unsurprising (managed_sessions/
+# handlers/cli.py imports from socket_api lazily inside its handlers so
+# this import cannot loop).
+from agenttower.managed_sessions.handlers.cli import register as _managed_cli_register  # noqa: E402
+
+DISPATCH.update(_managed_cli_register())

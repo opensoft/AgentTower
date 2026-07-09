@@ -24,7 +24,7 @@ import os
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,9 +52,46 @@ from ..tmux import (
     TmuxAdapter,
     TmuxError,
 )
+from ..tmux.parsers import ParsedPane
 from .pane_reconcile import ContainerMeta, reconcile
 
 _MAX_TEXT = 2048
+
+
+# FEAT-013 T034 / FR-014 + R1: panes whose tmux title carries the pending-
+# managed marker prefix MUST be skipped by the scan so the FEAT-004
+# reconcile does not adopt or double-register an in-flight managed pane.
+# The marker title format set by ``managed_sessions/pending_marker.py``
+# is ``@MANAGED:<token>:<label>``; the prefix below is the cheapest
+# membership check that catches the whole closed set. Once the FEAT-013
+# spawn pipeline finishes registration it clears the prefix (setting the
+# title back to the bare operator-visible label), so subsequent scans
+# DO see the pane and the FEAT-006 registry handles it normally from
+# there. See ``research.md §R1`` for the rationale.
+_MANAGED_PENDING_TITLE_PREFIX = "@MANAGED:"
+
+
+def _filter_pending_managed_panes(
+    panes: "Iterable[ParsedPane]",
+) -> tuple["tuple[ParsedPane, ...]", int]:
+    """Strip panes whose ``pane_title`` carries the FEAT-013 pending-managed
+    marker prefix. Returns ``(kept_panes, skipped_count)``.
+
+    Keeps the scan oblivious to the SQLite cross-check — research §R1
+    notes that the SQLite ``managed_pane.pending_marker_token`` column
+    is the authoritative source of truth (the title is the scan-side
+    mirror). The scan only needs the title prefix to decide whether to
+    skip; FEAT-013's own recovery path does the SQLite integrity check.
+    """
+    kept: list[ParsedPane] = []
+    skipped = 0
+    for p in panes:
+        title = p.pane_title or ""
+        if title.startswith(_MANAGED_PENDING_TITLE_PREFIX):
+            skipped += 1
+            continue
+        kept.append(p)
+    return tuple(kept), skipped
 
 
 class PostCommitSideEffectError(RuntimeError):
@@ -409,8 +446,12 @@ class PaneDiscoveryService:
                 state.failures.append(err)
                 if exc.code == _errors.OUTPUT_MALFORMED and exc.partial_panes:
                     any_success = True
+                    # FEAT-013 T034: strip pending-managed panes from the
+                    # malformed-partial set the same way as the happy
+                    # path so partial scan rows still honor FR-014.
+                    kept, _skipped = _filter_pending_managed_panes(exc.partial_panes)
                     state.socket_outcomes[(container_id, socket_path)] = OkSocketScan(
-                        panes=tuple(exc.partial_panes)
+                        panes=kept
                     )
                 else:
                     state.socket_outcomes[(container_id, socket_path)] = FailedSocketScan(
@@ -418,8 +459,12 @@ class PaneDiscoveryService:
                     )
                 continue
             any_success = True
+            # FEAT-013 T034: strip pending-managed panes (FR-014 / research §R1)
+            # so the FEAT-004 reconcile does not adopt or double-register an
+            # in-flight managed pane mid-spawn.
+            kept, _skipped = _filter_pending_managed_panes(panes)
             state.socket_outcomes[(container_id, socket_path)] = OkSocketScan(
-                panes=tuple(panes)
+                panes=kept
             )
 
         if not any_success and listing.sockets:

@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/014-app-dashboard-extensions/plan.md`.
+`specs/013-managed-session-lifecycle/plan.md`.
 <!-- SPECKIT END -->
 
 # AgentTower Agent Context

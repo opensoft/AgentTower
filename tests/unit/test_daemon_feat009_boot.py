@@ -87,6 +87,7 @@ def test_build_feat009_services_returns_wired_services(
         delivery_worker,
         message_queue_dao,
         daemon_state_dao,
+        _worker_tx_lock,
     ) = result
     try:
         assert worker_conn is not None
@@ -159,6 +160,7 @@ def test_recovery_pass_runs_before_worker_start(
         delivery_worker,
         _message_queue_dao,
         _daemon_state_dao,
+        _worker_tx_lock,
     ) = result
     try:
         # The recovery pass should have transitioned the row to failed.

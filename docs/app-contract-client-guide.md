@@ -123,3 +123,23 @@ for a working reference client.
 - Check `capability_flags` before calling an optional method introduced
   in a later minor (none exist at v1.0 — `capability_flags == {}`).
 - Surface unknown closed-set codes gracefully; never hard-fail on them.
+
+## 8. FEAT-013 managed-session methods
+
+FEAT-013 adds 8 new methods to the `app.*` namespace — `app.managed_*`
+— for operator-driven creation of multi-agent tmux layouts inside bench
+containers. They are **required** surfaces at `app_contract_version =
+"1.0"` (not advertised in `capability_flags`; reached through the
+additive-evolution rule).
+
+See **[`docs/managed-sessions.md`](managed-sessions.md)** for the full
+operator reference: templates, launch profiles, lifecycle states, the
+M1–M8 method table, closed-set error codes, and the YAML override
+directories.
+
+Quick method list:
+
+- `app.managed_layout_create` / `app.managed_layout_list` / `app.managed_layout_detail` — layout creation + read
+- `app.managed_pane_list` / `app.managed_pane_detail` — pane read
+- `app.managed_pane_remove` / `app.managed_pane_recreate` — destructive lifecycle
+- `app.managed_pane_promote_from_adopted` — reserved stub (returns `not_implemented`)
