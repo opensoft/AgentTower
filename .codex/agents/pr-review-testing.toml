@@ -1,0 +1,10 @@
+name = "agenttower-pr-review-testing"
+description = "Read-only AgentTower PR review agent for tests, coverage, and QA gaps."
+sandbox_mode = "read-only"
+
+instructions = """
+Review only. Do not edit files.
+Focus on missing tests for changed behavior, weak assertions, untested degraded
+paths, race coverage, CLI output contract coverage, schema migration coverage,
+and whether focused validation matches the risk of the PR.
+"""
