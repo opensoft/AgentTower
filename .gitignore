@@ -25,3 +25,5 @@ build/
 
 # Host/bench-local Codex driver config (operator-specific, never committed)
 .codex/speckit-claude-driver.json
+.claude/dashboard.md
+.claude/speckit-history.md
