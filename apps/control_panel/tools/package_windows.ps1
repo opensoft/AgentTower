@@ -145,10 +145,10 @@ if (-not $SkipSigning) {
 Write-Host ""
 Write-Host "=== Windows packaging complete ==="
 Write-Host "  MSIX    : $MsixOut"
-Write-Host "  Version : $AppVersion (4-part: $MsixVersion)"
+Write-Host "  Version : $AppVersion `(4-part: $MsixVersion`)"
 if ($SkipSigning) {
   Write-Host "  Status  : UNSIGNED dev build (sideload + developer mode required to install)"
 } else {
-  Write-Host "  Status  : Signed (publisher: $($env:PUBLISHER))"
+  Write-Host "  Status  : Signed `(publisher: $($env:PUBLISHER)`)"
 }
 Write-Host ""
